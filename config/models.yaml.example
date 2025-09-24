@@ -1,0 +1,6 @@
+defaults:
+  #temperature: 0.2
+  #max_tokens: 1200
+models:
+  - name: azure_ai/gpt-5-mini
+  - name: claude-sonnet-4-20250514

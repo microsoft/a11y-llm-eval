@@ -1,0 +1,64 @@
+import os
+from pathlib import Path
+import json
+import pytest
+
+from a11y_llm_tests import node_bridge
+
+TEST_CASES_ROOT = Path("test_cases")
+SCREENSHOT_ROOT = Path("runs") / "pytest_screenshots"
+
+def _collect_example_html():
+    """Yield tuples: (test_case_name, expectation, html_path, test_js_path)."""
+    for case_dir in TEST_CASES_ROOT.iterdir():
+        if not case_dir.is_dir():
+            continue
+        test_js = case_dir / "test.js"
+        if not test_js.exists():
+            continue
+        for expectation in ("example-pass", "example-fail"):
+            ex_dir = case_dir / expectation
+            if not ex_dir.exists():
+                continue
+            for html_file in ex_dir.glob("*.html"):
+                yield (
+                    case_dir.name,
+                    "pass" if expectation == "example-pass" else "fail",
+                    html_file,
+                    test_js,
+                )
+
+EXAMPLES = list(_collect_example_html())
+
+@pytest.mark.parametrize(
+    "case_name,expected_status,html_path,test_js_path",
+    EXAMPLES,
+    ids=lambda p: getattr(p, "stem", p) if isinstance(p, Path) else p,
+)
+def test_example_html(case_name, expected_status, html_path, test_js_path, tmp_path):
+    html = html_path.read_text(encoding="utf-8")
+    # Make sure screenshot dir exists
+    SCREENSHOT_ROOT.mkdir(parents=True, exist_ok=True)
+    screenshot_file = SCREENSHOT_ROOT / f"{case_name}__{html_path.stem}__{expected_status}.png"
+
+    result = node_bridge.run_in_puppeteer(html, str(test_js_path), str(screenshot_file))
+
+    tf = result.get("testFunctionResult", {})
+    status = tf.get("status")
+    assertions = tf.get("assertions", [])  # Assertions may now include type ('R' or 'BP')
+    axe = result.get("axeResult") or result.get("axe_result") or result.get("axe")
+
+    debug_info = {
+        "case": case_name,
+        "html_example": str(html_path),
+        "expected_status": expected_status,
+        "actual_status": status,
+        "assertions": assertions,
+        "axe_violation_count": axe.get("violation_count") if isinstance(axe, dict) else None,
+        "error": tf.get("error"),
+    }
+    if expected_status == "pass":
+        assert status == "pass", f"Expected pass but got {status}. Details:\n{json.dumps(debug_info, indent=2)}"
+    else:
+        # For fail expectation, accept either 'fail' (preferred), but flag 'pass' as error.
+        assert status == "fail", f"Expected fail but got {status}. Details:\n{json.dumps(debug_info, indent=2)}"

@@ -1,0 +1,12 @@
+litellm
+pydantic>=2
+rich
+jinja2
+aiofiles
+httpx
+python-dotenv
+orjson
+typer
+beautifulsoup4
+lxml
+pytest
