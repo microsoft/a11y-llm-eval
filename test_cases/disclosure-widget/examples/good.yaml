@@ -1,0 +1,2 @@
+assertions:
+  "Has a button with aria-expanded": pass

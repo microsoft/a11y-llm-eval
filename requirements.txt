@@ -10,3 +10,4 @@ typer
 beautifulsoup4
 lxml
 pytest
+pyyaml

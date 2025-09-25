@@ -1,0 +1,9 @@
+assertions:
+  "Has an h1": fail
+  "Has single h1": fail
+  "Has at least one h2": fail
+  "Has a single banner": fail
+  "Has a single maincontent": fail
+  "Has a single navigation": fail
+  "Has a single footer": fail
+  "H2 sections present": fail
