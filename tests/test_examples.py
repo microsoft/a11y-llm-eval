@@ -51,6 +51,9 @@ def test_example_html(case_name, html_path, yaml_path, test_js_path, tmp_path):
 
     result = node_bridge.run_in_puppeteer(html, str(test_js_path), str(screenshot_file))
 
+    if "error" in result:
+        print(f"Error running test case {case_name} with HTML {html_path}: {result['error']}")
+
     tf = result.get("testFunctionResult", {})
     status = tf.get("status")
     assertions = tf.get("assertions", [])  # Assertions may now include type ('R' or 'BP')

@@ -30,4 +30,4 @@ jobs:
         bash scripts/install_node_deps.sh
     - name: Test with pytest
       run: |
-        python -m pytest
+        python -m pytest -s
