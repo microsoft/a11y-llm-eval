@@ -51,7 +51,7 @@ def test_example_html(case_name, html_path, yaml_path, test_js_path, tmp_path):
 
     result = node_bridge.run_in_puppeteer(html, str(test_js_path), str(screenshot_file))
 
-    if "error" in result:
+    if "error" in result and result["error"]:
         print(f"Error running test case {case_name} with HTML {html_path}: {result['error']}")
 
     tf = result.get("testFunctionResult", {})
