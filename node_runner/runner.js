@@ -19,7 +19,7 @@ async function main() {
     console.error("Failed loading test file:", e);
     testFn = {};
   }
-  const browser = await puppeteer.launch({ headless: "new" });
+  const browser = await puppeteer.launch({ headless: true });
   const page = await browser.newPage();
   let consoleLogs = [];
   page.on("console", msg => consoleLogs.push(msg.text()));
