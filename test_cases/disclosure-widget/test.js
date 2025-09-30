@@ -27,9 +27,14 @@ module.exports.run = async ({ page, assert }) => {
         // Only check button implementations
         continue;
       }
+      
       let isHidden = await example.$eval(".details", el => {
-        return el.hasAttribute("aria-hidden") === "true" || window.getComputedStyle(el).display === "none";
+        // Use axe-core's isVisible util to determine if hidden from sighted users but available to AT
+        let isVisuallyHidden = !window.axe.commons.dom.isVisible(el, false, true);
+        let isScreenReaderHidden = !window.axe.commons.dom.isVisible(el, true, true);
+        return isVisuallyHidden && isScreenReaderHidden;
       });
+
       if (!isHidden) {
         return false;
       }

@@ -10,7 +10,7 @@
     <h2>Example 1: Basic Disclosure using button and aria-expanded</h2>
     <div class="example">
         <button aria-expanded="false" aria-controls="content">Show Details</button>
-        <div class="details" hidden>
+        <div class="details" style="display: none;">
             <p>This is the hidden content that can be disclosed.</p>
         </div>
     </div>
@@ -21,6 +21,12 @@
             <summary>Show Details</summary>
             <p>This is the hidden content that can be disclosed.</p>
         </details>
+    </div>
+
+    <h2>Example 3: hidden content is hidden from everyone (opacity and aria-hidden)</h2>
+    <div class="example">
+        <button aria-expanded="false">Show Details</button>
+        <div class="details" style="opacity: 0;" aria-hidden="true">This is the hidden content that can be disclosed.</div>
     </div>
 </body>
 </html>
