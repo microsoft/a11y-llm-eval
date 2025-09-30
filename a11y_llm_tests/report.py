@@ -139,17 +139,31 @@ details summary { cursor: pointer; }
       </figure>
       {% endif %}
       <details>
-        <summary>Assertions</summary>
+        <summary>
+          Assertions
+          {% if r.test_function.status == "fail" %}
+            <span role="img" aria-label="Fail">❌</span>
+          {% elif r.test_function.status == "pass" %}
+            <span role="img" aria-label="Pass">✅</span>
+          {% endif %}
+        </summary>
         <ul>
           {% for a in r.test_function.assertions %}
-          <li>{{ a.name }} ({{ a.type if a.type else 'R' }}): {{ a.status }}</li>
+          <li>
+            {% if a.status == "fail" %}
+              <span role="img" aria-label="Fail">❌</span>:
+            {% elif a.status == "pass" %}
+              <span role="img" aria-label="Pass">✅</span>:
+            {% endif %}
+            {{ a.name }} ({{ a.type if a.type else 'R' }}): {{ a.status }}
+          </li>
           {% endfor %}
         </ul>
       </details>
       {% if r.axe %}
       {% if r.axe.violation_count > 0 %}
       <details>
-        <summary>Axe WCAG Violations ({{ r.axe.violation_count }}) ❌</summary>
+        <summary>Axe WCAG Violations ({{ r.axe.violation_count }}) <span role="img" aria-label="Fail">❌</span></summary>
         <ul>
           {% for v in r.axe.violations %}
           <li><strong>{{ v.id }}</strong> ({{ v.impact }}): {{ v.description }}</li>
@@ -159,7 +173,7 @@ details summary { cursor: pointer; }
       {% endif %}
       {% if r.axe.best_practice_count > 0 %}
       <details>
-        <summary>Axe Best Practice Issues ({{ r.axe.best_practice_count }}) ⚠️</summary>
+        <summary>Axe Best Practice Issues ({{ r.axe.best_practice_count }}) <span role="img" aria-label="Warning">⚠️</span></summary>
         <ul>
           {% for v in r.axe.best_practice_violations %}
           <li><strong>{{ v.id }}</strong> ({{ v.impact }}): {{ v.description }} <em>(Best Practice - does not affect pass/fail)</em></li>
