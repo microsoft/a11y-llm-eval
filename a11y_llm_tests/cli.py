@@ -108,6 +108,8 @@ def run(
                     axe_obj = AxeResult(
                         violation_count=axe_data.get("violation_count", 0),
                         violations=axe_data.get("violations", []),
+                        best_practice_count=axe_data.get("best_practice_count", 0),
+                        best_practice_violations=axe_data.get("best_practice_violations", []),
                     )
                 result_pass = (test_result.status == "pass" and axe_obj.violation_count == 0)
                 pass_statuses.append(result_pass)

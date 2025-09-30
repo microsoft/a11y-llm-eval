@@ -39,8 +39,10 @@ class AxeViolation(BaseModel):
 
 
 class AxeResult(BaseModel):
-    violation_count: int
-    violations: List[AxeViolation] = []
+    violation_count: int  # WCAG violations only (affects pass/fail)
+    violations: List[AxeViolation] = []  # WCAG violations only
+    best_practice_count: int = 0  # Best practice violations (informational)
+    best_practice_violations: List[AxeViolation] = []  # Best practice violations
 
 
 class GenerationMeta(BaseModel):

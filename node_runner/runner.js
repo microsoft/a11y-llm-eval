@@ -71,16 +71,34 @@ async function main() {
     }
     axeResult = await page.evaluate(async () => {
       const results = await window.axe.run();
-      return {
-        violation_count: results.violations.length,
-        violations: results.violations.map(v => ({
+      
+      // Separate WCAG violations from best practice violations
+      const wcagViolations = [];
+      const bestPracticeViolations = [];
+      
+      results.violations.forEach(v => {
+        const mappedViolation = {
           id: v.id,
           impact: v.impact,
           description: v.description,
           helpUrl: v.helpUrl,
           nodes: v.nodes.map(n => ({ html: n.html, target: n.target })),
           tags: v.tags
-        }))
+        };
+        
+        // Check if this is a best practice violation
+        if (v.tags.includes('best-practice')) {
+          bestPracticeViolations.push(mappedViolation);
+        } else {
+          wcagViolations.push(mappedViolation);
+        }
+      });
+      
+      return {
+        violation_count: wcagViolations.length,
+        violations: wcagViolations,
+        best_practice_count: bestPracticeViolations.length,
+        best_practice_violations: bestPracticeViolations
       };
     });
     if (screenshotPath) {
