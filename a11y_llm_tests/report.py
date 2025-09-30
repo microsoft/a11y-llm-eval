@@ -129,7 +129,7 @@ details summary { cursor: pointer; }
       {% set _trimmed = '/'.join(_parts[2:]) %}
       <h4><a href="{{ _trimmed }}">Sample {{ r.sample_index if r.sample_index is not none else loop.index0 }}</a></h4>
       <p><span class="badge-{{ 'pass' if r.result=='PASS' else 'fail' }}">{{ r.result }}</span> | Latency {{ '%.2f'|format(r.generation.latency_s) }}s{% if r.generation.cached %} cached{% endif %}</p>
-      <p>Axe: {{ r.axe.violation_count if r.axe else 'n/a' }}{% if r.generation.cost_usd is not none %} | ${{ '%.4f'|format(r.generation.cost_usd) }}{% endif %}</p>
+      <p>Axe WCAG: {{ r.axe.violation_count if r.axe else 'n/a' }}{% if r.axe and r.axe.best_practice_count > 0 %} | BP: {{ r.axe.best_practice_count }}{% endif %}{% if r.generation.cost_usd is not none %} | ${{ '%.4f'|format(r.generation.cost_usd) }}{% endif %}</p>
       {% if r.screenshot_path %}
         {# Trim the first two path segments (e.g., 'runs/<run_id>/...') #}
         {% set _parts = r.screenshot_path.split('/') %}
@@ -139,22 +139,48 @@ details summary { cursor: pointer; }
       </figure>
       {% endif %}
       <details>
-        <summary>Assertions</summary>
+        <summary>
+          Assertions
+          {% if r.test_function.status == "fail" %}
+            <span role="img" aria-label="Fail">❌</span>
+          {% elif r.test_function.status == "pass" %}
+            <span role="img" aria-label="Pass">✅</span>
+          {% endif %}
+        </summary>
         <ul>
           {% for a in r.test_function.assertions %}
-          <li>{{ a.name }} ({{ a.type if a.type else 'R' }}): {{ a.status }}</li>
+          <li>
+            {% if a.status == "fail" %}
+              <span role="img" aria-label="Fail">❌</span>:
+            {% elif a.status == "pass" %}
+              <span role="img" aria-label="Pass">✅</span>:
+            {% endif %}
+            {{ a.name }} ({{ a.type if a.type else 'R' }}): {{ a.status }}
+          </li>
           {% endfor %}
         </ul>
       </details>
       {% if r.axe %}
+      {% if r.axe.violation_count > 0 %}
       <details>
-        <summary>Axe Violations ({{ r.axe.violation_count }})</summary>
+        <summary>Axe WCAG Violations ({{ r.axe.violation_count }}) <span role="img" aria-label="Fail">❌</span></summary>
         <ul>
           {% for v in r.axe.violations %}
           <li><strong>{{ v.id }}</strong> ({{ v.impact }}): {{ v.description }}</li>
           {% endfor %}
         </ul>
       </details>
+      {% endif %}
+      {% if r.axe.best_practice_count > 0 %}
+      <details>
+        <summary>Axe Best Practice Issues ({{ r.axe.best_practice_count }}) <span role="img" aria-label="Warning">⚠️</span></summary>
+        <ul>
+          {% for v in r.axe.best_practice_violations %}
+          <li><strong>{{ v.id }}</strong> ({{ v.impact }}): {{ v.description }} <em>(Best Practice - does not affect pass/fail)</em></li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
       {% endif %}
     </div>
   {% endfor %}
@@ -174,7 +200,10 @@ details summary { cursor: pointer; }
 def render_report(run_json_path: Path, out_html: Path):
     data = orjson.loads(run_json_path.read_bytes())
     from collections import defaultdict
-    per_model = defaultdict(lambda: {"violations": [], "req_passes": 0, "bp_passes": 0, "total": 0, "bp_total": 0, "costs": []})
+    per_model = defaultdict(lambda: {
+        "violations": [], "req_passes": 0, "bp_passes": 0, "total": 0, "bp_total": 0, "costs": [],
+        "bp_violations": [], "axe_bp_passes": 0, "axe_bp_total": 0
+    })
     results = data.get("results", [])
     for r in results:
         model = r["model_name"]
@@ -189,10 +218,19 @@ def render_report(run_json_path: Path, out_html: Path):
             per_model[model]["bp_total"] += 1  # treat per-test BP status aggregate: pass if all BP pass
             if all(a.get("status") == "pass" for a in bp_assertions):
                 per_model[model]["bp_passes"] += 1
+        
+        # Track axe violations (WCAG only now) and best practice violations
         axe = r.get("axe") or {}
-        vc = axe.get("violation_count")
+        vc = axe.get("violation_count")  # WCAG violations only
         if vc is not None:
             per_model[model]["violations"].append(vc)
+        
+        # Track axe best practice violations separately
+        bp_vc = axe.get("best_practice_count", 0)
+        per_model[model]["bp_violations"].append(bp_vc)
+        per_model[model]["axe_bp_total"] += 1
+        if bp_vc == 0:
+            per_model[model]["axe_bp_passes"] += 1
         gen = r.get("generation", {})
         cost = gen.get("cost_usd")
         if cost is not None:
@@ -206,11 +244,16 @@ def render_report(run_json_path: Path, out_html: Path):
         avg_v = sum(s["violations"]) / len(s["violations"]) if s["violations"] else 0
         total_cost = sum(s["costs"]) if s["costs"] else 0.0
         avg_cost = (total_cost / s["total"]) if s["total"] else 0.0
+        # Calculate combined best practice pass rate (custom BP assertions + axe BP violations)
+        total_bp_tests = s["bp_total"] + s["axe_bp_total"]
+        total_bp_passes = s["bp_passes"] + s["axe_bp_passes"]
+        combined_bp_pass_rate = (total_bp_passes / total_bp_tests) if total_bp_tests else 1.0
+        
         summary[m] = {
             "avg_violations": avg_v,
             "req_pass_rate": s["req_passes"] / s["total"] if s["total"] else 0,
-            # BP pass rate: proportion of tests that had BP assertions where all BP passed
-            "bp_pass_rate": (s["bp_passes"] / s["bp_total"]) if s["bp_total"] else 0,
+            # Combined BP pass rate: custom BP assertions AND axe best practice violations
+            "bp_pass_rate": combined_bp_pass_rate,
             "total_cost": total_cost,
             "avg_cost": avg_cost,
             "display_name": m.split('/')[-1],
