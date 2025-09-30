@@ -5,10 +5,20 @@
     <title>Disclosure Widget - Bad Example</title>
 </head>
 <body>
-    <h1>Disclosure Widget Example</h1>
-    <div onclick="toggleContent()">Show Details</div>
-    <div id="content" style="display: none;">
-        <p>This is the hidden content that can be disclosed.</p>
+    <h1>Bad Disclosure Widget Examples</h1>
+
+    <h2>Example 1: missing all semantics</h2>
+    <div class="example">
+        <div onclick="toggleContent()">Show Details</div>
+        <div class="details" style="display: none;">
+            <p>This is the hidden content that can be disclosed.</p>
+        </div>
+    </div>
+
+    <h2>Example 2: hidden content is still in reading order</h2>
+    <div class="example">
+        <button aria-expanded="false">Show Details</button>
+        <div class="details" style="visibility: hidden;">This is the hidden content that can be disclosed.</div>
     </div>
 </body>
 </html>

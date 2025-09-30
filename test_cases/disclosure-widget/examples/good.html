@@ -5,10 +5,22 @@
     <title>Disclosure Widget - Good Example</title>
 </head>
 <body>
-    <h1>Disclosure Widget Example</h1>
-    <button aria-expanded="false" aria-controls="content">Show Details</button>
-    <div id="content" hidden>
-        <p>This is the hidden content that can be disclosed.</p>
+    <h1>Good Disclosure Widget Examples</h1>
+
+    <h2>Example 1: Basic Disclosure using button and aria-expanded</h2>
+    <div class="example">
+        <button aria-expanded="false" aria-controls="content">Show Details</button>
+        <div class="details" hidden>
+            <p>This is the hidden content that can be disclosed.</p>
+        </div>
+    </div>
+
+    <h2>Example 2: Details/Summary Disclosure</h2>
+    <div class="example">
+        <details class="details">
+            <summary>Show Details</summary>
+            <p>This is the hidden content that can be disclosed.</p>
+        </details>
     </div>
 </body>
 </html>
