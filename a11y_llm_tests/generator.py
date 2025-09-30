@@ -11,9 +11,9 @@ CACHE_DIR = Path(".cache/generations")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 SYSTEM_PROMPT = (
-    "You are generating a single standalone accessible HTML5 document. "
+    "You are generating a single standalone HTML document. "
     "Do NOT wrap output in markdown fences. Include <head> and <body>. "
-    "Strive for semantic elements, proper heading structure, labeled form controls, alt text."
+    "Do NOT explain the code, just output it."
 )
 
 
