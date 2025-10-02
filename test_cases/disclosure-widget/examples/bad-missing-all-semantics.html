@@ -1,0 +1,21 @@
+---
+assertions:
+  All examples have a valid semantics: fail
+  Collapsed content is hidden from assistive technology: pass
+---
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Missing all semantics</title>
+</head>
+<body>
+    <h1>Missing all semantics</h1>
+    <div class="example">
+        <div onclick="toggleContent()">Show Details</div>
+        <div class="details" style="display: none;">
+            <p>This is the hidden content that can be disclosed.</p>
+        </div>
+    </div>
+</body>
+</html>

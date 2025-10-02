@@ -1,0 +1,22 @@
+---
+assertions:
+  All examples have a valid semantics: pass
+  Collapsed content is hidden from assistive technology: pass
+---
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Basic Disclosure using button and aria-expanded</title>
+</head>
+<body>
+    <h1>Basic Disclosure using button and aria-expanded</h1>
+
+    <div class="example">
+        <button aria-expanded="false" aria-controls="content">Show Details</button>
+        <div class="details" style="display: none;">
+            <p>This is the hidden content that can be disclosed.</p>
+        </div>
+    </div>
+</body>
+</html>

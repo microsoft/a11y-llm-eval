@@ -1,3 +1,0 @@
-assertions:
-  "All examples have a valid semantics": fail
-  "Collapsed content is hidden from assistive technology": fail

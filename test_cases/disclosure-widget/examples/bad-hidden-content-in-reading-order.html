@@ -1,0 +1,19 @@
+---
+assertions:
+  All examples have a valid semantics: pass
+  Collapsed content is hidden from assistive technology: fail
+---
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hidden content is still in reading order</title>
+</head>
+<body>
+    <h1>Hidden content is still in reading order</h1>
+    <div class="example">
+        <button aria-expanded="false">Show Details</button>
+        <div class="details" style="opacity: 0">This is the hidden content that can be disclosed.</div>
+    </div>
+</body>
+</html>
