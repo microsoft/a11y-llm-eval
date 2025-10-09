@@ -1,13 +1,14 @@
----
-assertions:
-  All examples have a valid semantics: fail
-  Collapsed content is hidden from assistive technology: pass
----
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Missing all semantics</title>
+    <script id="a11y-assertions" type="application/json">{
+        "assertions": {
+            "All examples have a valid semantics": "fail",
+            "Collapsed content is hidden from assistive technology": "pass"
+        }
+    }</script>
 </head>
 <body>
     <h1>Missing all semantics</h1>

@@ -2,7 +2,6 @@ import os
 from pathlib import Path
 import json
 import pytest
-import yaml
 import re
 
 from a11y_llm_tests import node_bridge
@@ -21,11 +20,11 @@ def _collect_example_html():
         examples_dir = case_dir / "examples"
         if not examples_dir.exists():
             continue
-        # Only consider HTML files that include front-matter (merged format)
+        # Only consider HTML files that include json
         for html_file in examples_dir.glob("*.html"):
-            fm, _ = parse_html_with_front_matter(html_file)
+            fm, _ = parse_html_with_expectations(html_file)
             if fm is None:
-                # Skip HTML files without front-matter (they are invalid in the new format)
+                # Skip HTML files without json expectations (they are invalid in the new format)
                 continue
             yield (
                 case_dir.name,
@@ -51,66 +50,44 @@ def _collect_assertion_names_from_testjs(test_js_path: Path):
     return names
 
 
-# Front-matter parser for merged HTML + YAML files
-FRONT_RE = re.compile(r"\A---\s*\n(.*?\n)---\s*\n", re.DOTALL)
+# Json parser for merged HTML + json files
+SCRIPT_RE = re.compile(r"<script[^>]+id=[\"']a11y-assertions[\"'][^>]*type=[\"']application/json[\"'][^>]*>(.*?)</script>", re.DOTALL | re.IGNORECASE)
 
 
-def parse_html_with_front_matter(path: Path):
-    """Return (front_matter_dict_or_None, html_text).
+def parse_html_with_expectations(path: Path):
+    """Return (assertions_dict_or_None, html_text).
 
-    If the file begins with a YAML front-matter block (--- ... ---), parse it and
-    return (data, rest_of_file). Otherwise return (None, full_file_text).
+    This looks for a <script id="a11y-assertions" type="application/json">...json...</script>
+    inside the HTML. If found, returns (parsed_json_dict, full_html_text). Otherwise (None, full_text).
     """
     text = path.read_text(encoding="utf-8")
-    m = FRONT_RE.match(text)
+    m = SCRIPT_RE.search(text)
     if not m:
         return None, text
-    yaml_block = m.group(1)
+    json_text = m.group(1)
     try:
-        data = yaml.safe_load(yaml_block) or {}
+        data = json.loads(json_text) or {}
     except Exception:
-        # If front-matter is malformed, treat as no front-matter so existing
-        # behavior using separate YAML files can still apply.
         return None, text
-    html = text[m.end():]
-    return data, html
+    return data, text
 
 
-def _collect_yaml_assertions_for_case(case_dir: Path):
-    """Return a mapping of yaml path -> dict(assertion name -> expected value) for all example yamls in a case.
+def _collect_assertions_for_case(case_dir: Path):
+    """Return a mapping of example path -> dict(assertion name -> expected value) for examples in a case.
 
-    The expected value is normalized to a lowercase string: booleans map to 'pass'/'fail', strings are lowercased.
+    This reads assertions embedded as JSON in the HTML examples using the
+    <script id="a11y-assertions" type="application/json"> container. The returned
+    mapping keys are Path objects referring to the example file and the values
+    are dicts mapping assertion name -> normalized expectation ('pass'/'fail'/etc.).
     """
     out = {}
     examples_dir = case_dir / "examples"
     if not examples_dir.exists():
         return out
-    for yaml_file in examples_dir.glob("*.yaml"):
-        try:
-            with open(yaml_file, 'r', encoding='utf-8') as f:
-                expectations = yaml.safe_load(f) or {}
-        except Exception:
-            expectations = {}
-        assertion_expectations = expectations.get("assertions", {}) if isinstance(expectations, dict) else {}
-        norm_map = {}
-        for k, v in (assertion_expectations.items() if isinstance(assertion_expectations, dict) else []):
-            # normalize expectation values
-            if isinstance(v, bool):
-                norm = 'pass' if v else 'fail'
-            elif isinstance(v, str):
-                norm = v.strip().lower()
-            elif v is None:
-                norm = 'none'
-            else:
-                norm = str(v).strip().lower()
-            norm_map[k] = norm
-        out[yaml_file] = norm_map
-    # Also include front-matter in HTML files (for merged examples)
+
+    # Include embedded JSON in HTML examples
     for html_file in examples_dir.glob("*.html"):
-        # Skip if we already have a separate YAML for this example
-        if html_file.with_suffix('.yaml') in out:
-            continue
-        fm, _ = parse_html_with_front_matter(html_file)
+        fm, _ = parse_html_with_expectations(html_file)
         if not fm:
             continue
         assertion_expectations = fm.get("assertions", {}) if isinstance(fm, dict) else {}
@@ -137,12 +114,11 @@ EXAMPLES = list(_collect_example_html())
     ids=lambda p: getattr(p, "stem", p) if isinstance(p, Path) else p,
 )
 def test_example_html(case_name, html_path, yaml_path, test_js_path, tmp_path):
-    # Load expectations from front-matter in the HTML (merged format only)
-    fm, _ = parse_html_with_front_matter(html_path)
-    assert fm is not None, f"Example {html_path} must include YAML front-matter with expectations"
+    # Load expectations from embedded JSON in the HTML
+    fm, _ = parse_html_with_expectations(html_path)
+    assert fm is not None, f"Example {html_path} must include embedded JSON assertions in a <script id=\"a11y-assertions\"> element"
     expectations = fm
     assertion_expectations = expectations.get("assertions", {}) if isinstance(expectations, dict) else {}
-    
     html = html_path.read_text(encoding="utf-8")
     # Make sure screenshot dir exists
     SCREENSHOT_ROOT.mkdir(parents=True, exist_ok=True)
@@ -180,7 +156,7 @@ def test_example_html(case_name, html_path, yaml_path, test_js_path, tmp_path):
     debug_info = {
         "case": case_name,
         "html_example": str(html_path),
-        "yaml_expectations": str(yaml_path),
+        "embedded_assertions": expectations,
         "overall_status": status,
         "assertions": assertions,
         "assertion_results": assertion_results,
@@ -208,22 +184,22 @@ def test_assertion_coverage():
 
         # Gather all assertion names declared in test.js
         declared = _collect_assertion_names_from_testjs(test_js)
-        # Gather all assertion names mentioned in example front-matter for this case
-        yaml_map = _collect_yaml_assertions_for_case(case_dir)
+        # Gather all assertion names mentioned in example embedded assertions for this case
+        assertions_map = _collect_assertions_for_case(case_dir)
 
         # For missing assertions entirely (no expectation present in any example)
-        yaml_names_union = set().union(*(set(d.keys()) for d in yaml_map.values())) if yaml_map else set()
-        missing_entirely = declared - yaml_names_union
+        names_union = set().union(*(set(d.keys()) for d in assertions_map.values())) if assertions_map else set()
+        missing_entirely = declared - names_union
         if missing_entirely:
             coverage_lines = []
-            for p, names in yaml_map.items():
+            for p, names in assertions_map.items():
                 coverage_lines.append(f"{p}: {sorted(names.keys())}")
 
             msg = (
                 f"Test case '{case_dir.name}' is missing expectations for {len(missing_entirely)} assertion(s):\n"
                 f"  Missing: {sorted(missing_entirely)}\n"
                 f"  Declared in test.js: {sorted(declared)}\n"
-                f"  YAML coverage:\n    " + "\n    ".join(coverage_lines)
+                f"  Example coverage:\n    " + "\n    ".join(coverage_lines)
             )
             pytest.fail(msg)
 
@@ -231,7 +207,7 @@ def test_assertion_coverage():
         missing_variants = {}
         for assertion in declared:
             seen = set()
-            for d in yaml_map.values():
+            for d in assertions_map.values():
                 val = d.get(assertion)
                 if val:
                     seen.add(val)
@@ -246,12 +222,12 @@ def test_assertion_coverage():
 
         if missing_variants:
             coverage_lines = []
-            for p, names in yaml_map.items():
+            for p, names in assertions_map.items():
                 coverage_lines.append(f"{p}: {sorted(names.items())}")
 
             msg = (
                 f"Test case '{case_dir.name}' does not include both pass and fail expectations for all assertions:\n"
                 f"  Details: {json.dumps(missing_variants, indent=2)}\n"
-                f"  YAML coverage (assertion -> expectation):\n    " + "\n    ".join(coverage_lines)
+                f"  Example coverage (assertion -> expectation):\n    " + "\n    ".join(coverage_lines)
             )
             pytest.fail(msg)
