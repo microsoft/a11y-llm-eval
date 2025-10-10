@@ -6,13 +6,13 @@ This is a research project to evaluate how well various LLM models generate acce
 LLMs currently generate code with accessibility bugs, resulting in blockers for people with disabilities and costly re-work and fixes downstream. 
 
 ## Goal
-Create a public dataset and testing harness which can be used to benchmark how well a given LLM generates accessible HTML code. Eventually, it could also be used to help train AI to generate more accessible code by default.
+Create a public test suite which can be used to benchmark how well various LLMs generates accessible HTML code. Eventually, it could also be used to help train models to generate more accessible code by default.
 
 ## Methdology
-- Each test contains a prompt to generate an HTML pages.
+- Each test case contains a prompt to generate an HTML page to demonstrate a specific pattern or component.
 - This page is passed to Puppeteer and rendered in a browser. Tests are executed against this rendered page.
-- Each test is evaluated against axe-core, one of the most popular automated accessibility testing engines.
-- Each test is also evaluated against a manually defined set of assertions, customized for the specific test case. This allows for more robust testing than just using axe-core.
+- The HTML is evaluated against axe-core, one of the most popular automated accessibility testing engines.
+- The HTML is also evaluated against a manually defined set of assertions, customized for the specific test case. This allows for more robust testing than just using axe-core.
 - Tests only pass if zero axe-core failures are found AND all *requirement* assertions pass. Best Practice (BP) assertion failures do not fail the test but are tracked separately.
 
 ## Features
