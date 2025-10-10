@@ -32,7 +32,7 @@ def run(
     out: str = typer.Option("runs", help="Output directory"),
     samples: int = typer.Option(1, min=1, help="Number of samples per (test,model)."),
     k: str = typer.Option("1,5,10", help="Comma-separated k values for pass@k metrics."),
-    base_seed: int = typer.Option(42, help="Base seed for reproducibility; each sample adds its index."),
+    base_seed: int = typer.Option(None, help="Base seed for reproducibility; each sample adds its index."),
     temperature: float = typer.Option(None, help="Override model temperature (if supported)."),
     disable_cache: bool = typer.Option(False, help="Disable generation cache (always re-generate)."),
     test_cases_dir: str = typer.Option("test_cases", help="Directory containing test case folders."),
