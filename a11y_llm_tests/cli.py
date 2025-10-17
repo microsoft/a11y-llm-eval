@@ -79,7 +79,7 @@ def run(
                 screenshot_name = f"{test_name}__{model}__s{sample_index}.png" if samples > 1 else f"{test_name}__{model}.png"
                 screenshot_path = out_dir / "screenshots" / screenshot_name
                 screenshot_path.parent.mkdir(exist_ok=True, parents=True)
-                node_res = node_bridge.run_in_puppeteer(html, str(test_js), str(screenshot_path))
+                node_res = node_bridge.run(html, str(test_js), str(screenshot_path))
                 tf = node_res.get("testFunctionResult", {})
                 assertions_raw = tf.get("assertions", [])
                 # Normalize assertion types; default to 'R'

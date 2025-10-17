@@ -3,13 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
-  "description": "Puppeteer + axe-core runner for a11y-llm-tests",
+  "description": "Playwright + axe-core runner for a11y-llm-tests",
   "main": "runner.js",
   "scripts": {
     "start": "node runner.js"
   },
   "dependencies": {
-    "axe-core": "^4.0.0",
-    "puppeteer": "^24.0.0"
+  "axe-core": "^4.10.0",
+  "playwright": "^1.48.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
