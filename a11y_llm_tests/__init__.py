@@ -5,7 +5,7 @@ Toolkit to evaluate how well various LLMs generate accessible HTML.
 Primary entrypoints:
  - cli.py (Typer CLI)
  - generator.py (LLM generation + caching)
- - node_bridge.py (Puppeteer + axe-core invocation)
+ - node_bridge.py (Playwright + axe-core invocation)
  - report.py (HTML report rendering)
 """
 

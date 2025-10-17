@@ -29,7 +29,7 @@ def fake_generate_html_with_meta(model, prompt, temperature=None, seed=None, dis
     }
 
 
-def fake_run_in_puppeteer(html, test_js_path, screenshot_path):
+def fake_run(html, test_js_path, screenshot_path):
     # Extract seed from comment to decide pass/fail
     import re
     m = re.search(r"seed:(\d+)", html)
@@ -52,7 +52,7 @@ def fake_run_in_puppeteer(html, test_js_path, screenshot_path):
 
 def test_cli_sampling_multi(monkeypatch, tmp_path):
     monkeypatch.setattr("a11y_llm_tests.generator.generate_html_with_meta", fake_generate_html_with_meta)
-    monkeypatch.setattr("a11y_llm_tests.node_bridge.run_in_puppeteer", fake_run_in_puppeteer)
+    monkeypatch.setattr("a11y_llm_tests.node_bridge.run", fake_run)
 
     # Create a minimal test case directory
     tc_dir = tmp_path / "test_cases" / "sample-case"
@@ -106,7 +106,7 @@ def test_cli_sampling_multi(monkeypatch, tmp_path):
 
 def test_cli_sampling_single(monkeypatch, tmp_path):
     monkeypatch.setattr("a11y_llm_tests.generator.generate_html_with_meta", fake_generate_html_with_meta)
-    monkeypatch.setattr("a11y_llm_tests.node_bridge.run_in_puppeteer", fake_run_in_puppeteer)
+    monkeypatch.setattr("a11y_llm_tests.node_bridge.run", fake_run)
 
     tc_dir = tmp_path / "test_cases" / "single"
     tc_dir.mkdir(parents=True)
@@ -153,7 +153,7 @@ def test_bp_failure_not_affect_requirement_pass(monkeypatch, tmp_path):
             "temperature": temperature,
         }
 
-    def run_puppet(html, test_js_path, screenshot_path):
+    def run(html, test_js_path, screenshot_path):
         return {
             "testFunctionResult": {
                 "status": "pass",  # legacy status (will be recomputed logic wise in runner normally)
@@ -167,7 +167,7 @@ def test_bp_failure_not_affect_requirement_pass(monkeypatch, tmp_path):
         }
 
     monkeypatch.setattr("a11y_llm_tests.generator.generate_html_with_meta", gen_html)
-    monkeypatch.setattr("a11y_llm_tests.node_bridge.run_in_puppeteer", run_puppet)
+    monkeypatch.setattr("a11y_llm_tests.node_bridge.run", run)
 
     tc_dir = tmp_path / "test_cases" / "bp-case"
     tc_dir.mkdir(parents=True)
