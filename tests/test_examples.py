@@ -124,7 +124,7 @@ def test_example_html(case_name, html_path, yaml_path, test_js_path, tmp_path):
     SCREENSHOT_ROOT.mkdir(parents=True, exist_ok=True)
     screenshot_file = SCREENSHOT_ROOT / f"{case_name}__{html_path.stem}.png"
 
-    result = node_bridge.run_in_puppeteer(html, str(test_js_path), str(screenshot_file))
+    result = node_bridge.run(html, str(test_js_path), str(screenshot_file))
 
     if "error" in result and result["error"]:
         print(f"Error running test case {case_name} with HTML {html_path}: {result['error']}")

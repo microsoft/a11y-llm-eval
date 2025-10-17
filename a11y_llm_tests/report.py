@@ -94,7 +94,7 @@ details summary { cursor: pointer; }
 <p>This report shows how well various LLMs generate accessible HTML.</p>
 <ul>
   <li>Each test uses a prompt to generate HTML. These prompts do not contain any accessibility guidance.</li>
-  <li>The resulting HTML is rendered in a browser via <a href="https://pptr.dev/">Puppeteer</a>. This allows the HTML's JavaScript and CSS to execute, which can impact accessibility.</li>
+  <li>The resulting HTML is rendered in a browser via Playwright (Chromium). This allows the HTML's JavaScript and CSS to execute, which can impact accessibility.</li>
   <li>The rendered HTML is evaluated using <a href="https://github.com/dequelabs/axe-core">axe-core</a> to identify common accessibility issues.</li>
   <li>A custom test script (JavaScript) is executed against the rendered page to check for accessibility requirements that are specific to the test case and not covered by axe-core. These tests look for <a href="https://www.w3.org/WAI/WCAG22/quickref/">WCAG 2.2</a>) failures and best practices. Best practices do not impact pass/fail results.</li>
   <li>Each test case is run multiple times (samples) with different random seeds to evaluate the consistency and reliability of the LLM's output.</li>

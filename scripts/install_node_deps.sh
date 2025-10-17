@@ -6,4 +6,5 @@ if [ ! -f package.json ]; then
   exit 1
 fi
 npm install
+npx playwright install chromium
 echo "Node dependencies installed." 

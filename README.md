@@ -10,14 +10,14 @@ Create a public test suite which can be used to benchmark how well various LLMs 
 
 ## Methdology
 - Each test case contains a prompt to generate an HTML page to demonstrate a specific pattern or component.
-- This page is passed to Puppeteer and rendered in a browser. Tests are executed against this rendered page.
+- This page is rendered in a real browser using Playwright (Chromium). Tests are executed against this rendered page.
 - The HTML is evaluated against axe-core, one of the most popular automated accessibility testing engines.
 - The HTML is also evaluated against a manually defined set of assertions, customized for the specific test case. This allows for more robust testing than just using axe-core.
 - Tests only pass if zero axe-core failures are found AND all *requirement* assertions pass. Best Practice (BP) assertion failures do not fail the test but are tracked separately.
 
 ## Features
 - Python orchestrator (generation, execution, reporting)
-- Node.js Puppeteer + axe-core evaluation
+- Node.js Playwright + axe-core evaluation
 - Per-test prompts & injected JS assertions
 - HTML report summarizing performance
 - Token + cost tracking (tokens in/out/total, per-generation cost, aggregated per model)

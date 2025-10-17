@@ -1,14 +1,16 @@
 #!/usr/bin/env node
-// Puppeteer + axe-core executor.
+// Playwright + axe-core executor (mirrors runner.js for Puppeteer).
+// NOTE: Initially Chromium-only; future work may add firefox/webkit via arg/env.
+
 const fs = require("fs");
 const path = require("path");
-const puppeteer = require("puppeteer");
+const { chromium } = require("playwright");
 const axeSource = require("axe-core").source;
 
 async function main() {
   const [,, htmlPath, testJsPath, outJsonPath, screenshotPath] = process.argv;
   if (!htmlPath || !testJsPath || !outJsonPath) {
-    console.error("Usage: node runner.js <htmlPath> <testJsPath> <outJsonPath> [screenshotPath]");
+    console.error("Usage: node playwright_runner.js <htmlPath> <testJsPath> <outJsonPath> [screenshotPath]");
     process.exit(2);
   }
   const html = fs.readFileSync(htmlPath, "utf-8");
@@ -19,17 +21,22 @@ async function main() {
     console.error("Failed loading test file:", e);
     testFn = {};
   }
-  const browser = await puppeteer.launch({ headless: true });
-  const page = await browser.newPage();
-  let consoleLogs = [];
+
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+  const consoleLogs = [];
   page.on("console", msg => consoleLogs.push(msg.text()));
+
   const start = Date.now();
   let testFunctionResult = { status: "error", assertions: [] };
   let axeResult = null;
   let errorMsg = null;
+
   try {
     await page.setContent(html, { waitUntil: "load" });
     await page.addScriptTag({ content: axeSource });
+
     if (!testFn.run || typeof testFn.run !== 'function') {
       testFunctionResult = { status: 'error', assertions: [], error: 'No run export (expected module.exports.run = async ({ page, assert }) => {...})' };
     } else {
@@ -42,7 +49,7 @@ async function main() {
           const r = await fn();
           // Allow boolean or object { pass, message }
           let passVal = r;
-            let message;
+          let message;
           if (r && typeof r === 'object' && 'pass' in r) {
             passVal = r.pass;
             message = r.message;
@@ -69,9 +76,10 @@ async function main() {
         duration_ms
       };
     }
+
     axeResult = await page.evaluate(async () => {
       const results = await window.axe.run();
-      
+
       // Separate WCAG violations from best practice violations
       const wcagViolations = [];
       const bestPracticeViolations = [];
@@ -79,21 +87,18 @@ async function main() {
       results.violations.forEach(v => {
         const mappedViolation = {
           id: v.id,
-          impact: v.impact,
-          description: v.description,
-          helpUrl: v.helpUrl,
-          nodes: v.nodes.map(n => ({ html: n.html, target: n.target })),
-          tags: v.tags
+            impact: v.impact,
+            description: v.description,
+            helpUrl: v.helpUrl,
+            nodes: v.nodes.map(n => ({ html: n.html, target: n.target })),
+            tags: v.tags
         };
-        
-        // Check if this is a best practice violation
         if (v.tags.includes('best-practice')) {
           bestPracticeViolations.push(mappedViolation);
         } else {
           wcagViolations.push(mappedViolation);
         }
       });
-      
       return {
         violation_count: wcagViolations.length,
         violations: wcagViolations,
@@ -101,8 +106,13 @@ async function main() {
         best_practice_violations: bestPracticeViolations
       };
     });
+
     if (screenshotPath) {
-      await page.screenshot({ path: screenshotPath, fullPage: true });
+      try {
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+      } catch (e) {
+        console.error('Screenshot failed:', e.message);
+      }
     }
   } catch (e) {
     errorMsg = e.stack || e.message;
@@ -112,7 +122,10 @@ async function main() {
   } finally {
     await browser.close();
   }
+
   const out = {
+    engine: 'playwright',
+    browser: 'chromium',
     testFunctionResult,
     axeResult,
     consoleLogs,
