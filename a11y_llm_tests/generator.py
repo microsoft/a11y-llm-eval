@@ -50,6 +50,7 @@ def _meta_path(cache_file: Path) -> Path:
 def generate_html_with_meta(
     model: str,
     user_prompt: str,
+    iteration: int,
     temperature: Optional[float] = None,
     seed: Optional[int] = None,
     disable_cache: bool = False,
@@ -71,7 +72,8 @@ def generate_html_with_meta(
     h = prompt_hash(user_prompt)
     # Incorporate seed into cache identity for sampling diversity
     seed_part = f"_s{seed}" if seed is not None else ""
-    cache_file = CACHE_DIR / f"{model}_{h}_s{seed_part}.html"
+    iteration_part = f"_i{iteration}"
+    cache_file = CACHE_DIR / f"{model}_{h}{seed_part}{iteration_part}.html"
     meta_file = _meta_path(cache_file)
     if not disable_cache and cache_file.exists():
         html = cache_file.read_text(encoding="utf-8")

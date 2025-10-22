@@ -65,6 +65,7 @@ def run(
                 html, meta = generator.generate_html_with_meta(
                     model,
                     prompt,
+                    sample_index,
                     temperature=temperature,
                     seed=seed,
                     disable_cache=disable_cache,

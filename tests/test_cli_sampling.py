@@ -12,7 +12,7 @@ class DummyResp:
         self.response_cost = 0.001
 
 
-def fake_generate_html_with_meta(model, prompt, temperature=None, seed=None, disable_cache=False):
+def fake_generate_html_with_meta(model, prompt, iteration, temperature=None, seed=None, disable_cache=False):
     # Generate deterministic pass/fail pattern by seed (even seed -> pass, odd -> fail)
     status_comment = f"<!-- seed:{seed} -->" if seed is not None else ""
     html = f"<html><body><h1>Test {model}</h1>{status_comment}</body></html>"
@@ -143,7 +143,7 @@ def test_cli_sampling_single(monkeypatch, tmp_path):
 
 def test_bp_failure_not_affect_requirement_pass(monkeypatch, tmp_path):
     # Requirement passes, BP fails => overall should pass
-    def gen_html(model, prompt, temperature=None, seed=None, disable_cache=False):
+    def gen_html(model, prompt, iteration, temperature=None, seed=None, disable_cache=False):
         return "<html><body><h1>Page</h1></body></html>", {
             "cached": False,
             "latency_s": 0.01,
