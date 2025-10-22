@@ -21,8 +21,12 @@ async function main() {
     console.error("Failed loading test file:", e);
     testFn = {};
   }
+  let launchOptions = { headless: true };
+  if (process.env.A11Y_LLM_EVAL_DEBUG === "1") {
+    launchOptions = { headless: false, slowMo: 1000 };
+  }
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch(launchOptions);
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   const consoleLogs = [];
@@ -33,9 +37,15 @@ async function main() {
   let axeResult = null;
   let errorMsg = null;
 
-  try {
+  async function loadHTML() {
+    await page.reload();
     await page.setContent(html, { waitUntil: "load" });
     await page.addScriptTag({ content: axeSource });
+    await page.evaluate(() => { window.axe.setup();});
+  }
+
+  try {
+    await loadHTML();
 
     if (!testFn.run || typeof testFn.run !== 'function') {
       testFunctionResult = { status: 'error', assertions: [], error: 'No run export (expected module.exports.run = async ({ page, assert }) => {...})' };
@@ -62,7 +72,7 @@ async function main() {
 
       const runStart = Date.now();
       try {
-        await testFn.run({ page, assert, utils: { /* future helpers */ } });
+        await testFn.run({ page, assert, utils: { reload: loadHTML } });
       } catch (e) {
         errorMsg = e.stack || e.message;
       }

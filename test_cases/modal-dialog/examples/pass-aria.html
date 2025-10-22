@@ -1,0 +1,174 @@
+
+<!doctype html>
+<html lang="en-us">
+	<head>
+		<meta charset="utf-8">
+		<title>
+			Pass - ARIA - Modal Dialog Examples
+		</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+        <script id="a11y-assertions" type="application/json">{
+            "assertions": {
+                "Each dialog has a dialog role": "pass",
+                "Each dialog can be closed by escape key": "pass",
+                "Each dialog traps keyboard focus": "pass",
+                "Each dialog takes focus when opened": "pass",
+                "Focus is not lost when each dialog closes": "pass",
+                "Each dialog hides content behind it while open": "pass"
+            }
+        }</script>
+	</head>
+	<body>
+		<main>
+            <div id="maincontent">
+                 <h1>Pass - ARIA - Modal Dialog Examples</h1>
+				
+                <button id=ba class="trigger">Invoke ARIA dialog</button>
+            </div>
+           
+            <div class=dc>
+                <div tabindex=0 data-bumper></div>
+                <div role=dialog aria-modal=true class=dialog data-code-snippet="name-role-value" data-component="dialog">
+                    <p>ARIA can be used to create modal <a href="https://w3c.github.io/aria/#dialog">dialogs</a>.</p>
+                    <p>There's extra work to make them properly. The native HTML
+                        <a href="https://html.spec.whatwg.org/multipage/interactive-elements.html#the-dialog-element">dialog element</a> 
+                        handles a lot of this for us automatically.</p>
+                    <p>
+                        It's generally better to use the native HTML dialog unless
+                        you have specific use cases where a custom dialog might perform better.
+                        But even then, you may be able to still use native HTML features
+                        over ARIA... just sayin...
+                    </p>
+                    <button>close</button>
+                </div>
+                <div tabindex=0 data-bumper></div>
+            </div>
+
+    
+            <style>
+                .dialog {
+                    background: white;
+                    border: 2px solid;
+                    padding: 1em;
+                    box-shadow: 0 0 1000px 1000px rgba(0,0,0,.625);
+                    position: fixed;
+                    inset: 0;
+                    margin: auto;
+                    max-width: 500px;
+                    max-height: 50vh;
+                    overflow: auto;
+                }
+                .dc {
+                    display: none;
+                }
+                .dc.open {
+                    display: block;
+                }
+            </style>
+            <script>
+                // Generic dialog functionality for multiple instances
+                const dialogButtons = document.querySelectorAll('#ba');
+                const dialogContainers = document.querySelectorAll('.dc');
+                const dialogs = document.querySelectorAll('.dialog');
+                const mainContent = document.getElementById('maincontent');
+                let dialogOpen = false;
+
+                // Set up each dialog button
+                dialogButtons.forEach((button, index) => {
+                    const dialogContainer = dialogContainers[index];
+                    const dialog = dialogs[index];
+                    const open = () => {
+                        dialogContainer.classList.add('open');
+                        mainContent.setAttribute('aria-hidden', 'true');
+                        dialogOpen = true;
+                    };
+                    const close = () => {
+                        dialogContainer.classList.remove('open');
+                        mainContent.removeAttribute('aria-hidden');
+                        dialogOpen = false;
+                        button.focus();
+                    };
+
+                    dialog.addEventListener('keydown', (event) => {
+                        if (event.key === 'Escape') {
+                            close();
+                        }
+                    });
+
+                    button.addEventListener('click', () => {
+                        // Close any other open dialogs first
+                        dialogContainers.forEach(container => container.classList.remove('open'));
+                        
+                        // Open this dialog
+                        open();
+                        
+                        // Find first focusable element within the dialog
+                        const focusableElements = dialog.querySelectorAll(
+                            'button, [href], input, select, textarea, [tabindex]'
+                            );
+                        
+                        if (focusableElements.length > 0) {
+                            focusableElements[0].focus();
+                        }
+                    });
+
+                    // Close button functionality for this dialog
+                    const closeButton = dialog.querySelector('button');
+                    closeButton.addEventListener('click', () => {
+                        close();
+                    });
+                });
+
+                // Focus trap for bumper elements
+                const bumpers = document.querySelectorAll('[data-bumper]');
+                
+                bumpers.forEach((bumper) => {
+                    bumper.addEventListener('focus', () => {
+                        // Find which dialog container this bumper belongs to
+                        const dialogContainer = bumper.parentElement;
+                        const dialog = dialogContainer.querySelector('.dialog');
+                        
+                        if (dialog) {
+                            const focusableElements = dialog.querySelectorAll(
+                                'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+                            );
+                            
+                            if (focusableElements.length > 0) {
+                                // Check if this is the first or last bumper in this container
+                                const containerBumpers = dialogContainer.querySelectorAll('[data-bumper]');
+                                const bumperIndex = Array.from(containerBumpers).indexOf(bumper);
+                                
+                                if (bumperIndex === 0) {
+                                // First bumper - move to last focusable element
+                                focusableElements[focusableElements.length - 1].focus();
+                                } else {
+                                // Last bumper - move to first focusable element
+                                focusableElements[0].focus();
+                                }
+                            }
+                        }
+                    });
+                });
+
+                function checkARIADialogFocusEscape() {
+                    const activeElement = document.activeElement;
+                    
+                    // Check if dta dialog is open and focus has escaped
+                    if (dialogOpen) {
+                        const dta = document.querySelector('[role=dialog]');
+                        if (!dta.closest('.dc').contains(activeElement)) {
+                            const focusableElements = dta.querySelectorAll(
+                                'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+                            );
+                            if (focusableElements.length > 0) {
+                                focusableElements[0].focus();
+                            }
+                        }
+                    }
+                }
+                // Check for focus escape on focus events for ARIA dialog
+                document.addEventListener('focusin', checkARIADialogFocusEscape);
+            </script>
+		</main>
+	</body>
+</html>

@@ -1,0 +1,56 @@
+
+<!doctype html>
+<html lang="en-us">
+	<head>
+        <meta charset="utf-8">
+        <title>
+            Fail - custom - modal dialog example
+        </title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+        <script id="a11y-assertions" type="application/json">{
+            "assertions": {
+                "Each dialog has a dialog role": "fail"
+            }
+        }</script>
+	</head>
+	<body>
+		<main>
+
+
+            <h1>Fail - custom - modal dialog example</h1>
+            <h2>Example 1: passing</h2>
+            <div class=test-case>
+                <button popovertarget=d1 class="trigger">Invoke popover 1</button>
+
+                <div role=dialog popover id=d1>
+                    <h2>popover 1</h2>
+                    <p>Look ma, no JS!  But is it good enough?</p>
+                    <button popovertarget=d1>close</button>
+                </div>
+
+                <style>
+                    [popover]::backdrop {
+                    background: rgba(0,0,0,.75);
+                    }
+                </style>
+            </div>
+
+            <h2>Example 2: failing</h2>
+            <div class=test-case>
+                <button popovertarget=d2 class="trigger">Invoke popover 2</button>
+
+                <div popover id=d2>
+                    <h2>popover 2</h2>
+                    <p>Look ma, no JS!  But is it good enough?</p>
+                    <button popovertarget=d2>close</button>
+                </div>
+
+                <style>
+                    [popover]::backdrop {
+                    background: rgba(0,0,0,.75);
+                    }
+                </style>
+            </div>
+		</main>
+	</body>
+</html>

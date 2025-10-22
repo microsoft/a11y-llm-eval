@@ -1,0 +1,70 @@
+
+<!doctype html>
+<html lang="en-us">
+    <head>
+        <meta charset="utf-8">
+        <title>
+            Pass - Native - Modal Dialog example
+        </title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+        <script id="a11y-assertions" type="application/json">{
+            "assertions": {
+                "Each dialog has a dialog role": "pass",
+                "Each dialog can be closed by escape key": "pass",
+                "Each dialog traps keyboard focus": "pass",
+                "Each dialog takes focus when opened": "pass",
+                "Focus is not lost when each dialog closes": "pass"
+            }
+        }</script>
+    </head>
+    <body>
+		<main>
+            <h2>Pass - Native - Modal Dialog example</h2>
+            <div class=test-case>
+                <button id=t1 class="trigger">Invoke example</button>
+                <dialog id=d1>
+                    <p>Test content</p>
+                    <form method=dialog>
+                        <button>OK</button>
+                    </form>
+                </dialog>
+                <script>
+                    const t1 = document.getElementById('t1');
+                    const d1= document.getElementById('d1');
+
+                    t1.addEventListener('click', ()=> {
+                        d1.showModal();
+                    })
+                </script>
+                <style>
+                    #d1 {
+                    box-shadow: 0 0 1000px 1000px rgba(0,0,0,.625);
+                    }
+                </style>
+            </div>
+
+            <div class=test-case>
+                <button id=t2 class="trigger">Invoke example</button>
+                <dialog id=d2>
+                    <p>Test content 2</p>
+                    <form method=dialog>
+                        <button>OK</button>
+                    </form>
+                </dialog>
+                <script>
+                    const t2 = document.getElementById('t2');
+                    const d2 = document.getElementById('d2');
+
+                    t2.addEventListener('click', ()=> {
+                        d2.showModal();
+                    })
+                </script>
+                <style>
+                    #d2 {
+                    box-shadow: 0 0 1000px 1000px rgba(0,0,0,.625);
+                    }
+                </style>
+            </div>
+        </main>
+    </body>
+</html>
