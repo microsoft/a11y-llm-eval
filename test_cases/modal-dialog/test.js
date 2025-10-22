@@ -42,43 +42,6 @@ module.exports.run = async ({ page, assert, utils }) => {
             { dialog: await page.getByRole('dialog').elementHandle()});
     }
 
-    /* Loop through all dialog triggers, open the dialog, and assert that a dialog role is present */
-    await assert("Each dialog has a dialog role", async () => {
-        await utils.reload(); // Ensure clean state before starting
-        const triggers = await page.locator('.trigger');
-        const totalTriggers = await triggers.count();
-        let totalDialogs = 0;
-        for (const trigger of await triggers.all()) {
-            await trigger.click();
-            if (await dialogIsOpen()) {
-                totalDialogs += 1;
-            }
-            await dismissDialog();
-        }
-        return totalDialogs === totalTriggers;
-    });
-
-    /* Loop through all dialog triggers, open the dialog, and assert that the escape key works to close it */
-    await assert("Each dialog can be closed by escape key", async () => {
-        await utils.reload(); // Ensure clean state before starting
-        const triggers = await page.locator('.trigger');
-        const totalTriggers = await triggers.count();
-        let totalSuccess = 0;
-        for (const trigger of await triggers.all()) {
-            await dismissDialog();
-            await trigger.click(); 
-            if (!await dialogIsOpen()) {
-                throw new Error("Dialog did not open on trigger click");
-            }
-
-            await page.getByRole('dialog').press('Escape');
-            if (!(await dialogIsOpen())) {
-                totalSuccess += 1;
-            }
-        }
-        return totalSuccess === totalTriggers;
-    });
-
     const tryToEscapeDialog = async (key, iterations) => {
         // Tab forward many times to see if we can escape the dialog.
         let foundElements = [];
@@ -97,7 +60,42 @@ module.exports.run = async ({ page, assert, utils }) => {
         }
     }
 
-    /* Loop through all dialog triggers, open the dialog, and assert that keyboard focus is trapped */
+    /* Loop through all dialog triggers, open the dialog, and assert that a dialog role is present */
+    await assert("Each dialog has a dialog role", async () => {
+        await utils.reload(); // Ensure clean state before starting
+        const triggers = await page.locator('.trigger');
+        const totalTriggers = await triggers.count();
+        let totalDialogs = 0;
+        for (const trigger of await triggers.all()) {
+            await trigger.click();
+            if (await dialogIsOpen()) {
+                totalDialogs += 1;
+            }
+            await dismissDialog();
+        }
+        return totalDialogs === totalTriggers;
+    });
+
+    await assert("Each dialog can be closed by escape key", async () => {
+        await utils.reload(); // Ensure clean state before starting
+        const triggers = await page.locator('.trigger');
+        const totalTriggers = await triggers.count();
+        let totalSuccess = 0;
+        for (const trigger of await triggers.all()) {
+            await dismissDialog();
+            await trigger.click(); 
+            if (!await dialogIsOpen()) {
+                throw new Error("Dialog did not open on trigger click");
+            }
+
+            await page.getByRole('dialog').press('Escape');
+            if (!(await dialogIsOpen())) {
+                totalSuccess += 1;
+            }
+        }
+        return totalSuccess === totalTriggers;
+    }, {type: 'BP'});
+
     await assert("Each dialog traps keyboard focus", async () => {
         await utils.reload(); // Ensure clean state before starting
         const triggers = await page.locator('.trigger');
@@ -194,14 +192,13 @@ module.exports.run = async ({ page, assert, utils }) => {
             }
             
             let isScreenReaderHidden = await trigger.evaluate(el => {
-                // Use axe-core's isVisible util to determine hidden from screen reader users
-                // TODO: Does not check for inert, or modal attribute on open dialog. Need to add those checks.
+                // Use axe-core's util to determine hidden from screen reader users.
                 let vEl = window.axe.utils.getNodeFromTree(el)
                 return !window.axe.commons.dom.isVisibleToScreenReaders(vEl);
             });
            
             if (!isScreenReaderHidden) {
-                // Trigger is still visible, so fail this iteration.
+                // Trigger is still visible to screen reader users, so fail this iteration.
                 continue;
             }
 
