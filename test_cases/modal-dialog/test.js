@@ -170,6 +170,7 @@ module.exports.run = async ({ page, assert, utils }) => {
             if (bodyIsFocused) {
                 // Focus is on body, meaning that focus was lost, so fail this iteration.
                 // focusIsInDialog would have returned true if focus was on the Body element.
+                // Note: this does not cover the scenario where the modal dialog triggers automatically on page load before the user can interact with the page. In this situation, focus should return to the body.
                 continue;
             }
 
