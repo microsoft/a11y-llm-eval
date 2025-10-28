@@ -9,17 +9,23 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
         <script id="a11y-assertions" type="application/json">{
             "assertions": {
+                "Each dialog has a dialog role": "fail",
                 "Each dialog can be closed by escape key": "fail",
-                "Each dialog traps keyboard focus": "fail",
-                "Each dialog takes focus when opened": "fail",
+                "Each modal dialog traps keyboard focus": "fail",
+                "Each modal dialog takes focus when opened": "fail",
                 "Focus is not lost when each dialog closes": "fail",
-                "Each dialog hides content behind it while open": "fail"
+                "Each modal dialog hides content behind it while open": "fail"
             }
         }</script>
 	</head>
 	<body>
 		<main>
             <h1>Fail - ARIA - Modal Dialog Examples</h1>
+
+            <p>
+                This is a failing example of an ARIA modal dialog. It has an incorrect role, does not hide content behind the dialog from
+                keyboard and screen reader users, and does not manage keyboard focus.
+            </p>
 				
             <button id=ba class="trigger">Invoke ARIA dialog</button>
 

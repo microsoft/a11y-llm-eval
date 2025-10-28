@@ -2,15 +2,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Modal dialog sample</title>
+  <title>Fail - sample - modal dialog</title>
 <script id="a11y-assertions" type="application/json">{
 "assertions": {
     "Each dialog has a dialog role": "pass",
     "Each dialog can be closed by escape key": "pass",
-    "Each dialog traps keyboard focus": "pass",
-    "Each dialog takes focus when opened": "pass",
+    "Each modal dialog traps keyboard focus": "pass",
+    "Each modal dialog takes focus when opened": "pass",
     "Focus is not lost when each dialog closes": "pass",
-    "Each dialog hides content behind it while open": "fail"
+    "Each modal dialog hides content behind it while open": "fail"
 }
 }</script>
   <style>
@@ -155,6 +155,11 @@
 <body>
   <main>
     <h1>Modal Dialog Component</h1>
+    <p>
+      The following is a failing example of a modal dialog component. It passes most of the requirements but
+      does not hide content behind it from screen reader users.
+    </p>
+
     <p>Click the button to open the modal. The button has the class "trigger".</p>
 
     <button class="trigger" type="button" aria-haspopup="dialog" id="openModal">Open Modal</button>

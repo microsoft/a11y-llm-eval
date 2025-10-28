@@ -96,7 +96,7 @@ module.exports.run = async ({ page, assert, utils }) => {
         return totalSuccess === totalTriggers;
     }, {type: 'BP'});
 
-    await assert("Each dialog traps keyboard focus", async () => {
+    await assert("Each modal dialog traps keyboard focus", async () => {
         await utils.reload(); // Ensure clean state before starting
         const triggers = await page.locator('.trigger');
         const totalTriggers = await triggers.count();
@@ -123,7 +123,7 @@ module.exports.run = async ({ page, assert, utils }) => {
         return totalSuccess === totalTriggers;
     });
 
-    await assert("Each dialog takes focus when opened", async () => {
+    await assert("Each modal dialog takes focus when opened", async () => {
         await utils.reload(); // Ensure clean state before starting
         const triggers = await page.locator('.trigger');
         const totalTriggers = await triggers.count();
@@ -178,7 +178,7 @@ module.exports.run = async ({ page, assert, utils }) => {
         return totalSuccess === totalTriggers;
     });
 
-    await assert("Each dialog hides content behind it while open", async () => {
+    await assert("Each modal dialog hides content behind it while open", async () => {
         await utils.reload(); // Ensure clean state before starting
         const triggers = await page.locator('.trigger');
         const totalTriggers = await triggers.count();

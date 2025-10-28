@@ -11,9 +11,10 @@
             "assertions": {
                 "Each dialog has a dialog role": "pass",
                 "Each dialog can be closed by escape key": "pass",
-                "Each dialog traps keyboard focus": "pass",
-                "Each dialog takes focus when opened": "pass",
+                "Each modal dialog traps keyboard focus": "pass",
+                "Each modal modal dialog takes focus when opened": "pass",
                 "Focus is not lost when each dialog closes": "pass"
+                "Each modal dialog hides content behind it while open": "pass"
             }
         }</script>
     </head>
@@ -44,7 +45,7 @@
             </div>
 
             <div class=test-case>
-                <button id=t2 class="trigger">Invoke example</button>
+                <button id=t2 class="trigger">Invoke example 2</button>
                 <dialog id=d2>
                     <p>Test content 2</p>
                     <form method=dialog>

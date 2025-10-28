@@ -11,10 +11,10 @@
             "assertions": {
                 "Each dialog has a dialog role": "pass",
                 "Each dialog can be closed by escape key": "pass",
-                "Each dialog traps keyboard focus": "pass",
-                "Each dialog takes focus when opened": "pass",
+                "Each modal dialog traps keyboard focus": "pass",
+                "Each modal dialog takes focus when opened": "pass",
                 "Focus is not lost when each dialog closes": "pass",
-                "Each dialog hides content behind it while open": "pass"
+                "Each modal dialog hides content behind it while open": "pass"
             }
         }</script>
 	</head>
@@ -104,7 +104,7 @@
                         
                         // Find first focusable element within the dialog
                         const focusableElements = dialog.querySelectorAll(
-                            'button, [href], input, select, textarea, [tabindex]'
+                            'button, [href], input:not([type=hidden]), select, textarea, [tabindex]'
                             );
                         
                         if (focusableElements.length > 0) {
