@@ -6,6 +6,7 @@ const fs = require("fs");
 const path = require("path");
 const { chromium } = require("playwright");
 const axeSource = require("axe-core").source;
+const merge = require('deepmerge')
 
 async function main() {
   const [,, htmlPath, testJsPath, outJsonPath, screenshotPath] = process.argv;
@@ -44,6 +45,14 @@ async function main() {
     await page.evaluate(() => { window.axe.setup();});
   }
 
+  async function runAxeOnPage(page) {
+    return await page.evaluate(async () => {
+      return await window.axe.run();
+    });
+  }
+
+  const utils = { reload: loadHTML, runAxeOnPage, merge };
+
   try {
     await loadHTML();
 
@@ -72,7 +81,7 @@ async function main() {
 
       const runStart = Date.now();
       try {
-        await testFn.run({ page, assert, utils: { reload: loadHTML } });
+        await testFn.run({ page, assert, utils });
       } catch (e) {
         errorMsg = e.stack || e.message;
       }
@@ -87,16 +96,16 @@ async function main() {
       };
     }
 
-    axeResult = await page.evaluate(async () => {
-      const results = await window.axe.run();
-
+    const processAxeResults = (results) => {
       // Separate WCAG violations from best practice violations
       const wcagViolations = [];
       const bestPracticeViolations = [];
       
+      let wcagCount = 0;
+      let bestPracticeCount = 0;
       results.violations.forEach(v => {
         const mappedViolation = {
-          id: v.id,
+            id: v.id,
             impact: v.impact,
             description: v.description,
             helpUrl: v.helpUrl,
@@ -105,17 +114,30 @@ async function main() {
         };
         if (v.tags.includes('best-practice')) {
           bestPracticeViolations.push(mappedViolation);
+          bestPracticeCount += mappedViolation.nodes.length;
         } else {
           wcagViolations.push(mappedViolation);
+          wcagCount += mappedViolation.nodes.length;
         }
       });
       return {
-        violation_count: wcagViolations.length,
+        violation_count: wcagCount,
         violations: wcagViolations,
-        best_practice_count: bestPracticeViolations.length,
+        best_practice_count: bestPracticeCount,
         best_practice_violations: bestPracticeViolations
       };
-    });
+    }
+
+    axeResult = await runAxeOnPage(page);
+
+    if (testFn.runAxe && typeof testFn.runAxe === 'function') {
+      const axeCustomResult = await testFn.runAxe({ page, utils});
+      if (axeCustomResult && typeof axeCustomResult === 'object') {
+        axeResult = merge(axeResult || {}, axeCustomResult);
+      }
+    }
+
+    axeResult = processAxeResults(axeResult);
 
     if (screenshotPath) {
       try {

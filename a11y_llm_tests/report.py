@@ -166,7 +166,7 @@ details summary { cursor: pointer; }
         <summary>Axe WCAG Violations ({{ r.axe.violation_count }}) <span role="img" aria-label="Fail">❌</span></summary>
         <ul>
           {% for v in r.axe.violations %}
-          <li><strong>{{ v.id }}</strong> ({{ v.impact }}): {{ v.description }}</li>
+          <li>({{ v.nodes|length }}x) - <strong>{{ v.id }}</strong> ({{ v.impact }}): {{ v.description }}</li>
           {% endfor %}
         </ul>
       </details>
