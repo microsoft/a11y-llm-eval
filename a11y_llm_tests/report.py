@@ -156,6 +156,7 @@ details summary { cursor: pointer; }
               <span role="img" aria-label="Pass">✅</span>:
             {% endif %}
             {{ a.name }} ({{ a.type if a.type else 'R' }}): {{ a.status }}
+            {% if a.message %} - {{ a.message }}{% endif %}
           </li>
           {% endfor %}
         </ul>

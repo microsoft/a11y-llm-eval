@@ -84,7 +84,7 @@ module.exports.run = async ({ page, assert, utils }) => {
             await dismissDialog(page);
             await trigger.click(); 
             if (!await dialogIsOpen(page)) {
-                throw new Error("Dialog did not open on trigger click");
+                throw new Error("Unable to test because no dialog was found");
             }
 
             await page.getByRole('dialog').press('Escape');
@@ -104,7 +104,7 @@ module.exports.run = async ({ page, assert, utils }) => {
             await dismissDialog(page);
             await trigger.click(); 
             if (!await dialogIsOpen(page)) {
-                throw new Error("Dialog did not open on trigger click");
+                throw new Error("Unable to test because no dialog was found");
             }
 
             if (await tryToEscapeDialog(page, 'Tab', 20)) {
@@ -131,7 +131,7 @@ module.exports.run = async ({ page, assert, utils }) => {
             await dismissDialog(page);
             await trigger.click();
             if (!await dialogIsOpen(page)) {
-                throw new Error("Dialog did not open on trigger click");
+                throw new Error("Unable to test because no dialog was found");
             }
 
             if (!(await focusIsInDialog(page))) {
@@ -160,7 +160,7 @@ module.exports.run = async ({ page, assert, utils }) => {
             await dismissDialog(page);
             await trigger.click();
             if (!await dialogIsOpen(page)) {
-                throw new Error("Dialog did not open on trigger click");
+                throw new Error("Unable to test because no dialog was found");
             }
 
             await dismissDialog(page, false);
@@ -188,7 +188,7 @@ module.exports.run = async ({ page, assert, utils }) => {
             await dismissDialog(page);
             await trigger.click();
             if (!await dialogIsOpen(page)) {
-                throw new Error("Dialog did not open on trigger click");
+                throw new Error("Unable to test because no dialog was found");
             }
             
             let isScreenReaderHidden = await trigger.evaluate(el => {
