@@ -102,6 +102,7 @@ def generate_html_with_meta(
 
     start = time.time()
     litellm.drop_params = True
+    print(f"Generating HTML with model={model}, temp={temperature}, seed={seed}...")
     resp = litellm.completion(
         model=model,
         messages=[
