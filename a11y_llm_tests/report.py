@@ -2,12 +2,14 @@
 from pathlib import Path
 import orjson
 from jinja2 import Template
+# importing os module for environment variables
+import os
 
 TEMPLATE = """<!DOCTYPE html>
 <html lang=\"en\">
 <head>
 <meta charset=\"UTF-8\" />
-<title>LLM Accessibility Evaluation Report</title>
+<title>{{ site_name }}</title>
 <base href=".">
 <style>
 body { font-family: system-ui, sans-serif; line-height:1.4; }
@@ -34,7 +36,7 @@ details summary { cursor: pointer; }
 <body>
 <a href=\"#main\" class=\"skip-link\">Skip to main content</a>
 <header>
-<h1>LLM Accessibility Evaluation</h1>
+<h1>{{ site_name }}</h1>
 <p>Run ID: {{ run_id }}</p>
 </header>
 <main id=\"main\">
@@ -48,7 +50,7 @@ details summary { cursor: pointer; }
 <tbody>
 {% for model, stats in summary.items() %}
 <tr>
-  <th>{{ stats.display_name }}</th>
+  <th>{{ model_display_names[model] }}</th>
   <td>{{ "%.2f"|format(stats.avg_violations) }}</td>
   <td>{{ "%.0f%%"|format(stats.req_pass_rate * 100) }}</td>
   <td>{{ "%.0f%%"|format(stats.bp_pass_rate * 100) }}</td>
@@ -77,7 +79,7 @@ details summary { cursor: pointer; }
 {% for a in aggregates %}
 <tr>
  <td>{{ a.test_name }}</td>
- <td>{{ a.display_model_name }}</td>
+ <td>{{ model_display_names[a.model_name] }}</td>
  <td>{{ a.n_samples }}</td>
  <td>{{ a.n_pass }}</td>
  {% for k,v in a.pass_at_k.items() %}
@@ -93,18 +95,20 @@ details summary { cursor: pointer; }
 <h2>Methodology</h2>
 <p>This report shows how well various LLMs generate accessible HTML.</p>
 <ul>
-  <li>Each test uses a prompt to generate HTML. These prompts do not contain any accessibility guidance.</li>
+  <li>Each test uses a prompt to generate HTML. The generated HTML is thentested for accessibility.</li>
+  <li>The prompts intentionally do not include specific accessibility instructions. The goal is to see if the LLMs produce accessible HTML by default.</li>
   <li>The resulting HTML is rendered in a browser via Playwright (Chromium). This allows the HTML's JavaScript and CSS to execute, which can impact accessibility.</li>
   <li>The rendered HTML is evaluated using <a href="https://github.com/dequelabs/axe-core">axe-core</a> to identify common accessibility issues.</li>
   <li>A custom test script (JavaScript) is executed against the rendered page to check for accessibility requirements that are specific to the test case and not covered by axe-core. These tests look for <a href="https://www.w3.org/WAI/WCAG22/quickref/">WCAG 2.2</a>) failures and best practices. Best practices do not impact pass/fail results.</li>
-  <li>Each test case is run multiple times (samples) with different random seeds to evaluate the consistency and reliability of the LLM's output.</li>
+  <li>Each test case is run multiple times (samples) to evaluate the consistency and reliability of the LLM's output.</li>
+  <li>Default temperatures / settings are used for all models.</li>
 </ul>
 <p>All tests are automatic and deterministic (no human intervention). Only a fraction of accessibility requirements in WCAG can be covered in this way. Many requirements still need a human to evaluate. As such, these tests are not comprehensive. Even if a test passes, it may still fail WCAG and contain serious accessibility issues.</p>
-<p>Please leave feedback, review the source code, and contribute test cases, assertions, and other improvements at the <a href="https://github.com/mfairchild365/a11y-llm-tests">GitHub Project</a>.</p>
+<p>Please leave feedback, review the source code, and contribute test cases, assertions, and other improvements at the <a href="https://github.com/microsoft/a11y-llm-eval">GitHub Project</a>.</p>
 <h2 id=\"details-h2\">Detailed Results</h2>
 {% for group in grouped_results %}
 <details>
-  <summary><h3>{{ group.test_name }} — {{ group.display_model_name }}</h3></summary>
+  <summary><h3>{{ group.test_name }} — {{ model_display_names[group.model_name] }}</h3></summary>
   {% if group.prompt %}
   <details>
     <summary>Prompt</summary>
@@ -135,7 +139,7 @@ details summary { cursor: pointer; }
         {% set _parts = r.screenshot_path.split('/') %}
         {% set _trimmed = '/'.join(_parts[2:]) %}
       <figure>
-        <img src="{{ _trimmed }}" alt="Screenshot sample {{ r.sample_index }} for {{ r.test_name }} / {{ r.model_name }}" style="max-width:320px;">
+        <img src="{{ _trimmed }}" alt="Screenshot sample {{ r.sample_index }} for {{ r.test_name }} / {{ model_display_names[r.model_name] }}" style="max-width:320px;">
       </figure>
       {% endif %}
       <details>
@@ -191,14 +195,14 @@ details summary { cursor: pointer; }
 </section>
 </main>
 <footer>
-<p>GitHub Project: <a href="https://github.com/mfairchild365/a11y-llm-tests">a11y-llm-tests</a>.</p>
+<p>GitHub Project: <a href="https://github.com/microsoft/a11y-llm-eval">a11y-llm-eval</a>.</p>
+{{ footer_content|safe }}
 </footer>
 </body>
 </html>
 """
 
-
-def render_report(run_json_path: Path, out_html: Path):
+def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     data = orjson.loads(run_json_path.read_bytes())
     from collections import defaultdict
     per_model = defaultdict(lambda: {
@@ -206,6 +210,13 @@ def render_report(run_json_path: Path, out_html: Path):
         "bp_violations": [], "axe_bp_passes": 0, "axe_bp_total": 0
     })
     results = data.get("results", [])
+    model_display_names = {}
+
+    for m in models_cfg.get("models", []):
+        model_name = m.get("name")
+        display_name = m.get("display_name", model_name.split('/')[-1])
+        model_display_names[model_name] = display_name
+
     for r in results:
         model = r["model_name"]
         per_model[model]["total"] += 1
@@ -256,8 +267,7 @@ def render_report(run_json_path: Path, out_html: Path):
             # Combined BP pass rate: custom BP assertions AND axe best practice violations
             "bp_pass_rate": combined_bp_pass_rate,
             "total_cost": total_cost,
-            "avg_cost": avg_cost,
-            "display_name": m.split('/')[-1],
+            "avg_cost": avg_cost
         }
 
     # Group samples by (test_name, model_name)
@@ -270,7 +280,6 @@ def render_report(run_json_path: Path, out_html: Path):
     agg_index = {}
     # Enhance aggregates with display_model_name (provider prefix stripped)
     for a in data.get("aggregates", []) or []:
-        a["display_model_name"] = a["model_name"].split('/')[-1]
         agg_index[(a["test_name"], a["model_name"])] = a
 
     prompts_map = data.get("prompts", {}) or {}
@@ -282,7 +291,6 @@ def render_report(run_json_path: Path, out_html: Path):
             {
                 "test_name": test_name,
                 "model_name": model_name,
-                "display_model_name": model_name.split('/')[-1],
                 "samples": samples_sorted,
                 "aggregate": agg_index.get((test_name, model_name)),
                 "prompt": prompts_map.get(test_name),
@@ -292,10 +300,13 @@ def render_report(run_json_path: Path, out_html: Path):
     html = Template(TEMPLATE).render(
         run_id=data.get("run_id", "unknown"),
         models=data.get("models", []),
+        model_display_names=model_display_names,
         tests=data.get("tests", []),
         summary=summary,
         results=results,
         aggregates=data.get("aggregates", []),
         grouped_results=grouped_results,
+        site_name=os.getenv("SITE_NAME", "A11y LLM Eval"),
+        footer_content=os.getenv("FOOTER_CONTENT", ""),
     )
     out_html.write_text(html, encoding="utf-8")

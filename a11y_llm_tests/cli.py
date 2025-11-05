@@ -178,7 +178,7 @@ def run(
     except OSError:
         pass
     from .report import render_report
-    render_report(out_dir / "results.json", out_dir / "report.html")
+    render_report(out_dir / "results.json", out_dir / "report.html", models_cfg)
     typer.echo(f"Run complete: {out_dir}/report.html")
 
 
