@@ -58,11 +58,15 @@ const tryToEscapeDialog = async (page, key, iterations) => {
     }
 }
 
+const getTriggers = async (page) => {
+    return await page.locator('.trigger').filter({ visible: true });
+}
+
 module.exports.run = async ({ page, assert, utils }) => {
     /* Loop through all dialog triggers, open the dialog, and assert that a dialog role is present */
     await assert("Each dialog has a dialog role", async () => {
         await utils.reload(); // Ensure clean state before starting
-        const triggers = await page.locator('.trigger');
+        const triggers = await getTriggers(page);
         const totalTriggers = await triggers.count();
         let totalDialogs = 0;
         for (const trigger of await triggers.all()) {
@@ -77,7 +81,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 
     await assert("Each dialog can be closed by escape key", async () => {
         await utils.reload(); // Ensure clean state before starting
-        const triggers = await page.locator('.trigger');
+        const triggers = await getTriggers(page);
         const totalTriggers = await triggers.count();
         let totalSuccess = 0;
         for (const trigger of await triggers.all()) {
@@ -97,7 +101,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 
     await assert("Each modal dialog traps keyboard focus", async () => {
         await utils.reload(); // Ensure clean state before starting
-        const triggers = await page.locator('.trigger');
+        const triggers = await getTriggers(page);
         const totalTriggers = await triggers.count();
         let totalSuccess = 0;
         for (const trigger of await triggers.all()) {
@@ -124,7 +128,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 
     await assert("Each modal dialog takes focus when opened", async () => {
         await utils.reload(); // Ensure clean state before starting
-        const triggers = await page.locator('.trigger');
+        const triggers = await getTriggers(page);
         const totalTriggers = await triggers.count();
         let totalSuccess = 0;
         for (const trigger of await triggers.all()) {
@@ -153,7 +157,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 
     await assert("Focus is not lost when each dialog closes", async () => {
         await utils.reload(); // Ensure clean state before starting
-        const triggers = await page.locator('.trigger');
+        const triggers = await getTriggers(page);
         const totalTriggers = await triggers.count();
         let totalSuccess = 0;
         for (const trigger of await triggers.all()) {
@@ -180,7 +184,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 
     await assert("Each modal dialog hides content behind it while open", async () => {
         await utils.reload(); // Ensure clean state before starting
-        const triggers = await page.locator('.trigger');
+        const triggers = await getTriggers(page);
         const totalTriggers = await triggers.count();
         let totalSuccess = 0;
 
@@ -190,18 +194,26 @@ module.exports.run = async ({ page, assert, utils }) => {
             if (!await dialogIsOpen(page)) {
                 throw new Error("Unable to test because no dialog was found");
             }
-            
-            let isScreenReaderHidden = await trigger.evaluate(el => {
-                // Use axe-core's util to determine hidden from screen reader users.
-                let vEl = window.axe.utils.getNodeFromTree(el)
-                return !window.axe.commons.dom.isVisibleToScreenReaders(vEl);
-            });
-           
-            if (!isScreenReaderHidden) {
-                // Trigger is still visible to screen reader users, so fail this iteration.
-                continue;
-            }
 
+            // Determine if native modal dialog is opened, which always hides background content.
+            let isNativeModal = await page.evaluate(el => {
+                return !!document.querySelector(':modal')
+            });
+
+            if (!isNativeModal) {
+                // If not a native modal dialog, check if content behind the dialog is hidden from screen reader users.
+                let isScreenReaderHidden = await trigger.evaluate(el => {
+                    // Use axe-core's util to determine hidden from screen reader users.
+                    let vEl = window.axe.utils.getNodeFromTree(el)
+                    return !window.axe.commons.dom.isVisibleToScreenReaders(vEl);
+                });
+            
+                if (!isScreenReaderHidden) {
+                    // Trigger is still visible to screen reader users, so fail this iteration.
+                    continue;
+                }
+            }
+            
             totalSuccess += 1;
         }
         return totalSuccess === totalTriggers;
@@ -213,7 +225,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 module.exports.runAxe = async ({ page, utils }) => {
     await utils.reload(); // Ensure clean state before starting
 
-    const triggers = await page.locator('.trigger');
+    const triggers = await getTriggers(page);
     let axeResult = {};
 
     for (const trigger of await triggers.all()) {
