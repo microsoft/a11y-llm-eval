@@ -33,6 +33,11 @@ details summary h2, details summary h3, details summary h4, details summary h5 {
 details { border: 1px solid #ccc; border-radius: 4px; padding: 0.5rem; margin-bottom: 1rem; }
 details summary { cursor: pointer; }
 tbody th { text-align: left; }
+.filters { display:flex; flex-wrap:wrap; gap:0.75rem; margin-bottom:1rem; align-items:flex-end; }
+.filters label { display:flex; flex-direction:column; font-weight:600; font-size:0.9rem; }
+.filters select { margin-top:0.25rem; padding:0.25rem 0.5rem; font-size:0.9rem; }
+.filters button { padding:0.3rem 0.6rem; font-size:0.9rem; }
+.filters-summary { margin:0; font-size:0.9rem; font-weight:600; }
 </style>
 </head>
 <body>
@@ -96,6 +101,28 @@ tbody th { text-align: left; }
 </section>
 <section>
 <h2 id="details-h2">Detailed Results</h2>
+<div class="filters" role="region" aria-label="Detailed results filters">
+  <label>
+    Model
+    <select id="model-filter">
+      <option value="">All models</option>
+  {% for model, name in model_display_names|dictsort(by='value') %}
+      <option value="{{ model }}">{{ name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>
+    Result
+    <select id="result-filter">
+      <option value="">All results</option>
+      <option value="PASS">Pass</option>
+      <option value="FAIL">Fail</option>
+    </select>
+  </label>
+  <button type="button" id="reset-filters">Reset</button>
+</div>
+<p id="filter-count" class="filters-summary" aria-live="polite" aria-atomic="true"></p>
+<p id="no-results-message" hidden>No samples match the current filters.</p>
 {% for test_name, test_data in grouped_results.items() %}
 <section>
   <details>
@@ -107,7 +134,7 @@ tbody th { text-align: left; }
     </details>
     {% endif %}
     {% for group in test_data.models %}
-    <details>
+    <details data-model-group="{{ group.model_name }}">
       <summary><h4>{{ model_display_names[group.model_name] }}</h4></summary>
       {% set agg = group.aggregate %}
       {% if agg %}
@@ -121,7 +148,7 @@ tbody th { text-align: left; }
       {% endif %}
       <div class="samples">
       {% for r in group.samples %}
-        <div class="sample-card">
+        <div class="sample-card" data-model="{{ r.model_name }}" data-result="{{ r.result }}">
           {# Trim the first two path segments (e.g., 'runs/<run_id>/...') #}
           {% set _parts = r.generation_html_path.split('/') %}
           {% set _trimmed = '/'.join(_parts[2:]) %}
@@ -215,6 +242,82 @@ tbody th { text-align: left; }
 <p>GitHub Project: <a href="https://github.com/microsoft/a11y-llm-eval">a11y-llm-eval</a>.</p>
 {{ footer_content|safe }}
 </footer>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const modelFilter = document.getElementById('model-filter');
+  const resultFilter = document.getElementById('result-filter');
+  const resetButton = document.getElementById('reset-filters');
+  const modelSections = Array.from(document.querySelectorAll('[data-model-group]'));
+  const allCards = Array.from(document.querySelectorAll('.sample-card'));
+  const noResultsMessage = document.getElementById('no-results-message');
+  const countEl = document.getElementById('filter-count');
+  const totalCardCount = allCards.length;
+
+  function applyFilters() {
+    const modelValue = modelFilter ? modelFilter.value : '';
+    const resultValue = resultFilter ? resultFilter.value : '';
+    let anyVisible = false;
+    let visibleCardCount = 0;
+
+    modelSections.forEach(function (section) {
+      const cards = Array.from(section.querySelectorAll('.sample-card'));
+      const sectionModel = section.getAttribute('data-model-group');
+      let sectionHasVisibleCard = false;
+
+      cards.forEach(function (card) {
+        const cardModel = card.getAttribute('data-model');
+        const cardResult = card.getAttribute('data-result');
+        const matchesModel = !modelValue || cardModel === modelValue;
+        const matchesResult = !resultValue || cardResult === resultValue;
+        const shouldShowCard = matchesModel && matchesResult;
+
+        card.style.display = shouldShowCard ? '' : 'none';
+        if (shouldShowCard) {
+          sectionHasVisibleCard = true;
+          visibleCardCount += 1;
+        }
+      });
+
+      const sectionMatchesModel = !modelValue || sectionModel === modelValue;
+      const shouldShowSection = sectionMatchesModel && sectionHasVisibleCard;
+      section.style.display = shouldShowSection ? '' : 'none';
+      section.toggleAttribute('hidden', !shouldShowSection);
+
+      if (shouldShowSection) {
+        anyVisible = true;
+      }
+    });
+
+    if (noResultsMessage) {
+      noResultsMessage.hidden = anyVisible;
+    }
+    if (countEl) {
+      const message = anyVisible ? `Showing ${visibleCardCount} of ${totalCardCount} samples` : `Showing 0 of ${totalCardCount} samples`;
+      countEl.textContent = message;
+    }
+  }
+
+  if (modelFilter) {
+    modelFilter.addEventListener('change', applyFilters);
+  }
+  if (resultFilter) {
+    resultFilter.addEventListener('change', applyFilters);
+  }
+  if (resetButton) {
+    resetButton.addEventListener('click', function () {
+      if (modelFilter) {
+        modelFilter.value = '';
+      }
+      if (resultFilter) {
+        resultFilter.value = '';
+      }
+      applyFilters();
+    });
+  }
+
+  applyFilters();
+});
+</script>
 </body>
 </html>
 """
