@@ -32,6 +32,7 @@ a.skip-link { position:absolute; left:0; top:-40px; background:#000; color:#fff;
 details summary h2, details summary h3, details summary h4, details summary h5 { display:inline-block; }
 details { border: 1px solid #ccc; border-radius: 4px; padding: 0.5rem; margin-bottom: 1rem; }
 details summary { cursor: pointer; }
+tbody th { text-align: left; }
 </style>
 </head>
 <body>
@@ -42,16 +43,17 @@ details summary { cursor: pointer; }
 </header>
 <main id=\"main\">
 <section>
-<h2 id=\"summary-h2\">Summary</h2>
-<table aria-describedby=\"summary-caption\">
+<h2>Summary</h2>
+<table>
 <caption id=\"summary-caption\">Average statistics per model</caption>
 <thead>
-<tr><th>Model</th><th>Pass Rate</th><th>Avg Total Failures</th><th>Avg Axe Failures</th><th>Avg Assertion Failures</th><th>Avg Best Practice Failures</th></tr>
+<tr><th>Model</th><th>Rank</th><th>Pass Rate</th><th>Avg Total Failures</th><th>Avg Axe Failures</th><th>Avg Assertion Failures</th><th>Avg Best Practice Failures</th></tr>
 </thead>
 <tbody>
 {% for model, stats in summary.items() %}
 <tr>
   <th>{{ model_display_names[model] }}</th>
+  <td>{{ loop.index }}</td>
   <td>{{ "%.0f%%"|format(stats.pass_rate * 100) }}</td>
   <td>{{ "%.2f"|format(stats.avg_failures) }}</td>
   <td>{{ "%.2f"|format(stats.avg_axe_failures) }}</td>
@@ -84,7 +86,7 @@ details summary { cursor: pointer; }
  <td>{{ a.n_samples }}</td>
  <td>{{ a.n_pass }}</td>
  {% for k,v in a.pass_at_k.items() %}
-   <td>{{ '%.3f'|format(v) }}</td>
+   <td>{{ '%.2f'|format(v) }}</td>
  {% endfor %}
 </tr>
 {% endfor %}
