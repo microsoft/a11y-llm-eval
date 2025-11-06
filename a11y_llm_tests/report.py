@@ -2,6 +2,7 @@
 from pathlib import Path
 import orjson
 from jinja2 import Template
+from collections import OrderedDict
 # importing os module for environment variables
 import os
 
@@ -336,6 +337,16 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
             }
         )
 
+    summary = OrderedDict(
+        sorted(
+            summary.items(),
+            key=lambda item: (
+                -item[1]["pass_rate"],   # higher pass_rate first
+                item[1]["avg_failures"], # then lowest avg_failures
+            ),
+        )
+    )
+    
     html = Template(TEMPLATE).render(
         run_id=data.get("run_id", "unknown"),
         models=data.get("models", []),
