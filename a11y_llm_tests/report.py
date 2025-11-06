@@ -29,7 +29,7 @@ a.skip-link { position:absolute; left:0; top:-40px; background:#000; color:#fff;
 .sample-card h4 { margin:0 0 .25rem; font-size:1rem; }
 .pass-rate-bar { height:8px; background:#eee; position:relative; border-radius:4px; overflow:hidden; margin-bottom:1rem; margin-top:1rem;}
 .pass-rate-bar span { position:absolute; left:0; top:0; bottom:0; background:#0a0; }
-details h3 { display:inline-block; }
+details summary h2, details summary h3, details summary h4, details summary h5 { display:inline-block; }
 details { border: 1px solid #ccc; border-radius: 4px; padding: 0.5rem; margin-bottom: 1rem; }
 details summary { cursor: pointer; }
 </style>
@@ -46,7 +46,7 @@ details summary { cursor: pointer; }
 <table aria-describedby=\"summary-caption\">
 <caption id=\"summary-caption\">Average statistics per model</caption>
 <thead>
-<tr><th>Model</th><th>Pass Rate</th><th>Avg Total Failures</th><th>Avg Axe Failures</th><th>Avg Assertion Failures</th><th>Best Practice Pass Rate</th></tr>
+<tr><th>Model</th><th>Pass Rate</th><th>Avg Total Failures</th><th>Avg Axe Failures</th><th>Avg Assertion Failures</th><th>Avg Best Practice Failures</th></tr>
 </thead>
 <tbody>
 {% for model, stats in summary.items() %}
@@ -56,7 +56,7 @@ details summary { cursor: pointer; }
   <td>{{ "%.2f"|format(stats.avg_failures) }}</td>
   <td>{{ "%.2f"|format(stats.avg_axe_failures) }}</td>
   <td>{{ "%.2f"|format(stats.avg_assertion_failures) }}</td>
-  <td>{{ "%.0f%%"|format(stats.bp_pass_rate * 100) }}</td>
+  <td>{{ "%.2f"|format(stats.avg_bp_failures) }}</td>
 </tr>
 {% endfor %}
 </tbody>
@@ -93,108 +93,102 @@ details summary { cursor: pointer; }
 {% endif %}
 </section>
 <section>
-<h2>Methodology</h2>
-<p>This report shows how well various LLMs generate accessible HTML.</p>
-<ul>
-  <li>Each test uses a prompt to generate HTML. The generated HTML is thentested for accessibility.</li>
-  <li>The prompts intentionally do not include specific accessibility instructions. The goal is to see if the LLMs produce accessible HTML by default.</li>
-  <li>The resulting HTML is rendered in a browser via Playwright (Chromium). This allows the HTML's JavaScript and CSS to execute, which can impact accessibility.</li>
-  <li>The rendered HTML is evaluated using <a href="https://github.com/dequelabs/axe-core">axe-core</a> to identify common accessibility issues.</li>
-  <li>A custom test script (JavaScript) is executed against the rendered page to check for accessibility requirements that are specific to the test case and not covered by axe-core. These tests look for <a href="https://www.w3.org/WAI/WCAG22/quickref/">WCAG 2.2</a>) failures and best practices. Best practices do not impact pass/fail results.</li>
-  <li>Each test case is run multiple times (samples) to evaluate the consistency and reliability of the LLM's output.</li>
-  <li>Default temperatures / settings are used for all models.</li>
-</ul>
-<p>All tests are automatic and deterministic (no human intervention). Only a fraction of accessibility requirements in WCAG can be covered in this way. Many requirements still need a human to evaluate. As such, these tests are not comprehensive. Even if a test passes, it may still fail WCAG and contain serious accessibility issues.</p>
-<p>Please leave feedback, review the source code, and contribute test cases, assertions, and other improvements at the <a href="https://github.com/microsoft/a11y-llm-eval">GitHub Project</a>.</p>
-<h2 id=\"details-h2\">Detailed Results</h2>
-{% for group in grouped_results %}
-<details>
-  <summary><h3>{{ group.test_name }} — {{ model_display_names[group.model_name] }}</h3></summary>
-  {% if group.prompt %}
+<h2 id="details-h2">Detailed Results</h2>
+{% for test_name, test_data in grouped_results.items() %}
+<section>
   <details>
-    <summary>Prompt</summary>
-    <pre style="white-space:pre-wrap; background:#f9f9f9; padding:.5rem; border:1px solid #ddd;">{{ group.prompt }}</pre>
-  </details>
-  {% endif %}
-  {% set agg = group.aggregate %}
-  {% if agg %}
-  <p>Samples: {{ agg.n_samples }} | Passes: {{ agg.n_pass }}</p>
-  <table>
-    <thead><tr>{% for k,v in agg.pass_at_k.items() %}<th>pass@{{ k }}</th>{% endfor %}</tr></thead>
-    <tbody><tr>{% for k,v in agg.pass_at_k.items() %}<td>{{ '%.3f'|format(v) }}</td>{% endfor %}</tr></tbody>
-  </table>
-  {% set _percent = (100.0 * (agg.n_pass / agg.n_samples)) if agg.n_samples else 0 %}
-  <div class="pass-rate-bar" role="img" aria-label="Pass ratio - {{ _percent }} percent"><span style="width: {{ _percent }}%"></span></div>
-  {% endif %}
-  <div class="samples">
-  {% for r in group.samples %}
-    <div class="sample-card">
-      {# Trim the first two path segments (e.g., 'runs/<run_id>/...') #}
-      {% set _parts = r.generation_html_path.split('/') %}
-      {% set _trimmed = '/'.join(_parts[2:]) %}
-      <h4><a href="{{ _trimmed }}">Sample {{ r.sample_index if r.sample_index is not none else loop.index0 }}</a></h4>
-      <p><span class="badge-{{ 'pass' if r.result=='PASS' else 'fail' }}">{{ r.result }}</span> | Latency {{ '%.2f'|format(r.generation.latency_s) }}s{% if r.generation.cached %} cached{% endif %}</p>
-      <p>Axe WCAG: {{ r.axe.failure_count if r.axe else 'n/a' }}{% if r.axe and r.axe.best_practice_count > 0 %} | BP: {{ r.axe.best_practice_count }}{% endif %}{% if r.generation.cost_usd is not none %} | ${{ '%.4f'|format(r.generation.cost_usd) }}{% endif %}</p>
-      {% if r.screenshot_path %}
-        {# Trim the first two path segments (e.g., 'runs/<run_id>/...') #}
-        {% set _parts = r.screenshot_path.split('/') %}
-        {% set _trimmed = '/'.join(_parts[2:]) %}
-      <figure>
-        <img src="{{ _trimmed }}" alt="Screenshot sample {{ r.sample_index }} for {{ r.test_name }} / {{ model_display_names[r.model_name] }}" style="max-width:320px;">
-      </figure>
+    <summary><h3>{{ test_name }}</h3></summary>
+    {% if test_data.prompt %}
+    <details>
+      <summary>Prompt</summary>
+      <pre style="white-space:pre-wrap; background:#f9f9f9; padding:.5rem; border:1px solid #ddd;">{{ test_data.prompt }}</pre>
+    </details>
+    {% endif %}
+    {% for group in test_data.models %}
+    <details>
+      <summary><h4>{{ model_display_names[group.model_name] }}</h4></summary>
+      {% set agg = group.aggregate %}
+      {% if agg %}
+      <p>Samples: {{ agg.n_samples }} | Passes: {{ agg.n_pass }}</p>
+      <table>
+        <thead><tr>{% for k,v in agg.pass_at_k.items() %}<th>pass@{{ k }}</th>{% endfor %}</tr></thead>
+        <tbody><tr>{% for k,v in agg.pass_at_k.items() %}<td>{{ '%.3f'|format(v) }}</td>{% endfor %}</tr></tbody>
+      </table>
+      {% set _percent = (100.0 * (agg.n_pass / agg.n_samples)) if agg.n_samples else 0 %}
+      <div class="pass-rate-bar" role="img" aria-label="Pass ratio - {{ _percent }} percent"><span style="width: {{ _percent }}%"></span></div>
       {% endif %}
-      <details>
-        <summary>
-          Assertions
-          {% if r.test_function.status == "fail" %}
-            <span role="img" aria-label="Fail">❌</span>
-          {% elif r.test_function.status == "pass" %}
-            <span role="img" aria-label="Pass">✅</span>
+      <div class="samples">
+      {% for r in group.samples %}
+        <div class="sample-card">
+          {# Trim the first two path segments (e.g., 'runs/<run_id>/...') #}
+          {% set _parts = r.generation_html_path.split('/') %}
+          {% set _trimmed = '/'.join(_parts[2:]) %}
+          <h4><a href="{{ _trimmed }}">Sample {{ r.sample_index if r.sample_index is not none else loop.index0 }}</a></h4>
+          <p><span class="badge-{{ 'pass' if r.result=='PASS' else 'fail' }}">{{ r.result }}</span> | Latency {{ '%.2f'|format(r.generation.latency_s) }}s{% if r.generation.cached %} cached{% endif %}</p>
+          <p>Axe WCAG: {{ r.axe.failure_count if r.axe else 'n/a' }}{% if r.axe and r.axe.best_practice_count > 0 %} | BP: {{ r.axe.best_practice_count }}{% endif %}{% if r.generation.cost_usd is not none %} | ${{ '%.4f'|format(r.generation.cost_usd) }}{% endif %}</p>
+          {% if r.screenshot_path %}
+            {# Trim the first two path segments (e.g., 'runs/<run_id>/...') #}
+            {% set _parts = r.screenshot_path.split('/') %}
+            {% set _trimmed = '/'.join(_parts[2:]) %}
+            <figure>
+              <img src="{{ _trimmed }}" alt="Screenshot sample {{ r.sample_index }} for {{ r.test_name }} / {{ model_display_names[r.model_name] }}" style="max-width:320px;">
+            </figure>
           {% endif %}
-        </summary>
-        <ul>
-          {% for a in r.test_function.assertions %}
-          <li>
-            {% if a.status == "fail" %}
-              <span role="img" aria-label="Fail">❌</span>:
-            {% elif a.status == "pass" %}
-              <span role="img" aria-label="Pass">✅</span>:
-            {% endif %}
-            {{ a.name }} ({{ a.type if a.type else 'R' }}): {{ a.status }}
-            {% if a.message %} - {{ a.message }}{% endif %}
-          </li>
-          {% endfor %}
-        </ul>
-      </details>
-      {% if r.axe %}
-      {% if r.axe.failure_count > 0 %}
-      <details>
-        <summary>Axe WCAG Failures ({{ r.axe.failure_count }}) <span role="img" aria-label="Fail">❌</span></summary>
-        <ul>
-          {% for v in r.axe.failures %}
-          <li>({{ v.nodes|length }}x) - <strong>{{ v.id }}</strong> ({{ v.impact }}): {{ v.description }}</li>
-          {% endfor %}
-        </ul>
-      </details>
-      {% endif %}
-      {% if r.axe.best_practice_count > 0 %}
-      <details>
-        <summary>Axe Best Practice Issues ({{ r.axe.best_practice_count }}) <span role="img" aria-label="Warning">⚠️</span></summary>
-        <ul>
-          {% for v in r.axe.best_practice_failures %}
-          <li><strong>{{ v.id }}</strong> ({{ v.impact }}): {{ v.description }} <em>(Best Practice - does not affect pass/fail)</em></li>
-          {% endfor %}
-        </ul>
-      </details>
-      {% endif %}
-      {% endif %}
-    </div>
-  {% endfor %}
-  </div>
-</details>
+          <details>
+            <summary>
+              Assertions
+              {% if r.test_function.status == "fail" %}
+                <span role="img" aria-label="Fail">❌</span>
+              {% elif r.test_function.status == "pass" %}
+                <span role="img" aria-label="Pass">✅</span>
+              {% endif %}
+            </summary>
+            <ul>
+              {% for a in r.test_function.assertions %}
+              <li>
+                {% if a.status == "fail" %}
+                  <span role="img" aria-label="Fail">❌</span>:
+                {% elif a.status == "pass" %}
+                  <span role="img" aria-label="Pass">✅</span>:
+                {% endif %}
+                {{ a.name }} ({{ a.type if a.type else 'R' }}): {{ a.status }}
+                {% if a.message %} - {{ a.message }}{% endif %}
+              </li>
+              {% endfor %}
+            </ul>
+          </details>
+          {% if r.axe %}
+          {% if r.axe.failure_count > 0 %}
+          <details>
+            <summary>Axe WCAG Failures ({{ r.axe.failure_count }}) <span role="img" aria-label="Fail">❌</span></summary>
+            <ul>
+              {% for v in r.axe.failures %}
+              <li>({{ v.nodes|length }}x) - <strong>{{ v.id }}</strong> ({{ v.impact }}): {{ v.description }}</li>
+              {% endfor %}
+            </ul>
+          </details>
+          {% endif %}
+          {% if r.axe.best_practice_count > 0 %}
+          <details>
+            <summary>Axe Best Practice Issues ({{ r.axe.best_practice_count }}) <span role="img" aria-label="Warning">⚠️</span></summary>
+            <ul>
+              {% for v in r.axe.best_practice_failures %}
+              <li><strong>{{ v.id }}</strong> ({{ v.impact }}): {{ v.description }} <em>(Best Practice - does not affect pass/fail)</em></li>
+              {% endfor %}
+            </ul>
+          </details>
+          {% endif %}
+          {% endif %}
+        </div>
+      {% endfor %}
+      </div>
+    </details>
+    {% endfor %}
+  </details>
+</section>
 {% endfor %}
 </section>
-<section>
+<section hidden>
   <details>
     <summary><h2>Costs</h2></summary>
     <table>
@@ -284,22 +278,18 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         total_cost = sum(s["costs"]) if s["costs"] else 0.0
         avg_cost = (total_cost / s["total"]) if s["total"] else 0.0
         # Calculate combined best practice pass rate (custom BP assertions + axe BP failures)
-        total_bp_tests = s["bp_total"] + s["axe_bp_total"]
-        total_bp_passes = s["bp_passes"] + s["axe_bp_passes"]
-        combined_bp_pass_rate = (total_bp_passes / total_bp_tests) if total_bp_tests else 1.0
+        total_bp_failures = s["total_assertion_bp_failures"] + s["axe_bp_total"]
         total_axe_failures = s["total_axe_failures"]
         total_assertion_failures = s["total_assertion_failures"]
         total_assertion_bp_failures = s["total_assertion_bp_failures"]
         avg_assertion_failures = (total_assertion_failures / s["total"]) if s["total"] else 0.0
-        avg_bp_failures = (total_assertion_bp_failures / s["total"]) if s["total"] else 0.0
+        avg_bp_failures = (total_bp_failures / s["total"]) if s["total"] else 0.0
         total_failures = total_assertion_failures + total_axe_failures
         avg_failures = (total_failures / s["total"]) if s["total"] else 0.0
 
         summary[m] = {
             "avg_axe_failures": avg_axe_failures,
             "pass_rate": s["total_passes"] / s["total"] if s["total"] else 0,
-            # Combined BP pass rate: custom BP assertions AND axe best practice failures
-            "bp_pass_rate": combined_bp_pass_rate,
             "total_cost": total_cost,
             "avg_cost": avg_cost,
             "total_assertion_failures": total_assertion_failures,
@@ -316,7 +306,7 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         key = (r["test_name"], r["model_name"])
         grouped.setdefault(key, []).append(r)
     # Sort samples by sample_index if present
-    grouped_results = []
+    grouped_results = OrderedDict()
     agg_index = {}
     # Enhance aggregates with display_model_name (provider prefix stripped)
     for a in data.get("aggregates", []) or []:
@@ -327,13 +317,18 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         samples_sorted = sorted(
             samples, key=lambda x: (x.get("sample_index") is None, x.get("sample_index") or 0)
         )
-        grouped_results.append(
+        test_entry = grouped_results.setdefault(
+            test_name,
             {
-                "test_name": test_name,
+                "prompt": prompts_map.get(test_name),
+                "models": [],
+            },
+        )
+        test_entry["models"].append(
+            {
                 "model_name": model_name,
                 "samples": samples_sorted,
                 "aggregate": agg_index.get((test_name, model_name)),
-                "prompt": prompts_map.get(test_name),
             }
         )
 
@@ -352,10 +347,10 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         models=data.get("models", []),
         model_display_names=model_display_names,
         tests=data.get("tests", []),
-        summary=summary,
-        results=results,
-        aggregates=data.get("aggregates", []),
-        grouped_results=grouped_results,
+    summary=summary,
+    results=results,
+    aggregates=data.get("aggregates", []),
+    grouped_results=grouped_results,
         site_name=os.getenv("SITE_NAME", "A11y LLM Eval"),
         footer_content=os.getenv("FOOTER_CONTENT", ""),
     )
