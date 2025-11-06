@@ -22,6 +22,8 @@ class TestFunctionResult(BaseModel):
     assertions: List[AssertionResult] = []
     error: Optional[str] = None
     duration_ms: Optional[int] = None
+    total_assertion_failures: int = 0
+    total_assertion_bp_failures: int = 0
 
 
 class AxeNode(BaseModel):
@@ -29,7 +31,7 @@ class AxeNode(BaseModel):
     target: List[str] = []
 
 
-class AxeViolation(BaseModel):
+class AxeFailure(BaseModel):
     id: str
     impact: Optional[str]
     description: str
@@ -39,10 +41,10 @@ class AxeViolation(BaseModel):
 
 
 class AxeResult(BaseModel):
-    violation_count: int  # WCAG violations only (affects pass/fail)
-    violations: List[AxeViolation] = []  # WCAG violations only
-    best_practice_count: int = 0  # Best practice violations (informational)
-    best_practice_violations: List[AxeViolation] = []  # Best practice violations
+    failure_count: int  # WCAG failures only (affects pass/fail)
+    failures: List[AxeFailure] = []  # WCAG failures only
+    best_practice_count: int = 0  # Best practice failures (informational)
+    best_practice_failures: List[AxeFailure] = []  # Best practice failures
 
 
 class GenerationMeta(BaseModel):

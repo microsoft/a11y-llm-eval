@@ -40,22 +40,22 @@ details summary { cursor: pointer; }
 <p>Run ID: {{ run_id }}</p>
 </header>
 <main id=\"main\">
-<section aria-labelledby=\"summary-h2\">
+<section>
 <h2 id=\"summary-h2\">Summary</h2>
 <table aria-describedby=\"summary-caption\">
 <caption id=\"summary-caption\">Average statistics per model</caption>
 <thead>
-<tr><th>Model</th><th>Avg Axe Violations</th><th>Custom Test Pass Rate</th><th>Best Practice Pass Rate</th><th>Total Cost ($)</th><th>Avg Cost/Test ($)</th></tr>
+<tr><th>Model</th><th>Pass Rate</th><th>Avg Total Failures</th><th>Avg Axe Failures</th><th>Avg Assertion Failures</th><th>Best Practice Pass Rate</th></tr>
 </thead>
 <tbody>
 {% for model, stats in summary.items() %}
 <tr>
   <th>{{ model_display_names[model] }}</th>
-  <td>{{ "%.2f"|format(stats.avg_violations) }}</td>
-  <td>{{ "%.0f%%"|format(stats.req_pass_rate * 100) }}</td>
+  <td>{{ "%.0f%%"|format(stats.pass_rate * 100) }}</td>
+  <td>{{ "%.2f"|format(stats.avg_failures) }}</td>
+  <td>{{ "%.2f"|format(stats.avg_axe_failures) }}</td>
+  <td>{{ "%.2f"|format(stats.avg_assertion_failures) }}</td>
   <td>{{ "%.0f%%"|format(stats.bp_pass_rate * 100) }}</td>
-  <td>{{ "%.4f"|format(stats.total_cost) }}</td>
-  <td>{{ "%.4f"|format(stats.avg_cost) }}</td>
 </tr>
 {% endfor %}
 </tbody>
@@ -91,7 +91,7 @@ details summary { cursor: pointer; }
 </table>
 {% endif %}
 </section>
-<section aria-labelledby=\"details-h2\">
+<section>
 <h2>Methodology</h2>
 <p>This report shows how well various LLMs generate accessible HTML.</p>
 <ul>
@@ -133,7 +133,7 @@ details summary { cursor: pointer; }
       {% set _trimmed = '/'.join(_parts[2:]) %}
       <h4><a href="{{ _trimmed }}">Sample {{ r.sample_index if r.sample_index is not none else loop.index0 }}</a></h4>
       <p><span class="badge-{{ 'pass' if r.result=='PASS' else 'fail' }}">{{ r.result }}</span> | Latency {{ '%.2f'|format(r.generation.latency_s) }}s{% if r.generation.cached %} cached{% endif %}</p>
-      <p>Axe WCAG: {{ r.axe.violation_count if r.axe else 'n/a' }}{% if r.axe and r.axe.best_practice_count > 0 %} | BP: {{ r.axe.best_practice_count }}{% endif %}{% if r.generation.cost_usd is not none %} | ${{ '%.4f'|format(r.generation.cost_usd) }}{% endif %}</p>
+      <p>Axe WCAG: {{ r.axe.failure_count if r.axe else 'n/a' }}{% if r.axe and r.axe.best_practice_count > 0 %} | BP: {{ r.axe.best_practice_count }}{% endif %}{% if r.generation.cost_usd is not none %} | ${{ '%.4f'|format(r.generation.cost_usd) }}{% endif %}</p>
       {% if r.screenshot_path %}
         {# Trim the first two path segments (e.g., 'runs/<run_id>/...') #}
         {% set _parts = r.screenshot_path.split('/') %}
@@ -166,11 +166,11 @@ details summary { cursor: pointer; }
         </ul>
       </details>
       {% if r.axe %}
-      {% if r.axe.violation_count > 0 %}
+      {% if r.axe.failure_count > 0 %}
       <details>
-        <summary>Axe WCAG Violations ({{ r.axe.violation_count }}) <span role="img" aria-label="Fail">❌</span></summary>
+        <summary>Axe WCAG Failures ({{ r.axe.failure_count }}) <span role="img" aria-label="Fail">❌</span></summary>
         <ul>
-          {% for v in r.axe.violations %}
+          {% for v in r.axe.failures %}
           <li>({{ v.nodes|length }}x) - <strong>{{ v.id }}</strong> ({{ v.impact }}): {{ v.description }}</li>
           {% endfor %}
         </ul>
@@ -180,7 +180,7 @@ details summary { cursor: pointer; }
       <details>
         <summary>Axe Best Practice Issues ({{ r.axe.best_practice_count }}) <span role="img" aria-label="Warning">⚠️</span></summary>
         <ul>
-          {% for v in r.axe.best_practice_violations %}
+          {% for v in r.axe.best_practice_failures %}
           <li><strong>{{ v.id }}</strong> ({{ v.impact }}): {{ v.description }} <em>(Best Practice - does not affect pass/fail)</em></li>
           {% endfor %}
         </ul>
@@ -192,6 +192,26 @@ details summary { cursor: pointer; }
   </div>
 </details>
 {% endfor %}
+</section>
+<section>
+  <details>
+    <summary><h2>Costs</h2></summary>
+    <table>
+      <caption>Costs per model</caption>
+      <thead>
+        <tr><th>Model</th><th>Total Cost ($)</th><th>Avg Cost/Test ($)</th></tr>
+      </thead>
+      <tbody>
+        {% for model, stats in summary.items() %}
+        <tr>
+          <th>{{ model_display_names[model] }}</th>
+          <td>{{ "%.4f"|format(stats.total_cost) }}</td>
+          <td>{{ "%.4f"|format(stats.avg_cost) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
 </section>
 </main>
 <footer>
@@ -206,8 +226,9 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     data = orjson.loads(run_json_path.read_bytes())
     from collections import defaultdict
     per_model = defaultdict(lambda: {
-        "violations": [], "req_passes": 0, "bp_passes": 0, "total": 0, "bp_total": 0, "costs": [],
-        "bp_violations": [], "axe_bp_passes": 0, "axe_bp_total": 0
+        "axe_failures": [], "total_test_function_passes": 0, "bp_passes": 0, "total": 0, "bp_total": 0,  "costs": [],
+        "axe_bp_failures": [], "axe_bp_passes": 0, "axe_bp_total": 0, "total_axe_failures": 0,
+        "total_failures": 0, "total_passes": 0, "total_assertion_bp_failures": 0,  "total_assertion_failures": 0
     })
     results = data.get("results", [])
     model_display_names = {}
@@ -220,9 +241,11 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     for r in results:
         model = r["model_name"]
         per_model[model]["total"] += 1
-        # Determine requirement pass (test_function.status already excludes BP failures)
+        if r.get("result") == "PASS":
+            per_model[model]["total_passes"] += 1
+        # Determine test function pass count
         if r.get("test_function", {}).get("status") == "pass":
-            per_model[model]["req_passes"] += 1
+            per_model[model]["total_test_function_passes"] += 1
         # Track best-practice assertions pass rate separately
         assertions = r.get("test_function", {}).get("assertions", [])
         bp_assertions = [a for a in assertions if (a.get("type") or "R").upper() == "BP"]
@@ -230,18 +253,21 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
             per_model[model]["bp_total"] += 1  # treat per-test BP status aggregate: pass if all BP pass
             if all(a.get("status") == "pass" for a in bp_assertions):
                 per_model[model]["bp_passes"] += 1
+        per_model[model]["total_assertion_bp_failures"] +=r.get("test_function", {}).get("total_assertion_bp_failures", 0)
+        per_model[model]["total_assertion_failures"] +=r.get("test_function", {}).get("total_assertion_failures", 0)
         
-        # Track axe violations (WCAG only now) and best practice violations
+        # Track axe failures (WCAG only now) and best practice failures
         axe = r.get("axe") or {}
-        vc = axe.get("violation_count")  # WCAG violations only
-        if vc is not None:
-            per_model[model]["violations"].append(vc)
+        fc = axe.get("failure_count")  # WCAG failures only
+        if fc is not None:
+            per_model[model]["axe_failures"].append(axe.get("failures", []))
+        per_model[model]["total_axe_failures"] += fc
         
-        # Track axe best practice violations separately
-        bp_vc = axe.get("best_practice_count", 0)
-        per_model[model]["bp_violations"].append(bp_vc)
-        per_model[model]["axe_bp_total"] += 1
-        if bp_vc == 0:
+        # Track axe best practice failures separately
+        bp_fc = axe.get("best_practice_count", 0)
+        per_model[model]["axe_bp_failures"].append(axe.get("best_practice_failures", []))
+        per_model[model]["axe_bp_total"] += bp_fc
+        if bp_fc == 0:
             per_model[model]["axe_bp_passes"] += 1
         gen = r.get("generation", {})
         cost = gen.get("cost_usd")
@@ -253,21 +279,34 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     # create summary
     summary = {}
     for m, s in per_model.items():
-        avg_v = sum(s["violations"]) / len(s["violations"]) if s["violations"] else 0
+        avg_axe_failures = s["total_axe_failures"] / s["total"] if s["total"] else 0.0
         total_cost = sum(s["costs"]) if s["costs"] else 0.0
         avg_cost = (total_cost / s["total"]) if s["total"] else 0.0
-        # Calculate combined best practice pass rate (custom BP assertions + axe BP violations)
+        # Calculate combined best practice pass rate (custom BP assertions + axe BP failures)
         total_bp_tests = s["bp_total"] + s["axe_bp_total"]
         total_bp_passes = s["bp_passes"] + s["axe_bp_passes"]
         combined_bp_pass_rate = (total_bp_passes / total_bp_tests) if total_bp_tests else 1.0
-        
+        total_axe_failures = s["total_axe_failures"]
+        total_assertion_failures = s["total_assertion_failures"]
+        total_assertion_bp_failures = s["total_assertion_bp_failures"]
+        avg_assertion_failures = (total_assertion_failures / s["total"]) if s["total"] else 0.0
+        avg_bp_failures = (total_assertion_bp_failures / s["total"]) if s["total"] else 0.0
+        total_failures = total_assertion_failures + total_axe_failures
+        avg_failures = (total_failures / s["total"]) if s["total"] else 0.0
+
         summary[m] = {
-            "avg_violations": avg_v,
-            "req_pass_rate": s["req_passes"] / s["total"] if s["total"] else 0,
-            # Combined BP pass rate: custom BP assertions AND axe best practice violations
+            "avg_axe_failures": avg_axe_failures,
+            "pass_rate": s["total_passes"] / s["total"] if s["total"] else 0,
+            # Combined BP pass rate: custom BP assertions AND axe best practice failures
             "bp_pass_rate": combined_bp_pass_rate,
             "total_cost": total_cost,
-            "avg_cost": avg_cost
+            "avg_cost": avg_cost,
+            "total_assertion_failures": total_assertion_failures,
+            "total_assertion_bp_failures": total_assertion_bp_failures,
+            "avg_assertion_failures": avg_assertion_failures,
+            "avg_bp_failures": avg_bp_failures,
+            "total_failures": total_failures,
+            "avg_failures": avg_failures,
         }
 
     # Group samples by (test_name, model_name)

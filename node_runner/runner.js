@@ -88,11 +88,15 @@ async function main() {
       const duration_ms = Date.now() - runStart;
 
       // Normalize & determine status based only on requirement failures
-      const hasReqFailure = collected.some(a => a.type === 'R' && a.status === 'fail');
+      const hasAssertionFailure = collected.some(a => a.type === 'R' && a.status === 'fail');
+      const totalAssertionFailures = collected.filter(a => a.type === 'R' && a.status === 'fail').length;
+      const totalAssertionBpFailures = collected.filter(a => a.type === 'BP' && a.status === 'fail').length;
       testFunctionResult = {
-        status: hasReqFailure ? 'fail' : 'pass',
+        status: hasAssertionFailure ? 'fail' : 'pass',
         assertions: collected,
-        duration_ms
+        duration_ms,
+        total_assertion_failures: totalAssertionFailures,
+        total_assertion_bp_failures: totalAssertionBpFailures
       };
     }
 
@@ -121,10 +125,10 @@ async function main() {
         }
       });
       return {
-        violation_count: wcagCount,
-        violations: wcagViolations,
+        failure_count: wcagCount,
+        failures: wcagViolations,
         best_practice_count: bestPracticeCount,
-        best_practice_violations: bestPracticeViolations
+        best_practice_failures: bestPracticeViolations
       };
     }
 

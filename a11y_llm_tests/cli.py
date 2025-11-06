@@ -103,17 +103,19 @@ def run(
                     assertions=norm_assertions,
                     error=tf.get("error"),
                     duration_ms=tf.get("duration_ms"),
+                    total_assertion_failures=tf.get("total_assertion_failures", 0),
+                    total_assertion_bp_failures=tf.get("total_assertion_bp_failures", 0)
                 )
                 axe_data = node_res.get("axeResult") or node_res.get("axe_result") or node_res.get("axe")
                 axe_obj = None
                 if axe_data and isinstance(axe_data, dict):
                     axe_obj = AxeResult(
-                        violation_count=axe_data.get("violation_count", 0),
-                        violations=axe_data.get("violations", []),
+                        failure_count=axe_data.get("failure_count", 0),
+                        failures=axe_data.get("failures", []),
                         best_practice_count=axe_data.get("best_practice_count", 0),
-                        best_practice_violations=axe_data.get("best_practice_violations", []),
+                        best_practice_failures=axe_data.get("best_practice_failures", []),
                     )
-                result_pass = (test_result.status == "pass" and axe_obj.violation_count == 0)
+                result_pass = (test_result.status == "pass" and axe_obj.failure_count == 0)
                 pass_statuses.append(result_pass)
                 rec = ResultRecord(
                     test_name=test_name,
