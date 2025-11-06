@@ -181,8 +181,8 @@ def run(
     except OSError:
         pass
     from .report import render_report
-    render_report(out_dir / "results.json", out_dir / "report.html", models_cfg)
-    typer.echo(f"Run complete: {out_dir}/report.html")
+    render_report(out_dir / "results.json", out_dir / "index.html", models_cfg)
+    typer.echo(f"Run complete: {out_dir}/index.html")
 
 
 @app.command()
@@ -194,7 +194,7 @@ def report(
     models_cfg = yaml.safe_load(open(models_file))
     rd = Path(run_dir)
     from .report import render_report
-    render_report(rd / "results.json", rd / "report.rebuilt.html", models_cfg)
+    render_report(rd / "results.json", rd / "index.html", models_cfg)
     typer.echo("Report regenerated.")
 
 

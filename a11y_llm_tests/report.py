@@ -38,17 +38,16 @@ tbody th { text-align: left; }
 .filters select { margin-top:0.25rem; padding:0.25rem 0.5rem; font-size:0.9rem; }
 .filters button { padding:0.3rem 0.6rem; font-size:0.9rem; }
 .filters-summary { margin:0; font-size:0.9rem; font-weight:600; }
+table { margin-bottom:1rem; }
 </style>
 </head>
 <body>
 <a href=\"#main\" class=\"skip-link\">Skip to main content</a>
 <header>
 <h1>{{ site_name }}</h1>
-<p>Run ID: {{ run_id }}</p>
 </header>
 <main id=\"main\">
 <section>
-<h2>Summary</h2>
 <table>
 <caption id=\"summary-caption\">Average statistics per model</caption>
 <thead>
@@ -69,36 +68,53 @@ tbody th { text-align: left; }
 </tbody>
 </table>
 {% if aggregates %}
-<h3>Pass@k Aggregates</h3>
-<p>Pass@k is a formula that determines the likelyhood that if you pick random k samples from the set, then at least one of them would pass. For example, pass@10=.50 means that there is a 50 percent likelyhood that at least 1 of the 10 randomly selected samples from the set would pass.</p>
-<p>Pass@K is a metric used to evaluate the performance of code generation models, especially in scenarios where multiple code samples are generated for a single problem.</p>
-<table class="agg-table">
-<thead>
-<tr>
-  <th>Test</th><th>Model</th><th>Samples</th><th>Passes</th>
-  {% if aggregates and aggregates[0].pass_at_k %}
-    {% for k,v in aggregates[0].pass_at_k.items() %}
-      <th>pass@{{ k }}</th>
-    {% endfor %}
-  {% endif %}
-</tr>
-</thead>
-<tbody>
-{% for a in aggregates %}
-<tr>
- <td>{{ a.test_name }}</td>
- <td>{{ model_display_names[a.model_name] }}</td>
- <td>{{ a.n_samples }}</td>
- <td>{{ a.n_pass }}</td>
- {% for k,v in a.pass_at_k.items() %}
-   <td>{{ '%.2f'|format(v) }}</td>
- {% endfor %}
-</tr>
-{% endfor %}
-</tbody>
-</table>
+<details>
+  <summary><h2>Pass@k Aggregates</h2></summary>
+  <p>Pass@k is a formula that determines the likelyhood that if you pick random k samples from the set, then at least one of them would pass. For example, pass@10=.50 means that there is a 50 percent likelyhood that at least 1 of the 10 randomly selected samples from the set would pass.</p>
+  <p>Pass@K is a metric used to evaluate the performance of code generation models, especially in scenarios where multiple code samples are generated for a single problem.</p>
+  <table class="agg-table">
+  <thead>
+  <tr>
+    <th>Test</th><th>Model</th><th>Samples</th><th>Passes</th>
+    {% if aggregates and aggregates[0].pass_at_k %}
+      {% for k,v in aggregates[0].pass_at_k.items() %}
+        <th>pass@{{ k }}</th>
+      {% endfor %}
+    {% endif %}
+  </tr>
+  </thead>
+  <tbody>
+  {% for a in aggregates %}
+  <tr>
+  <td>{{ a.test_name }}</td>
+  <td>{{ model_display_names[a.model_name] }}</td>
+  <td>{{ a.n_samples }}</td>
+  <td>{{ a.n_pass }}</td>
+  {% for k,v in a.pass_at_k.items() %}
+    <td>{{ '%.2f'|format(v) }}</td>
+  {% endfor %}
+  </tr>
+  {% endfor %}
+  </tbody>
+  </table>
+</details>
 {% endif %}
 </section>
+<details>
+<summary open><h2>Methodology</h2></summary>
+  <p>This report shows how well various LLMs generate accessible HTML.</p>
+  <ul>
+    <li>Each test uses a prompt to generate HTML. The generated HTML is thentested for accessibility.</li>
+    <li>The prompts intentionally do not include specific accessibility instructions. The goal is to see if the LLMs produce accessible HTML by default.</li>
+    <li>The resulting HTML is rendered in a browser via Playwright (Chromium). This allows the HTML's JavaScript and CSS to execute, which can impact accessibility.</li>
+    <li>The rendered HTML is evaluated using <a href="https://github.com/dequelabs/axe-core">axe-core</a> to identify common accessibility issues.</li>
+    <li>A custom test script (JavaScript) is executed against the rendered page to check for accessibility requirements that are specific to the test case and not covered by axe-core. These tests look for <a href="https://www.w3.org/WAI/WCAG22/quickref/">WCAG 2.2</a>) failures and best practices. Best practices do not impact pass/fail results.</li>
+    <li>Each test case is run multiple times (samples) to evaluate the consistency and reliability of the LLM's output.</li>
+    <li>Default temperatures / settings are used for all models.</li>
+  </ul>
+  <p>All tests are automatic and deterministic (no human intervention). Only a fraction of accessibility requirements in WCAG can be covered in this way. Many requirements still need a human to evaluate. As such, these tests are not comprehensive. Even if a test passes, it may still fail WCAG and contain serious accessibility issues.</p>
+  <p>Please leave feedback, review the source code, and contribute test cases, assertions, and other improvements at the <a href="https://github.com/microsoft/a11y-llm-eval">GitHub Project</a>.</p>
+  </details>
 <section>
 <h2 id="details-h2">Detailed Results</h2>
 <div class="filters" role="region" aria-label="Detailed results filters">
@@ -239,7 +255,7 @@ tbody th { text-align: left; }
 </section>
 </main>
 <footer>
-<p>GitHub Project: <a href="https://github.com/microsoft/a11y-llm-eval">a11y-llm-eval</a>.</p>
+<p>GitHub Project: <a href="https://github.com/microsoft/a11y-llm-eval">a11y-llm-eval</a>. Run ID: {{ run_id }}</p>
 {{ footer_content|safe }}
 </footer>
 <script>
