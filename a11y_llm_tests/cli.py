@@ -186,11 +186,15 @@ def run(
 
 
 @app.command()
-def report(run_dir: str):
+def report(
+    run_dir: str,
+    models_file: str = typer.Option("config/models.yaml", help="Models config YAML")
+    ):
     """Regenerate HTML report for an existing run directory."""
+    models_cfg = yaml.safe_load(open(models_file))
     rd = Path(run_dir)
     from .report import render_report
-    render_report(rd / "results.json", rd / "report.rebuilt.html")
+    render_report(rd / "results.json", rd / "report.rebuilt.html", models_cfg)
     typer.echo("Report regenerated.")
 
 
