@@ -277,6 +277,17 @@ details li { margin-bottom: 0.35rem; }
 {% endfor %}
 </tbody>
 </table>
+<details>
+  <summary>Glossary</summary>
+  <ul>
+    <li><strong>Rank</strong>: The position of the model when sorted by Pass Rate (lower is better).</li>
+    <li><strong>Pass Rate</strong>: The percentage of samples that passed all accessibility tests, including both axe-core checks and custom assertions.</li>
+    <li><strong>Avg Total Failures</strong>: The average number of total accessibility failures (axe-core + assertions) per sample for the model.</li>
+    <li><strong>Avg Axe Failures</strong>: The average number of axe-core detected accessibility failures per sample for the model. This does not include best practices.</li>
+    <li><strong>Avg Assertion Failures</strong>: The average number of custom assertion failures per sample for the model.</li>
+    <li><strong>Avg Best Practice Failures</strong>: The average number of best practice accessibility issues (informational only) per sample for the model. This includes axe-core best practices and best practice assertions.</li>
+  </ul>
+</details>
 {% if aggregates %}
 <details>
   <summary><h2>Pass@k Aggregates</h2></summary>
