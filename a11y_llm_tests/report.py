@@ -259,9 +259,11 @@ details li { margin-bottom: 0.35rem; }
 </header>
 <main id=\"main\">
 <section>
+{% set total_samples = tests|length * n_samples %}
+<p>All Models were tested against {{ tests|length }} test cases. Each test case was tested {{ n_samples }} times. This results in <strong>{{ total_samples }}</strong> total samples being evaluated per model.</p>
 <table>
 <thead>
-<tr><th>Model</th><th>Rank</th><th>Pass Rate</th><th>Avg Total Failures</th><th>Avg Axe Failures</th><th>Avg Assertion Failures</th><th>Avg Best Practice Failures</th></tr>
+<tr><th>Model</th><th>Rank</th><th>WCAG Pass Rate*</th><th>Avg Total WCAG Failures</th><th>Avg Axe WCAG Failures</th><th>Avg Assertion WCAG Failures</th><th>Avg Best Practice Failures</th></tr>
 </thead>
 <tbody>
 {% for model, stats in summary.items() %}
@@ -277,17 +279,7 @@ details li { margin-bottom: 0.35rem; }
 {% endfor %}
 </tbody>
 </table>
-<details>
-  <summary>Glossary</summary>
-  <ul>
-    <li><strong>Rank</strong>: The position of the model when sorted by Pass Rate (lower is better).</li>
-    <li><strong>Pass Rate</strong>: The percentage of samples that passed all accessibility tests, including both axe-core checks and custom assertions.</li>
-    <li><strong>Avg Total Failures</strong>: The average number of total accessibility failures (axe-core + assertions) per sample for the model.</li>
-    <li><strong>Avg Axe Failures</strong>: The average number of axe-core detected accessibility failures per sample for the model. This does not include best practices.</li>
-    <li><strong>Avg Assertion Failures</strong>: The average number of custom assertion failures per sample for the model.</li>
-    <li><strong>Avg Best Practice Failures</strong>: The average number of best practice accessibility issues (informational only) per sample for the model. This includes axe-core best practices and best practice assertions.</li>
-  </ul>
-</details>
+<p>* These tests do not comprehensively test all WCAG requirements, only a subset of the most common issues. WCAG failures may still exist even for passing tests.</p>
 {% if aggregates %}
 <details>
   <summary><h2>Pass@k Aggregates</h2></summary>
@@ -335,7 +327,28 @@ details li { margin-bottom: 0.35rem; }
   </ul>
   <p>All tests are automatic and deterministic (no human intervention). Only a fraction of accessibility requirements in WCAG can be covered in this way. Many requirements still need a human to evaluate. As such, these tests are not comprehensive. Even if a test passes, it may still fail WCAG and contain serious accessibility issues.</p>
   <p>Please leave feedback, review the source code, and contribute test cases, assertions, and other improvements at the <a href="https://github.com/microsoft/a11y-llm-eval">GitHub Project</a>.</p>
-  </details>
+</details>
+<details>
+  <summary><h2>Glossary</h2></summary>
+  <h3>Column Definitions</h3>
+  <ul>
+    <li><strong>Rank</strong>: The position of the model when sorted by WCAG Pass Rate (lower is better).</li>
+    <li><strong>WCAG Pass Rate</strong>: The percentage of samples that passed all WCAG tests, including both axe-core WCAG checks and custom WCAG assertions. This does not include best practices.</li>
+    <li><strong>Avg Total WCAG Failures</strong>: The average number of total WCAG failures (axe-core + assertions) per sample for the model. This does not include best practices.</li>
+    <li><strong>Avg Axe WCAG Failures</strong>: The average number of axe-core detected WCAG failures per sample for the model. This does not include best practices.</li>
+    <li><strong>Avg Assertion WCAG Failures</strong>: The average number of custom WCAG assertion failures per sample for the model. This does not include best practices.</li>
+    <li><strong>Avg Best Practice Failures</strong>: The average number of best practice accessibility issues (informational only) per sample for the model. This includes axe-core best practices and best practice assertions.</li>
+  </ul>
+
+  <h3>Other Glossary Terms</h3>
+  <ul>
+    <li><strong>Assertion</strong>: A specific accessibility check defined in the test script. Each assertion checks for a particular accessibility requirement or best practice for the specific test case which is not already tested by axe.</li>
+    <li><strong>Axe-core</strong>: An open-source accessibility testing engine developed by Deque Systems. It is widely used for automated accessibility testing of web applications. <a href="https://github.com/dequelabs/axe-core">Axe-core</a></li>
+    <li><strong>Pass@k</strong>: A metric that estimates the likelihood of at least one sample passing a test when k samples are randomly selected.</li>
+    <li><strong>WCAG</strong>: <a href=https://www.w3.org/WAI/WCAG22/quickref/">Web Content Accessibility Guidelines</a>, a set of guidelines for making web content more accessible to people with disabilities.</li>
+    <li><strong>Test Case</strong>: A specific scenario designed to evaluate the accessibility of generated HTML content. Each test case includes a prompt, expected accessibility requirements, and a test script.</li>
+  </ul>
+</details>
 <section>
 <h2 id="details-h2">Detailed Results</h2>
 <div class="filters" role="region" aria-label="Detailed results filters">
@@ -343,8 +356,8 @@ details li { margin-bottom: 0.35rem; }
     Model
     <select id="model-filter">
       <option value="">All models</option>
-  {% for model, name in model_display_names|dictsort(by='value') %}
-      <option value="{{ model }}">{{ name }}</option>
+      {% for model, name in model_display_names|dictsort(by='value') %}
+        <option value="{{ model }}">{{ name }}</option>
       {% endfor %}
     </select>
   </label>
@@ -689,11 +702,12 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         models=data.get("models", []),
         model_display_names=model_display_names,
         tests=data.get("tests", []),
-    summary=summary,
-    results=results,
-    aggregates=data.get("aggregates", []),
-    grouped_results=grouped_results,
+        summary=summary,
+        results=results,
+        aggregates=data.get("aggregates", []),
+        grouped_results=grouped_results,
         site_name=os.getenv("SITE_NAME", "A11y LLM Eval"),
         footer_content=os.getenv("FOOTER_CONTENT", ""),
+        n_samples=data.get("meta").get("sampling").get("samples_per_case", 0),
     )
     out_html.write_text(html, encoding="utf-8")
