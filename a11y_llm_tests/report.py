@@ -111,14 +111,6 @@ details[open] {
   border-color: var(--accent-strong);
   box-shadow: 0 12px 24px rgba(37, 99, 235, 0.12);
 }
-details summary {
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  list-style: none;
-}
-details summary::-webkit-details-marker { display: none; }
 details summary h2,
 details summary h3,
 details summary h4,
