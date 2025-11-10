@@ -44,6 +44,27 @@ def run(
     (out_dir / "screenshots").mkdir(parents=True, exist_ok=True)
 
     models_cfg = yaml.safe_load(open(models_file))
+    defaults_cfg = models_cfg.get("defaults") or {}
+    config_dir = Path(models_file).resolve().parent
+    system_prompt_override = defaults_cfg.get("system_prompt")
+    instructions_cfg = defaults_cfg.get("custom_instructions_markdown")
+    custom_instructions_text = None
+    custom_instructions_path = None
+    if instructions_cfg:
+        instructions_path = Path(instructions_cfg)
+        if not instructions_path.is_absolute():
+            instructions_path = config_dir / instructions_path
+        instructions_path = instructions_path.resolve()
+        if not instructions_path.exists():
+            typer.secho(f"Custom instructions file not found: {instructions_path}", err=True)
+            raise typer.Exit(code=1)
+        try:
+            custom_instructions_text = instructions_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            typer.secho(f"Failed to read custom instructions file '{instructions_path}': {exc}", err=True)
+            raise typer.Exit(code=1)
+        custom_instructions_path = str(instructions_path)
+    generator.configure_prompts(system_prompt_override, custom_instructions_text)
     model_names = [m["name"] for m in models_cfg.get("models", [])]
     tcd = Path(test_cases_dir)
     test_dirs = [p for p in tcd.iterdir() if p.is_dir() and (p / "prompt.md").exists()]
@@ -128,7 +149,7 @@ def run(
                     result="PASS" if result_pass else "FAIL",
                     generation=GenerationMeta(
                         latency_s=latency,
-                        prompt_hash=meta.get("prompt_hash", generator.prompt_hash(prompt)),
+                        prompt_hash=meta.get("prompt_hash", generator.compute_prompt_hash(prompt)),
                         cached=cached,
                         tokens_in=meta.get("tokens_in"),
                         tokens_out=meta.get("tokens_out"),
@@ -136,6 +157,9 @@ def run(
                         cost_usd=meta.get("cost_usd"),
                         seed=meta.get("seed"),
                         temperature=meta.get("temperature"),
+                        system_prompt=meta.get("system_prompt", generator.get_base_system_prompt()),
+                        custom_instructions=meta.get("custom_instructions", generator.get_custom_instructions()),
+                        effective_system_prompt=meta.get("effective_system_prompt", generator.get_effective_system_prompt()),
                     ),
                     sample_index=sample_index,
                 )
@@ -169,7 +193,13 @@ def run(
                 "temperature": temperature,
                 "base_seed": base_seed,
                 "disable_cache": disable_cache,
-            }
+            },
+            "prompting": {
+                "system_prompt": generator.get_base_system_prompt(),
+                "effective_system_prompt": generator.get_effective_system_prompt(),
+                "custom_instructions": generator.get_custom_instructions(),
+                "custom_instructions_path": custom_instructions_path,
+            },
         },
     }
     (out_dir / "results.json").write_text(json.dumps(run_json, indent=2), encoding="utf-8")

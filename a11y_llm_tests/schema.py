@@ -58,6 +58,9 @@ class GenerationMeta(BaseModel):
     # Added for sampling diversity / metadata
     seed: Optional[int] = None
     temperature: Optional[float] = None
+    system_prompt: Optional[str] = None
+    custom_instructions: Optional[str] = None
+    effective_system_prompt: Optional[str] = None
 
 
 class ResultRecord(BaseModel):

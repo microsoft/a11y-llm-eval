@@ -5,20 +5,58 @@ from pathlib import Path
 from typing import Tuple, Dict, Any, Optional
 import json
 import litellm
-import os
 
 CACHE_DIR = Path(".cache/generations")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-SYSTEM_PROMPT = (
+DEFAULT_SYSTEM_PROMPT = (
     "You are generating a single standalone HTML document. "
     "Do NOT wrap output in markdown fences. Include <head> and <body>. "
     "Do NOT explain the code, just output it."
 )
 
+_PROMPT_JOINER = "\n|:|\n"
+_configured_system_prompt: str = DEFAULT_SYSTEM_PROMPT
+_custom_instructions: Optional[str] = None
+
+
+def configure_prompts(system_prompt: Optional[str] = None, custom_instructions: Optional[str] = None) -> None:
+    """Configure the base system prompt and optional custom instructions."""
+    global _configured_system_prompt, _custom_instructions
+    base = (system_prompt or "").strip()
+    _configured_system_prompt = base or DEFAULT_SYSTEM_PROMPT
+    if custom_instructions is None:
+        _custom_instructions = None
+    else:
+        text = custom_instructions.rstrip("\n")
+        _custom_instructions = text if text.strip() else None
+
+
+def get_base_system_prompt() -> str:
+    return _configured_system_prompt
+
+
+def get_custom_instructions() -> Optional[str]:
+    return _custom_instructions
+
+
+def get_effective_system_prompt() -> str:
+    if _custom_instructions:
+        return f"{_configured_system_prompt}\n\n{_custom_instructions}".strip()
+    return _configured_system_prompt
+
 
 def prompt_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def compute_prompt_hash(user_prompt: str) -> str:
+    combined = _PROMPT_JOINER.join([
+        _configured_system_prompt,
+        _custom_instructions or "",
+        user_prompt,
+    ])
+    return prompt_hash(combined)
 
 
 def clean_generation(raw: str) -> str:
@@ -69,7 +107,10 @@ def generate_html_with_meta(
             'cost_usd': float|None,
         }
     """
-    h = prompt_hash(user_prompt)
+    base_system_prompt = get_base_system_prompt()
+    custom_instructions = get_custom_instructions()
+    effective_system_prompt = get_effective_system_prompt()
+    h = compute_prompt_hash(user_prompt)
     # Incorporate seed into cache identity for sampling diversity
     seed_part = f"_s{seed}" if seed is not None else ""
     iteration_part = f"_i{iteration}"
@@ -87,13 +128,17 @@ def generate_html_with_meta(
             "cost_usd": None,
             "seed": seed,
             "temperature": temperature,
+            "system_prompt": base_system_prompt,
+            "custom_instructions": custom_instructions,
+            "effective_system_prompt": effective_system_prompt,
         }
         if meta_file.exists():
             try:
                 loaded = json.loads(meta_file.read_text(encoding="utf-8"))
                 meta.update({
                     k: loaded.get(k) for k in [
-                        "tokens_in", "tokens_out", "total_tokens", "cost_usd"
+                        "tokens_in", "tokens_out", "total_tokens", "cost_usd",
+                        "system_prompt", "custom_instructions", "effective_system_prompt",
                     ]
                 })
             except Exception:
@@ -106,7 +151,7 @@ def generate_html_with_meta(
     resp = litellm.completion(
         model=model,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": effective_system_prompt},
             {"role": "user", "content": user_prompt},
         ],
         temperature=temperature,
@@ -143,6 +188,9 @@ def generate_html_with_meta(
         "cost_usd": cost_usd,
         "seed": seed,
         "temperature": temperature,
+        "system_prompt": base_system_prompt,
+        "custom_instructions": custom_instructions,
+        "effective_system_prompt": effective_system_prompt,
     }
     try:
         meta_file.write_text(json.dumps(meta_payload, indent=2), encoding="utf-8")
@@ -159,6 +207,9 @@ def generate_html_with_meta(
         "cost_usd": cost_usd,
         "seed": seed,
         "temperature": temperature,
+        "system_prompt": base_system_prompt,
+        "custom_instructions": custom_instructions,
+        "effective_system_prompt": effective_system_prompt,
     }
     return html, meta
 
@@ -167,5 +218,12 @@ def generate_html(model: str, user_prompt: str, temperature: float = None, seed:
     """Backward-compatible shim. Prefer generate_html_with_meta.
 
     Returns legacy tuple (html, cached, latency_s)."""
-    html, meta = generate_html_with_meta(model, user_prompt, temperature=temperature, seed=seed, disable_cache=disable_cache)
+    html, meta = generate_html_with_meta(
+        model,
+        user_prompt,
+        iteration=0,
+        temperature=temperature,
+        seed=seed,
+        disable_cache=disable_cache,
+    )
     return html, meta["cached"], meta["latency_s"]

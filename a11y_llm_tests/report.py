@@ -317,6 +317,29 @@ details li { margin-bottom: 0.35rem; }
     <li>Each test case is run multiple times (samples) to evaluate the consistency and reliability of the LLM's output.</li>
     <li>Default temperatures / settings are used for all models.</li>
   </ul>
+  {% set system_prompt = prompting_meta.get('system_prompt') %}
+  {% set effective_system_prompt = prompting_meta.get('effective_system_prompt') %}
+  {% set display_system_prompt = effective_system_prompt or system_prompt %}
+  {% set custom_instructions = prompting_meta.get('custom_instructions') %}
+  {% set custom_instructions_path = prompting_meta.get('custom_instructions_path') %}
+  {% if display_system_prompt %}
+  <details>
+    <summary><h3>System Prompt</h3></summary>
+    <pre class="prompt-block">{{ display_system_prompt|e }}</pre>
+    {% if effective_system_prompt and system_prompt and effective_system_prompt != system_prompt %}
+    <p><small>The effective system prompt shown includes custom instructions.</small></p>
+    {% endif %}
+  </details>
+  {% endif %}
+  {% if custom_instructions %}
+  <details>
+    <summary><h3>Custom Instructions</h3></summary>
+    <pre class="prompt-block">{{ custom_instructions }}</pre>
+    {% if custom_instructions_path %}
+    <p><small>Source: {{ custom_instructions_path }}</small></p>
+    {% endif %}
+  </details>
+  {% endif %}
   <p>All tests are automatic and deterministic (no human intervention). Only a fraction of accessibility requirements in WCAG can be covered in this way. Many requirements still need a human to evaluate. As such, these tests are not comprehensive. Even if a test passes, it may still fail WCAG and contain serious accessibility issues.</p>
   <p>Please leave feedback, review the source code, and contribute test cases, assertions, and other improvements at the <a href="https://github.com/microsoft/a11y-llm-eval">GitHub Project</a>.</p>
 </details>
@@ -372,7 +395,7 @@ details li { margin-bottom: 0.35rem; }
     {% if test_data.prompt %}
     <details>
       <summary>Prompt</summary>
-      <pre class="prompt-block">{{ test_data.prompt }}</pre>
+      <pre class="prompt-block">{{ test_data.prompt|e }}</pre>
     </details>
     {% endif %}
     {% for group in test_data.models %}
@@ -566,6 +589,9 @@ document.addEventListener('DOMContentLoaded', function () {
 
 def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     data = orjson.loads(run_json_path.read_bytes())
+    meta_block = data.get("meta") or {}
+    sampling_meta = meta_block.get("sampling") or {}
+    prompting_meta = meta_block.get("prompting") or {}
     from collections import defaultdict
     per_model = defaultdict(lambda: {
         "axe_failures": [], "total_test_function_passes": 0, "bp_passes": 0, "total": 0, "bp_total": 0,  "costs": [],
@@ -700,6 +726,7 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         grouped_results=grouped_results,
         site_name=os.getenv("SITE_NAME", "A11y LLM Eval"),
         footer_content=os.getenv("FOOTER_CONTENT", ""),
-        n_samples=data.get("meta").get("sampling").get("samples_per_case", 0),
+        n_samples=sampling_meta.get("samples_per_case", 0),
+        prompting_meta=prompting_meta,
     )
     out_html.write_text(html, encoding="utf-8")
