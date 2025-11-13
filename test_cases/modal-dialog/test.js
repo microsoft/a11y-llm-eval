@@ -14,7 +14,17 @@ const dismissDialog = async (page, reload = true) => {
         await page.keyboard.press('Escape');
     }
 
+    if (await dialogIsOpen(page)) {
+        // Fallback: by clicking outside the dialog
+        await page.locator('body').click({position: {x: 0, y: 0}});
+    }
+
     const closeButton = await page.getByRole('button', { name: /\b(close|okay|ok|dismiss|exit|cancel|submit|apply|x)\b/iu });
+    if (await closeButton.count() > 0) {
+        await closeButton.first().click();
+    }
+
+    const closeControl = await page.getByRole('*', { name: /\b(close|okay|ok|dismiss|exit|cancel|submit|apply|x)\b/iu });
     if (await closeButton.count() > 0) {
         await closeButton.first().click();
     }
@@ -82,6 +92,7 @@ module.exports.run = async ({ page, assert, utils }) => {
     /* Loop through all dialog triggers, open the dialog, and assert that a dialog role is present */
     await assert("Each dialog has a dialog role", async () => {
         await utils.reload(); // Ensure clean state before starting
+        await dismissDialog(page, false); // Ensure no dialog is open
         const triggers = await getTriggers(page);
         const totalTriggers = await triggers.count();
         let totalDialogs = 0;
@@ -97,6 +108,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 
     await assert("Each dialog can be closed by escape key", async () => {
         await utils.reload(); // Ensure clean state before starting
+        await dismissDialog(page, false); // Ensure no dialog is open
         const triggers = await getTriggers(page);
         const totalTriggers = await triggers.count();
         let totalSuccess = 0;
@@ -117,6 +129,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 
     await assert("Each modal dialog traps keyboard focus", async () => {
         await utils.reload(); // Ensure clean state before starting
+        await dismissDialog(page, false); // Ensure no dialog is open
         const triggers = await getTriggers(page);
         const totalTriggers = await triggers.count();
         let totalSuccess = 0;
@@ -144,6 +157,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 
     await assert("Each modal dialog takes focus when opened", async () => {
         await utils.reload(); // Ensure clean state before starting
+        await dismissDialog(page, false); // Ensure no dialog is open
         const triggers = await getTriggers(page);
         const totalTriggers = await triggers.count();
         let totalSuccess = 0;
@@ -173,6 +187,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 
     await assert("Focus is not lost when each dialog closes", async () => {
         await utils.reload(); // Ensure clean state before starting
+        await dismissDialog(page, false); // Ensure no dialog is open
         const triggers = await getTriggers(page);
         const totalTriggers = await triggers.count();
         let totalSuccess = 0;
@@ -200,6 +215,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 
     await assert("Each modal dialog hides content behind it while open", async () => {
         await utils.reload(); // Ensure clean state before starting
+        await dismissDialog(page, false); // Ensure no dialog is open
         const triggers = await getTriggers(page);
         const totalTriggers = await triggers.count();
         let totalSuccess = 0;
@@ -240,6 +256,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 
 module.exports.runAxe = async ({ page, utils }) => {
     await utils.reload(); // Ensure clean state before starting
+    await dismissDialog(page, false); // Ensure no dialog is open
 
     const triggers = await getTriggers(page);
     let axeResult = {};
