@@ -2,7 +2,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Fail - sample - modal dialog</title>
+  <title>Fail - Has JS Delay</title>
 <script id="a11y-assertions" type="application/json">{
 "assertions": {
     "Each dialog has a dialog role": "pass",
@@ -20,7 +20,7 @@
       --radius: 8px;
       --max-width: 680px;
       --gap: 24px;
-      --transition: 220ms cubic-bezier(.2,.9,.3,1);
+      --transition: 5s cubic-bezier(.2,.9,.3,1);
     }
 
     body.no-scroll {
@@ -154,10 +154,11 @@
 </head>
 <body>
   <main>
-    <h1>Modal Dialog Component</h1>
+    <h1>Fail - Has JS Delay</h1>
     <p>
       The following is a failing example of a modal dialog component. It passes most of the requirements but
-      does not hide content behind it from screen reader users.
+      does not hide content behind it from screen reader users. This example has a slight JS delays when opening/closing.
+      This delay does not fail the test, but is included to simulate real-world scenarios where animations or other JS operations may delay dialog visibility.
     </p>
 
     <p>Click the button to open the modal. The button has the class "trigger".</p>

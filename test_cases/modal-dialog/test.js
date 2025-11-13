@@ -4,11 +4,6 @@ const dismissDialog = async (page, reload = true) => {
         return;
     }
 
-    const closeButton = await page.getByRole('button', { name: /\b(close|okay|ok|dismiss|exit|cancel|submit|apply|x)\b/iu });
-    if (await closeButton.count() > 0) {
-        await closeButton.first().click();
-    }
-
     if (await dialogIsOpen(page)) {
         // Try pressing escape on the dialog
         await page.getByRole('dialog').press('Escape');
@@ -19,15 +14,36 @@ const dismissDialog = async (page, reload = true) => {
         await page.keyboard.press('Escape');
     }
 
+    const closeButton = await page.getByRole('button', { name: /\b(close|okay|ok|dismiss|exit|cancel|submit|apply|x)\b/iu });
+    if (await closeButton.count() > 0) {
+        await closeButton.first().click();
+    }
+
     if (reload && await dialogIsOpen(page)) {
         // If still open, refresh the page to reset state
         await utils.reload();
     }
 }
 
+const waitForAnimationEnd = async (locator) => {
+  return locator.evaluate((element) => 
+    Promise.all(
+        element
+            .getAnimations({ subtree: true })
+            .map((animation) => animation.finished)
+        )
+    )
+}
+
 const dialogIsOpen = async (page) => {
-    await page.waitForTimeout(50); // Some dialogs have animations and will wait to send focus until after a slight delay.
-    // This works because page.getByRole waits for the element to appear and won't match hidden elements.
+    // Some JS frameworks delay the addition/removal of the dialog to the DOM until after animations complete.
+    await page.waitForTimeout(50);
+
+    // Now wait for any animations to end
+    const body = await page.locator('body');
+    await waitForAnimationEnd(body);
+
+    // Now, check for dialog presence
     const dialog = await page.getByRole('dialog');
     return await dialog.count() > 0;
 }
