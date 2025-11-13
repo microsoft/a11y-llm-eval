@@ -629,7 +629,7 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         fc = axe.get("failure_count")  # WCAG failures only
         if fc is not None:
             per_model[model]["axe_failures"].append(axe.get("failures", []))
-        per_model[model]["total_axe_failures"] += fc
+        per_model[model]["total_axe_failures"] += (fc or 0)
         
         # Track axe best practice failures separately
         bp_fc = axe.get("best_practice_count", 0)
