@@ -95,6 +95,20 @@ def _evaluate_worker(args_tuple):
     return json.loads(rec.model_dump_json()), test_name, model, result_pass
 
 
+def _generate_worker(task):
+    """Top-level generation worker for multiprocessing; receives a tuple of parameters."""
+    test_name, model, sample_index, prompt_text, seed, temperature, disable_cache = task
+    html, meta = generator.generate_html_with_meta(
+        model,
+        prompt_text,
+        sample_index,
+        temperature=temperature,
+        seed=seed,
+        disable_cache=disable_cache,
+    )
+    return test_name, model, sample_index, prompt_text, meta, html
+
+
 @app.command()
 def run(
     models_file: str = typer.Option("config/models.yaml", help="Models config YAML"),
@@ -105,6 +119,7 @@ def run(
     temperature: float = typer.Option(None, help="Override model temperature (if supported)."),
     disable_cache: bool = typer.Option(False, help="Disable generation cache (always re-generate)."),
     test_cases_dir: str = typer.Option("test_cases", help="Directory containing test case folders."),
+    processes: int = typer.Option(None, "--processes", "-p", help="Parallel processes for generation (defaults CPU count; use 1 to disable)."),
 ):
     """Generate HTML samples ONLY (no evaluation). A later 'evaluate' command will run tests & build report."""
     run_id = datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S")
@@ -143,54 +158,63 @@ def run(
         models_info.append({"name": name, "display_name": display_name})
     tcd = Path(test_cases_dir)
     test_dirs = [p for p in tcd.iterdir() if p.is_dir() and (p / "prompt.md").exists()]
-    results = []  # stub ResultRecord entries (pending evaluation)
+    # Build generation tasks
+    results = []  # stub pending evaluation records
     prompts_map = {}
+    gen_tasks = []  # (test_name, model, sample_index, prompt, seed)
     for td in test_dirs:
-        prompt = (td / "prompt.md").read_text(encoding="utf-8")
-        prompts_map[td.name] = prompt
-        test_name = td.name
+        prompt_text = (td / "prompt.md").read_text(encoding="utf-8")
+        prompts_map[td.name] = prompt_text
         for model in model_names:
             for sample_index in range(samples):
                 seed = (base_seed + sample_index) if base_seed is not None else None
-                html, meta = generator.generate_html_with_meta(
-                    model,
-                    prompt,
-                    sample_index,
-                    temperature=temperature,
-                    seed=seed,
-                    disable_cache=disable_cache,
-                )
-                raw_path = out_dir / "raw" / test_name
-                html_file = raw_path / f"{model}__s{sample_index}.html" if samples > 1 else raw_path / f"{model}.html"
-                html_file.parent.mkdir(exist_ok=True, parents=True)
-                html_file.write_text(html, encoding="utf-8")
-                # Build stub pending record
-                rec = ResultRecord(
-                    test_name=test_name,
-                    model_name=model,
-                    timestamp=datetime.utcnow(),
-                    generation_html_path=str(html_file),
-                    screenshot_path=None,  # will be populated after evaluation
-                    test_function=TestFunctionResult(status="PENDING", assertions=[], error=None, duration_ms=None),
-                    axe=None,
-                    result="PENDING",
-                    generation=GenerationMeta(
-                        latency_s=meta.get("latency_s", 0.0),
-                        prompt_hash=meta.get("prompt_hash", generator.compute_prompt_hash(prompt)),
-                        cached=meta.get("cached", False),
-                        tokens_in=meta.get("tokens_in"),
-                        tokens_out=meta.get("tokens_out"),
-                        total_tokens=meta.get("total_tokens"),
-                        cost_usd=meta.get("cost_usd"),
-                        seed=meta.get("seed"),
-                        temperature=meta.get("temperature"),
-                        system_prompt=meta.get("system_prompt", generator.get_base_system_prompt()),
-                        custom_instructions=meta.get("custom_instructions", generator.get_custom_instructions()),
-                        effective_system_prompt=meta.get("effective_system_prompt", generator.get_effective_system_prompt()),
-                    ),
-                    sample_index=sample_index,
-                )
-                results.append(json.loads(rec.model_dump_json()))
+                gen_tasks.append((td.name, model, sample_index, prompt_text, seed, temperature, disable_cache))
+
+    gen_tasks.sort(key=lambda t: (t[0], t[1], t[2]))
+
+    if gen_tasks:
+        pool_size = None
+        if processes is None:
+            pool_size = min(multiprocessing.cpu_count(), len(gen_tasks))
+        else:
+            pool_size = max(1, processes)
+        if pool_size == 1:
+            gen_results_iter = map(_generate_worker, gen_tasks)
+        else:
+            typer.echo(f"Generating with {pool_size} processes...")
+            with multiprocessing.Pool(processes=pool_size) as pool:
+                gen_results_iter = pool.map(_generate_worker, gen_tasks)
+        for test_name, model, sample_index, prompt_text, meta, html in gen_results_iter:
+            raw_path = out_dir / "raw" / test_name
+            html_file = raw_path / f"{model}__s{sample_index}.html" if samples > 1 else raw_path / f"{model}.html"
+            html_file.parent.mkdir(exist_ok=True, parents=True)
+            html_file.write_text(html, encoding="utf-8")
+            rec = ResultRecord(
+                test_name=test_name,
+                model_name=model,
+                timestamp=datetime.utcnow(),
+                generation_html_path=str(html_file),
+                screenshot_path=None,
+                test_function=TestFunctionResult(status="PENDING", assertions=[], error=None, duration_ms=None),
+                axe=None,
+                result="PENDING",
+                generation=GenerationMeta(
+                    latency_s=meta.get("latency_s", 0.0),
+                    prompt_hash=meta.get("prompt_hash", generator.compute_prompt_hash(prompt_text)),
+                    cached=meta.get("cached", False),
+                    tokens_in=meta.get("tokens_in"),
+                    tokens_out=meta.get("tokens_out"),
+                    total_tokens=meta.get("total_tokens"),
+                    cost_usd=meta.get("cost_usd"),
+                    seed=meta.get("seed"),
+                    temperature=meta.get("temperature"),
+                    system_prompt=meta.get("system_prompt", generator.get_base_system_prompt()),
+                    custom_instructions=meta.get("custom_instructions", generator.get_custom_instructions()),
+                    effective_system_prompt=meta.get("effective_system_prompt", generator.get_effective_system_prompt()),
+                ),
+                sample_index=sample_index,
+            )
+            results.append(json.loads(rec.model_dump_json()))
 
     run_json = {
         "run_id": run_id,
@@ -206,6 +230,7 @@ def run(
                 "temperature": temperature,
                 "base_seed": base_seed,
                 "disable_cache": disable_cache,
+                "processes_generation": (processes if processes is not None else min(multiprocessing.cpu_count(), len(gen_tasks))) if gen_tasks else None,
             },
             "prompting": {
                 "system_prompt": generator.get_base_system_prompt(),
