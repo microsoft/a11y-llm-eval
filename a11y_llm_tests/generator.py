@@ -1,6 +1,6 @@
 """LLM HTML generation & caching layer."""
 from __future__ import annotations
-import hashlib, time
+import hashlib, time, random
 from pathlib import Path
 from typing import Tuple, Dict, Any, Optional
 import json
@@ -8,6 +8,11 @@ import litellm
 
 CACHE_DIR = Path(".cache/generations")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+# Retry policy for litellm calls
+RETRY_MAX_ATTEMPTS = 3
+RETRY_BASE_DELAY = 1.0  # seconds
+RETRY_MAX_DELAY = 10.0  # seconds
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are generating a single standalone HTML document. "
@@ -148,16 +153,45 @@ def generate_html_with_meta(
     start = time.time()
     litellm.drop_params = True
     print(f"Generating HTML with model={model}, temp={temperature}, seed={seed}...")
-    resp = litellm.completion(
-        model=model,
-        messages=[
-            {"role": "system", "content": effective_system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=temperature,
-        seed=seed,
-    )
+
+    resp = None
+    last_exc: Optional[BaseException] = None
+    for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
+        try:
+            resp = litellm.completion(
+                model=model,
+                messages=[
+                    {"role": "system", "content": effective_system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                seed=seed,
+            )
+            # Basic validation: ensure we have choices and text
+            if resp and getattr(resp, "choices", None) and len(resp.choices) > 0:
+                break
+            # Treat missing choices as transient error
+            last_exc = RuntimeError("litellm returned no choices")
+        except Exception as e:
+            last_exc = e
+
+        # If we're here, we will retry unless this was the last attempt
+        if attempt == RETRY_MAX_ATTEMPTS:
+            break
+        # Exponential backoff with jitter
+        delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
+        jitter = random.uniform(0, delay * 0.1)
+        sleep_for = delay + jitter
+        print(f"litellm call failed (attempt {attempt}/{RETRY_MAX_ATTEMPTS}): {last_exc}; retrying in {sleep_for:.1f}s...")
+        time.sleep(sleep_for)
+
     elapsed = time.time() - start
+
+    if resp is None or not getattr(resp, "choices", None):
+        # Raise the last exception or a generic one so callers can handle it
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("litellm.completion failed with no response")
 
     # Extract tokens & cost defensively
     usage = getattr(resp, "usage", None) or getattr(resp, "_hidden_params", {}).get("usage") or {}
