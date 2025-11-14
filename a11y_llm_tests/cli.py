@@ -1,5 +1,6 @@
 """Typer CLI for running evaluations and generating reports."""
 import json
+import multiprocessing
 from datetime import datetime
 from pathlib import Path
 import typer
@@ -24,6 +25,74 @@ from dotenv import load_dotenv, dotenv_values
 load_dotenv() 
 
 app = typer.Typer(add_completion=False)
+
+
+def _evaluate_worker(args_tuple):
+    """Top-level worker for multiprocessing to ensure picklability on spawn-based systems (macOS, Windows)."""
+    html_path, test_js_path, screenshot_path, test_name, model, sample_index, gen_meta, prompt_text = args_tuple
+    html = Path(html_path).read_text(encoding="utf-8")
+    sp = Path(screenshot_path)
+    sp.parent.mkdir(parents=True, exist_ok=True)
+    node_res = node_bridge.run(html, test_js_path, screenshot_path)
+    tf = node_res.get("testFunctionResult", {})
+    assertions_raw = tf.get("assertions", [])
+    norm_assertions = []
+    for a in assertions_raw:
+        if not isinstance(a, dict):
+            continue
+        atype = (a.get("type") or "R").upper()
+        if atype not in {"R", "BP"}:
+            atype = "R"
+        norm_assertions.append({
+            "name": a.get("name", "unknown"),
+            "status": a.get("status", "fail"),
+            "message": a.get("message"),
+            "type": atype,
+        })
+    test_result = TestFunctionResult(
+        status=tf.get("status", "error"),
+        assertions=norm_assertions,
+        error=tf.get("error"),
+        duration_ms=tf.get("duration_ms"),
+        total_assertion_failures=tf.get("total_assertion_failures", 0),
+        total_assertion_bp_failures=tf.get("total_assertion_bp_failures", 0)
+    )
+    axe_data = node_res.get("axeResult") or node_res.get("axe_result") or node_res.get("axe")
+    axe_obj = None
+    if axe_data and isinstance(axe_data, dict):
+        axe_obj = AxeResult(
+            failure_count=axe_data.get("failure_count", 0),
+            failures=axe_data.get("failures", []),
+            best_practice_count=axe_data.get("best_practice_count", 0),
+            best_practice_failures=axe_data.get("best_practice_failures", []),
+        )
+    result_pass = bool(axe_obj) and (test_result.status == "pass" and axe_obj.failure_count == 0)
+    rec = ResultRecord(
+        test_name=test_name,
+        model_name=model,
+        timestamp=datetime.utcnow(),
+        generation_html_path=html_path,
+        screenshot_path=screenshot_path,
+        test_function=test_result,
+        axe=axe_obj,
+        result="PASS" if result_pass else "FAIL",
+        generation=GenerationMeta(
+            latency_s=gen_meta.get("latency_s", 0.0),
+            prompt_hash=gen_meta.get("prompt_hash", generator.compute_prompt_hash(prompt_text)),
+            cached=gen_meta.get("cached", False),
+            tokens_in=gen_meta.get("tokens_in"),
+            tokens_out=gen_meta.get("tokens_out"),
+            total_tokens=gen_meta.get("total_tokens"),
+            cost_usd=gen_meta.get("cost_usd"),
+            seed=gen_meta.get("seed"),
+            temperature=gen_meta.get("temperature"),
+            system_prompt=gen_meta.get("system_prompt", generator.get_base_system_prompt()),
+            custom_instructions=gen_meta.get("custom_instructions", generator.get_custom_instructions()),
+            effective_system_prompt=gen_meta.get("effective_system_prompt", generator.get_effective_system_prompt()),
+        ),
+        sample_index=sample_index,
+    )
+    return json.loads(rec.model_dump_json()), test_name, model, result_pass
 
 
 @app.command()
@@ -165,6 +234,7 @@ def evaluate(
     test_cases_dir: str = typer.Option("test_cases", help="Directory containing test case folders."),
     k: str = typer.Option("1,5,10", help="Comma-separated k values for pass@k metrics."),
     generate_report: bool = typer.Option(True, help="Generate HTML report (index.html) after evaluation."),
+    processes: int = typer.Option(None, "--processes", "-p", help="Number of parallel processes for evaluation (defaults to CPU count; use 1 to disable)."),
 ):
     """Evaluate previously generated HTML samples without requiring models config: run accessibility tests, compute aggregates, optionally render report."""
     rd = Path(run_dir)
@@ -197,8 +267,8 @@ def evaluate(
         key = (r.get("test_name"), r.get("model_name"), r.get("sample_index"))
         gen_meta_map[key] = r.get("generation")
 
-    all_results = []
-    aggregates: List[dict] = []
+    # Build evaluation task list
+    tasks = []  # each entry: (html_path, test_js_path, screenshot_path, test_name, model, sample_index, gen_meta, prompt_text)
     for td in test_dirs:
         test_name = td.name
         test_js = td / "test.js"
@@ -207,114 +277,66 @@ def evaluate(
             typer.secho(f"Skipping missing raw dir for test '{test_name}'", err=True)
             continue
         html_files = sorted(raw_dir.glob("**/*.html"))
-        # Group by model based on filename prefix
-        per_model_files = {}
         for hf in html_files:
             fname = hf.name
             if "__s" in fname:
                 model_part, sample_part = fname.split("__s", 1)
-                if sample_part.endswith(".html"):
-                    sample_index_str = sample_part[:-5]  # drop .html
-                else:
-                    sample_index_str = sample_part
+                sample_index_str = sample_part[:-5] if sample_part.endswith(".html") else sample_part
                 try:
                     sample_index = int(sample_index_str)
                 except ValueError:
                     sample_index = None
                 model = model_part
             else:
-                model = fname[:-5]  # strip .html
+                model = fname[:-5]
                 sample_index = None
-            if model not in per_model_files:
-                per_model_files[model] = []
-            per_model_files[model].append((hf, sample_index))
+            screenshot_name = f"{test_name}__{model}__s{sample_index}.png" if sample_index is not None else f"{test_name}__{model}.png"
+            screenshot_path = rd / "screenshots" / screenshot_name
+            gen_meta = gen_meta_map.get((test_name, model, sample_index)) or {}
+            tasks.append((str(hf), str(test_js), str(screenshot_path), test_name, model, sample_index, gen_meta, prompts_map.get(test_name, "")))
 
-        for model, samples in per_model_files.items():
-            pass_statuses = []
-            for hf, sample_index in samples:
-                html = hf.read_text(encoding="utf-8")
-                # compute screenshot path & ensure dir
-                screenshot_name = f"{test_name}__{model}__s{sample_index}.png" if sample_index is not None else f"{test_name}__{model}.png"
-                screenshot_path = rd / "screenshots" / screenshot_name
-                screenshot_path.parent.mkdir(exist_ok=True, parents=True)
-                print(f"Evaluating test '{test_name}' model '{model}' sample {sample_index if sample_index is not None else 0}...")
-                node_res = node_bridge.run(html, str(test_js), str(screenshot_path))
-                tf = node_res.get("testFunctionResult", {})
-                assertions_raw = tf.get("assertions", [])
-                norm_assertions = []
-                for a in assertions_raw:
-                    if not isinstance(a, dict):
-                        continue
-                    atype = (a.get("type") or "R").upper()
-                    if atype not in {"R", "BP"}:
-                        atype = "R"
-                    norm_assertions.append({
-                        "name": a.get("name", "unknown"),
-                        "status": a.get("status", "fail"),
-                        "message": a.get("message"),
-                        "type": atype,
-                    })
-                test_result = TestFunctionResult(
-                    status=tf.get("status", "error"),
-                    assertions=norm_assertions,
-                    error=tf.get("error"),
-                    duration_ms=tf.get("duration_ms"),
-                    total_assertion_failures=tf.get("total_assertion_failures", 0),
-                    total_assertion_bp_failures=tf.get("total_assertion_bp_failures", 0)
-                )
-                axe_data = node_res.get("axeResult") or node_res.get("axe_result") or node_res.get("axe")
-                axe_obj = None
-                if axe_data and isinstance(axe_data, dict):
-                    axe_obj = AxeResult(
-                        failure_count=axe_data.get("failure_count", 0),
-                        failures=axe_data.get("failures", []),
-                        best_practice_count=axe_data.get("best_practice_count", 0),
-                        best_practice_failures=axe_data.get("best_practice_failures", []),
-                    )
-                # Determine pass status
-                result_pass = bool(axe_obj) and (test_result.status == "pass" and axe_obj.failure_count == 0)
-                pass_statuses.append(result_pass)
-                gen_meta = gen_meta_map.get((test_name, model, sample_index)) or {}
-                rec = ResultRecord(
-                    test_name=test_name,
-                    model_name=model,
-                    timestamp=datetime.utcnow(),
-                    generation_html_path=str(hf),
-                    screenshot_path=str(screenshot_path),
-                    test_function=test_result,
-                    axe=axe_obj,
-                    result="PASS" if result_pass else "FAIL",
-                    generation=GenerationMeta(
-                        latency_s=gen_meta.get("latency_s", 0.0),
-                        prompt_hash=gen_meta.get("prompt_hash", generator.compute_prompt_hash(prompts_map.get(test_name, ""))),
-                        cached=gen_meta.get("cached", False),
-                        tokens_in=gen_meta.get("tokens_in"),
-                        tokens_out=gen_meta.get("tokens_out"),
-                        total_tokens=gen_meta.get("total_tokens"),
-                        cost_usd=gen_meta.get("cost_usd"),
-                        seed=gen_meta.get("seed"),
-                        temperature=gen_meta.get("temperature"),
-                        system_prompt=gen_meta.get("system_prompt", generator.get_base_system_prompt()),
-                        custom_instructions=gen_meta.get("custom_instructions", generator.get_custom_instructions()),
-                        effective_system_prompt=gen_meta.get("effective_system_prompt", generator.get_effective_system_prompt()),
-                    ),
-                    sample_index=sample_index,
-                )
-                all_results.append(json.loads(rec.model_dump_json()))
-            # Aggregates for this (test, model)
-            c = sum(1 for x in pass_statuses if x)
-            n = len(pass_statuses)
-            pass_at = compute_pass_at_k(c, n, k_values)
-            agg = AggregateRecord(
-                test_name=test_name,
-                model_name=model,
-                n_samples=n,
-                n_pass=c,
-                pass_at_k=format_pass_at_k(pass_at),
-                k_values=k_values,
-                computed_at=datetime.utcnow(),
-            )
-            aggregates.append(json.loads(agg.model_dump_json()))
+    # Sort tasks for deterministic ordering
+    tasks.sort(key=lambda t: (t[3], t[4], t[5] if t[5] is not None else -1))
+
+
+    all_results = []
+    pass_map = {}  # (test_name, model) -> list[bool]
+    if not tasks:
+        typer.secho("No evaluation tasks found.", err=True)
+    else:
+        pool_size = None
+        if processes is None:
+            # Default: use CPU count but cap at len(tasks)
+            pool_size = min(multiprocessing.cpu_count(), len(tasks))
+        else:
+            pool_size = max(1, processes)
+        if pool_size == 1:
+            for t in tasks:
+                res, test_name, model, passed = _evaluate_worker(t)
+                all_results.append(res)
+                pass_map.setdefault((test_name, model), []).append(passed)
+        else:
+            typer.echo(f"Evaluating with {pool_size} processes...")
+            with multiprocessing.Pool(processes=pool_size) as pool:
+                for res, test_name, model, passed in pool.map(_evaluate_worker, tasks):
+                    all_results.append(res)
+                    pass_map.setdefault((test_name, model), []).append(passed)
+
+    aggregates: List[dict] = []
+    for (test_name, model), statuses in pass_map.items():
+        c = sum(1 for x in statuses if x)
+        n = len(statuses)
+        pass_at = compute_pass_at_k(c, n, k_values)
+        agg = AggregateRecord(
+            test_name=test_name,
+            model_name=model,
+            n_samples=n,
+            n_pass=c,
+            pass_at_k=format_pass_at_k(pass_at),
+            k_values=k_values,
+            computed_at=datetime.utcnow(),
+        )
+        aggregates.append(json.loads(agg.model_dump_json()))
 
     updated_json = {
         "run_id": prior_data.get("run_id") or rd.name,
@@ -328,6 +350,7 @@ def evaluate(
             "sampling": {
                 **((prior_data.get("meta") or {}).get("sampling") or {}),
                 "k_values": k_values,
+                "processes": (processes if processes is not None else min(multiprocessing.cpu_count(), len(tasks))) if tasks else None,
             },
             "status": "EVALUATED",
         },
