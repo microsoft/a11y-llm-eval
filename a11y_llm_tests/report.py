@@ -260,7 +260,7 @@ details li { margin-bottom: 0.35rem; }
 <tbody>
 {% for model, stats in summary.items() %}
 <tr>
-  <th>{{ model_display_names[model] }}</th>
+  <th>{{ model_display_names.get(model, model) }}</th>
   <td>{{ loop.index }}</td>
   <td>{{ "%.0f%%"|format(stats.pass_rate * 100) }}</td>
   <td>{{ "%.2f"|format(stats.avg_failures) }}</td>
@@ -292,7 +292,7 @@ details li { margin-bottom: 0.35rem; }
   {% for a in aggregates %}
   <tr>
   <td>{{ a.test_name }}</td>
-  <td>{{ model_display_names[a.model_name] }}</td>
+  <td>{{ model_display_names.get(a.model_name, a.model_name) }}</td>
   <td>{{ a.n_samples }}</td>
   <td>{{ a.n_pass }}</td>
   {% for k,v in a.pass_at_k.items() %}
@@ -400,7 +400,7 @@ details li { margin-bottom: 0.35rem; }
     {% endif %}
     {% for group in test_data.models %}
     <details data-model-group="{{ group.model_name }}">
-      <summary><h4>{{ model_display_names[group.model_name] }}</h4></summary>
+      <summary><h4>{{ model_display_names.get(group.model_name, group.model_name) }}</h4></summary>
       {% set agg = group.aggregate %}
       {% if agg %}
       <p>Samples: {{ agg.n_samples }} | Passes: {{ agg.n_pass }}</p>
@@ -417,7 +417,7 @@ details li { margin-bottom: 0.35rem; }
           {# Trim the first two path segments (e.g., 'runs/<run_id>/...') #}
           {% set _parts = r.generation_html_path.split('/') %}
           {% set _trimmed = '/'.join(_parts[2:]) %}
-          <h4><a href="{{ _trimmed }}">Sample {{ r.sample_index if r.sample_index is not none else loop.index0 }}</a></h4>
+          <h4><a href="{{ _trimmed }}">Sample {{ r.sample_index if r.sample_index is not none else loop.index0 }} ({{ model_display_names.get(r.model_name, r.model_name) }})</a></h4>
           <p><span class="badge-{{ 'pass' if r.result=='PASS' else 'fail' }}">{{ r.result }}</span> | Latency {{ '%.2f'|format(r.generation.latency_s) }}s{% if r.generation.cached %} cached{% endif %}</p>
           <p>Axe WCAG: {{ r.axe.failure_count if r.axe else 'n/a' }}{% if r.axe and r.axe.best_practice_count > 0 %} | BP: {{ r.axe.best_practice_count }}{% endif %}{% if r.generation.cost_usd is not none %} | ${{ '%.4f'|format(r.generation.cost_usd) }}{% endif %}</p>
           {% if r.screenshot_path %}
@@ -425,7 +425,7 @@ details li { margin-bottom: 0.35rem; }
             {% set _parts = r.screenshot_path.split('/') %}
             {% set _trimmed = '/'.join(_parts[2:]) %}
             <figure>
-              <img src="{{ _trimmed }}" alt="Screenshot sample {{ r.sample_index }} for {{ r.test_name }} / {{ model_display_names[r.model_name] }}" style="max-width:320px;">
+              <img src="{{ _trimmed }}" alt="Screenshot sample {{ r.sample_index }} for {{ r.test_name }} / {{ model_display_names.get(r.model_name, r.model_name) }}" style="max-width:320px;">
             </figure>
           {% endif %}
           <details>
@@ -493,7 +493,7 @@ details li { margin-bottom: 0.35rem; }
       <tbody>
         {% for model, stats in summary.items() %}
         <tr>
-          <th>{{ model_display_names[model] }}</th>
+          <th>{{ model_display_names.get(model, model) }}</th>
           <td>{{ "%.4f"|format(stats.total_cost) }}</td>
           <td>{{ "%.4f"|format(stats.avg_cost) }}</td>
         </tr>
@@ -588,145 +588,155 @@ document.addEventListener('DOMContentLoaded', function () {
 """
 
 def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
-    data = orjson.loads(run_json_path.read_bytes())
-    meta_block = data.get("meta") or {}
-    sampling_meta = meta_block.get("sampling") or {}
-    prompting_meta = meta_block.get("prompting") or {}
-    from collections import defaultdict
-    per_model = defaultdict(lambda: {
-        "axe_failures": [], "total_test_function_passes": 0, "bp_passes": 0, "total": 0, "bp_total": 0,  "costs": [],
-        "axe_bp_failures": [], "axe_bp_passes": 0, "axe_bp_total": 0, "total_axe_failures": 0,
-        "total_failures": 0, "total_passes": 0, "total_assertion_bp_failures": 0,  "total_assertion_failures": 0
+  data = orjson.loads(run_json_path.read_bytes())
+  meta_block = data.get("meta") or {}
+  sampling_meta = meta_block.get("sampling") or {}
+  prompting_meta = meta_block.get("prompting") or {}
+  from collections import defaultdict
+
+  results = data.get("results", [])
+
+  # Build display name mapping with precedence:
+  # 1. Stored meta.models_info
+  # 2. Provided models_cfg
+  # 3. Fallback to last path segment of model name
+  model_display_names = {}
+  for m in (meta_block.get("models_info") or []):
+    name = m.get("name")
+    if not name:
+      continue
+    model_display_names[name] = m.get("display_name") or name.split('/')[-1]
+    model_display_names[name.split('/')[-1]] = m.get("display_name") or name.split('/')[-1]
+  for m in (models_cfg.get("models") or []):
+    name = m.get("name")
+    if not name:
+      continue
+    display = m.get("display_name") or model_display_names.get(name) or name.split('/')[-1]
+    model_display_names[name] = display
+  # Ensure any model appearing only in results has a mapping
+  for r in results:
+    n = r.get("model_name")
+    if n and n not in model_display_names:
+      model_display_names[n] = n.split('/')[-1]
+  
+  per_model = defaultdict(lambda: {
+    "axe_failures": [],
+    "total_test_function_passes": 0,
+    "bp_passes": 0,
+    "total": 0,
+    "bp_total": 0,
+    "costs": [],
+    "axe_bp_failures": [],
+    "axe_bp_passes": 0,
+    "axe_bp_total": 0,
+    "total_axe_failures": 0,
+    "total_failures": 0,
+    "total_passes": 0,
+    "total_assertion_bp_failures": 0,
+    "total_assertion_failures": 0,
+  })
+
+  for r in results:
+    model = r.get("model_name")
+    if not model:
+      continue
+    per_model[model]["total"] += 1
+    if r.get("result") == "PASS":
+      per_model[model]["total_passes"] += 1
+    # Determine test function pass count
+    if r.get("test_function", {}).get("status") == "pass":
+      per_model[model]["total_test_function_passes"] += 1
+    # Track best-practice assertions pass rate separately
+    assertions = r.get("test_function", {}).get("assertions", [])
+    bp_assertions = [a for a in assertions if (a.get("type") or "R").upper() == "BP"]
+    if bp_assertions:
+      per_model[model]["bp_total"] += 1 # treat per-test BP status aggregate: pass if all BP pass
+      if all(a.get("status") == "pass" for a in bp_assertions):
+        per_model[model]["bp_passes"] += 1
+    per_model[model]["total_assertion_bp_failures"] += r.get("test_function", {}).get("total_assertion_bp_failures", 0)
+    per_model[model]["total_assertion_failures"] += r.get("test_function", {}).get("total_assertion_failures", 0)
+    # Track axe failures (WCAG only now) and best practice failures
+    axe = r.get("axe") or {}
+    fc = axe.get("failure_count")
+    if fc is not None:
+      per_model[model]["axe_failures"].append(axe.get("failures", []))
+    per_model[model]["total_axe_failures"] += (fc or 0)
+    # Track axe best practice failures separately
+    bp_fc = axe.get("best_practice_count", 0)
+    per_model[model]["axe_bp_failures"].append(axe.get("best_practice_failures", []))
+    per_model[model]["axe_bp_total"] += bp_fc
+    if bp_fc == 0:
+      per_model[model]["axe_bp_passes"] += 1
+    gen = r.get("generation", {})
+    cost = gen.get("cost_usd")
+    if cost is not None:
+      try:
+        per_model[model]["costs"].append(float(cost))
+      except (TypeError, ValueError):
+        pass
+  # create summary
+  summary = {}
+  for m, s in per_model.items():
+    avg_axe_failures = s["total_axe_failures"] / s["total"] if s["total"] else 0.0
+    total_cost = sum(s["costs"]) if s["costs"] else 0.0
+    avg_cost = (total_cost / s["total"]) if s["total"] else 0.0
+    total_bp_failures = s["total_assertion_bp_failures"] + s["axe_bp_total"]
+    total_axe_failures = s["total_axe_failures"]
+    total_assertion_failures = s["total_assertion_failures"]
+    total_assertion_bp_failures = s["total_assertion_bp_failures"]
+    avg_assertion_failures = (total_assertion_failures / s["total"]) if s["total"] else 0.0
+    avg_bp_failures = (total_bp_failures / s["total"]) if s["total"] else 0.0
+    total_failures = total_assertion_failures + total_axe_failures
+    avg_failures = (total_failures / s["total"]) if s["total"] else 0.0
+    summary[m] = {
+      "avg_axe_failures": avg_axe_failures,
+      "pass_rate": s["total_passes"] / s["total"] if s["total"] else 0,
+      "total_cost": total_cost,
+      "avg_cost": avg_cost,
+      "total_assertion_failures": total_assertion_failures,
+      "total_assertion_bp_failures": total_assertion_bp_failures,
+      "avg_assertion_failures": avg_assertion_failures,
+      "avg_bp_failures": avg_bp_failures,
+      "total_failures": total_failures,
+      "avg_failures": avg_failures,
+    }
+
+  # Group samples by (test_name, model_name)
+  grouped = {}
+  for r in results:
+    key = (r.get("test_name"), r.get("model_name"))
+    grouped.setdefault(key, []).append(r)
+  # Sort samples by sample_index if present
+  grouped_results = OrderedDict()
+  agg_index = {}
+  # Enhance aggregates with display_model_name (provider prefix stripped)
+  for a in (data.get("aggregates") or []):
+    agg_index[(a.get("test_name"), a.get("model_name"))] = a
+
+  prompts_map = (data.get("prompts") or {})
+  for (test_name, model_name), samples in sorted(grouped.items()):
+    samples_sorted = sorted(samples, key=lambda x: (x.get("sample_index") is None, x.get("sample_index") or 0))
+    test_entry = grouped_results.setdefault(test_name, {"prompt": prompts_map.get(test_name), "models": []})
+    test_entry["models"].append({
+      "model_name": model_name,
+      "samples": samples_sorted,
+      "aggregate": agg_index.get((test_name, model_name)),
     })
-    results = data.get("results", [])
-    model_display_names = {}
 
-    for m in models_cfg.get("models", []):
-        model_name = m.get("name")
-        display_name = m.get("display_name", model_name.split('/')[-1])
-        model_display_names[model_name] = display_name
+  summary = OrderedDict(sorted(summary.items(), key=lambda item: (-item[1]["pass_rate"], item[1]["avg_failures"])) )
 
-    for r in results:
-        model = r["model_name"]
-        per_model[model]["total"] += 1
-        if r.get("result") == "PASS":
-            per_model[model]["total_passes"] += 1
-        # Determine test function pass count
-        if r.get("test_function", {}).get("status") == "pass":
-            per_model[model]["total_test_function_passes"] += 1
-        # Track best-practice assertions pass rate separately
-        assertions = r.get("test_function", {}).get("assertions", [])
-        bp_assertions = [a for a in assertions if (a.get("type") or "R").upper() == "BP"]
-        if bp_assertions:
-            per_model[model]["bp_total"] += 1  # treat per-test BP status aggregate: pass if all BP pass
-            if all(a.get("status") == "pass" for a in bp_assertions):
-                per_model[model]["bp_passes"] += 1
-        per_model[model]["total_assertion_bp_failures"] +=r.get("test_function", {}).get("total_assertion_bp_failures", 0)
-        per_model[model]["total_assertion_failures"] +=r.get("test_function", {}).get("total_assertion_failures", 0)
-        
-        # Track axe failures (WCAG only now) and best practice failures
-        axe = r.get("axe") or {}
-        fc = axe.get("failure_count")  # WCAG failures only
-        if fc is not None:
-            per_model[model]["axe_failures"].append(axe.get("failures", []))
-        per_model[model]["total_axe_failures"] += (fc or 0)
-        
-        # Track axe best practice failures separately
-        bp_fc = axe.get("best_practice_count", 0)
-        per_model[model]["axe_bp_failures"].append(axe.get("best_practice_failures", []))
-        per_model[model]["axe_bp_total"] += bp_fc
-        if bp_fc == 0:
-            per_model[model]["axe_bp_passes"] += 1
-        gen = r.get("generation", {})
-        cost = gen.get("cost_usd")
-        if cost is not None:
-            try:
-                per_model[model]["costs"].append(float(cost))
-            except (TypeError, ValueError):
-                pass
-    # create summary
-    summary = {}
-    for m, s in per_model.items():
-        avg_axe_failures = s["total_axe_failures"] / s["total"] if s["total"] else 0.0
-        total_cost = sum(s["costs"]) if s["costs"] else 0.0
-        avg_cost = (total_cost / s["total"]) if s["total"] else 0.0
-        # Calculate combined best practice pass rate (custom BP assertions + axe BP failures)
-        total_bp_failures = s["total_assertion_bp_failures"] + s["axe_bp_total"]
-        total_axe_failures = s["total_axe_failures"]
-        total_assertion_failures = s["total_assertion_failures"]
-        total_assertion_bp_failures = s["total_assertion_bp_failures"]
-        avg_assertion_failures = (total_assertion_failures / s["total"]) if s["total"] else 0.0
-        avg_bp_failures = (total_bp_failures / s["total"]) if s["total"] else 0.0
-        total_failures = total_assertion_failures + total_axe_failures
-        avg_failures = (total_failures / s["total"]) if s["total"] else 0.0
-
-        summary[m] = {
-            "avg_axe_failures": avg_axe_failures,
-            "pass_rate": s["total_passes"] / s["total"] if s["total"] else 0,
-            "total_cost": total_cost,
-            "avg_cost": avg_cost,
-            "total_assertion_failures": total_assertion_failures,
-            "total_assertion_bp_failures": total_assertion_bp_failures,
-            "avg_assertion_failures": avg_assertion_failures,
-            "avg_bp_failures": avg_bp_failures,
-            "total_failures": total_failures,
-            "avg_failures": avg_failures,
-        }
-
-    # Group samples by (test_name, model_name)
-    grouped = {}
-    for r in results:
-        key = (r["test_name"], r["model_name"])
-        grouped.setdefault(key, []).append(r)
-    # Sort samples by sample_index if present
-    grouped_results = OrderedDict()
-    agg_index = {}
-    # Enhance aggregates with display_model_name (provider prefix stripped)
-    for a in data.get("aggregates", []) or []:
-        agg_index[(a["test_name"], a["model_name"])] = a
-
-    prompts_map = data.get("prompts", {}) or {}
-    for (test_name, model_name), samples in sorted(grouped.items()):
-        samples_sorted = sorted(
-            samples, key=lambda x: (x.get("sample_index") is None, x.get("sample_index") or 0)
-        )
-        test_entry = grouped_results.setdefault(
-            test_name,
-            {
-                "prompt": prompts_map.get(test_name),
-                "models": [],
-            },
-        )
-        test_entry["models"].append(
-            {
-                "model_name": model_name,
-                "samples": samples_sorted,
-                "aggregate": agg_index.get((test_name, model_name)),
-            }
-        )
-
-    summary = OrderedDict(
-        sorted(
-            summary.items(),
-            key=lambda item: (
-                -item[1]["pass_rate"],   # higher pass_rate first
-                item[1]["avg_failures"], # then lowest avg_failures
-            ),
-        )
-    )
-    
-    html = Template(TEMPLATE).render(
-        run_id=data.get("run_id", "unknown"),
-        models=data.get("models", []),
-        model_display_names=model_display_names,
-        tests=data.get("tests", []),
-        summary=summary,
-        results=results,
-        aggregates=data.get("aggregates", []),
-        grouped_results=grouped_results,
-        site_name=os.getenv("SITE_NAME", "A11y LLM Eval"),
-        footer_content=os.getenv("FOOTER_CONTENT", ""),
-        n_samples=sampling_meta.get("samples_per_case", 0),
-        prompting_meta=prompting_meta,
-    )
-    out_html.write_text(html, encoding="utf-8")
+  html = Template(TEMPLATE).render(
+    run_id=data.get("run_id", "unknown"),
+    models=data.get("models", []),
+    model_display_names=model_display_names,
+    tests=data.get("tests", []),
+    summary=summary,
+    results=results,
+    aggregates=data.get("aggregates", []),
+    grouped_results=grouped_results,
+    site_name=os.getenv("SITE_NAME", "A11y LLM Eval"),
+    footer_content=os.getenv("FOOTER_CONTENT", ""),
+    n_samples=sampling_meta.get("samples_per_case", 0),
+    prompting_meta=prompting_meta,
+  )
+  out_html.write_text(html, encoding="utf-8")

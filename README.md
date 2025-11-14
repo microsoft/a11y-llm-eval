@@ -27,13 +27,20 @@ Create a public test suite which can be used to benchmark how well various LLMs 
 You can request multiple independent generations ("samples") per (test, model). This enables computation of pass@k metrics similar to code evaluation benchmarks.
 
 ### CLI Usage
+
+Step 1: Send prompts to the LLMs and generate HTML
 ```bash
 python -m a11y_llm_tests.cli run \
   --models-file config/models.yaml \
   --out runs \
   --samples 20 \
-  --k 1,5,10 \
-  --base-seed 42
+```
+
+Step 2: Run the eval and generate the report
+```bash
+python -m a11y_llm_tests.cli evaluate \
+  <path to run directory>
+  --k 1,5,10
 ```
 
 Artifacts:

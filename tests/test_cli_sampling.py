@@ -66,7 +66,8 @@ def test_cli_sampling_multi(monkeypatch, tmp_path):
     (config_dir / "models.yaml").write_text("""models:\n  - name: test-model\n""", encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, [
+    # Generation phase only
+    gen_result = runner.invoke(app, [
         "run",
         "--models-file", str(config_dir / "models.yaml"),
         "--out", str(tmp_path / "runs"),
@@ -75,33 +76,36 @@ def test_cli_sampling_multi(monkeypatch, tmp_path):
         "--k", "1,2,4",
         "--base-seed", "100",
     ])
-    assert result.exit_code == 0, result.output
-
-    # Find newest run dir
+    assert gen_result.exit_code == 0, gen_result.output
     runs_dir = tmp_path / "runs"
     run_subdirs = sorted(p for p in runs_dir.iterdir() if p.is_dir())
     assert run_subdirs, "No run directory created"
     latest = run_subdirs[-1]
+    # Ensure aggregates are empty pre-evaluation
+    pre_data = json.loads((latest / "results.json").read_text(encoding="utf-8"))
+    assert pre_data["aggregates"] == []
+    # Evaluation phase
+    eval_result = runner.invoke(app, [
+        "evaluate",
+        str(latest),
+        "--test-cases-dir", str(tmp_path / "test_cases"),
+        "--k", "1,2,4",
+        "--no-generate-report",
+    ])
+    assert eval_result.exit_code == 0, eval_result.output
     data = json.loads((latest / "results.json").read_text(encoding="utf-8"))
-
-    # Validate aggregates
     aggs = data["aggregates"]
     assert len(aggs) == 1
     agg = aggs[0]
     assert agg["n_samples"] == 4
-    # Seeds 100,101,102,103 -> pass,fail,pass,fail => 2 passes
-    assert agg["n_pass"] == 2
-    # pass@1 should be 0.5 (2/4). pass@2 using formula: 1 - ( (2C2)/(4C2) ) = 1 - (1/6)=0.8333
+    assert agg["n_pass"] == 2  # Seeds 100,101,102,103 -> pass,fail,pass,fail
     p1 = agg["pass_at_k"]["1"]
     p2 = agg["pass_at_k"]["2"]
     assert abs(p1 - 0.5) < 1e-6
     assert 0.82 < p2 < 0.85
-    # pass@4 should be 1.0 since at least one pass among all samples
     assert agg["pass_at_k"]["4"] == 1.0
-
-    # Ensure sample_index recorded
     sample_indices = sorted(r["sample_index"] for r in data["results"])
-    assert sample_indices == [0,1,2,3]
+    assert sample_indices == [0, 1, 2, 3]
 
 
 def test_cli_sampling_single(monkeypatch, tmp_path):
@@ -118,7 +122,7 @@ def test_cli_sampling_single(monkeypatch, tmp_path):
     (config_dir / "models.yaml").write_text("""models:\n  - name: m1\n""", encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, [
+    gen_result = runner.invoke(app, [
         "run",
         "--models-file", str(config_dir / "models.yaml"),
         "--out", str(tmp_path / "runs"),
@@ -127,17 +131,24 @@ def test_cli_sampling_single(monkeypatch, tmp_path):
         "--k", "1,5",
         "--base-seed", "5",
     ])
-    assert result.exit_code == 0, result.output
-
+    assert gen_result.exit_code == 0, gen_result.output
     runs_dir = tmp_path / "runs"
     run_subdirs = sorted(p for p in runs_dir.iterdir() if p.is_dir())
     latest = run_subdirs[-1]
+    pre_data = json.loads((latest / "results.json").read_text(encoding="utf-8"))
+    assert pre_data["aggregates"] == []
+    eval_result = runner.invoke(app, [
+        "evaluate",
+        str(latest),
+        "--test-cases-dir", str(tmp_path / "test_cases"),
+        "--k", "1,5",
+        "--no-generate-report",
+    ])
+    assert eval_result.exit_code == 0, eval_result.output
     data = json.loads((latest / "results.json").read_text(encoding="utf-8"))
     agg = data["aggregates"][0]
     assert agg["n_samples"] == 1
-    # pass@k for single sample equals pass probability = 1 if pass else 0
-    # Seed=5 -> fail (odd)
-    assert agg["n_pass"] == 0
+    assert agg["n_pass"] == 0  # Seed=5 -> fail (odd)
     assert agg["pass_at_k"]["1"] == 0.0
 
 
@@ -179,7 +190,7 @@ def test_bp_failure_not_affect_requirement_pass(monkeypatch, tmp_path):
     (config_dir / "models.yaml").write_text("""models:\n  - name: modelX\n""", encoding="utf-8")
 
     runner_cli = CliRunner()
-    result = runner_cli.invoke(app, [
+    gen_result = runner_cli.invoke(app, [
         "run",
         "--models-file", str(config_dir / "models.yaml"),
         "--out", str(tmp_path / "runs"),
@@ -187,10 +198,18 @@ def test_bp_failure_not_affect_requirement_pass(monkeypatch, tmp_path):
         "--samples", "1",
         "--k", "1",
     ])
-    assert result.exit_code == 0, result.output
+    assert gen_result.exit_code == 0, gen_result.output
     runs_dir = tmp_path / "runs"
     run_subdirs = sorted(p for p in runs_dir.iterdir() if p.is_dir())
     latest = run_subdirs[-1]
+    # Evaluate
+    eval_result = runner_cli.invoke(app, [
+        "evaluate",
+        str(latest),
+        "--test-cases-dir", str(tmp_path / "test_cases"),
+        "--k", "1",
+        "--no-generate-report",
+    ])
+    assert eval_result.exit_code == 0, eval_result.output
     data = json.loads((latest / "results.json").read_text(encoding="utf-8"))
-    # Should still be recorded as pass (since requirement passed and BP ignored for pass/fail)
     assert data["results"][0]["result"] == "PASS"
