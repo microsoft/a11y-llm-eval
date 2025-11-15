@@ -10,9 +10,9 @@ CACHE_DIR = Path(".cache/generations")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Retry policy for litellm calls
-RETRY_MAX_ATTEMPTS = 3
+RETRY_MAX_ATTEMPTS = 5
 RETRY_BASE_DELAY = 1.0  # seconds
-RETRY_MAX_DELAY = 10.0  # seconds
+RETRY_MAX_DELAY = 60.0  # seconds
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are generating a single standalone HTML document. "
