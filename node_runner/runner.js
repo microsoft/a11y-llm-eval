@@ -132,6 +132,14 @@ async function main() {
       };
     }
 
+    if (screenshotPath) {
+      try {
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+      } catch (e) {
+        console.error('Screenshot failed:', e.message);
+      }
+    }
+
     axeResult = await runAxeOnPage(page);
 
     if (testFn.runAxe && typeof testFn.runAxe === 'function') {
@@ -142,14 +150,6 @@ async function main() {
     }
 
     axeResult = processAxeResults(axeResult);
-
-    if (screenshotPath) {
-      try {
-        await page.screenshot({ path: screenshotPath, fullPage: true });
-      } catch (e) {
-        console.error('Screenshot failed:', e.message);
-      }
-    }
   } catch (e) {
     errorMsg = e.stack || e.message;
     if (testFunctionResult.status === "error") {
