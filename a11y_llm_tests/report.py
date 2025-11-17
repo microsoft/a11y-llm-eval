@@ -111,6 +111,7 @@ details[open] {
   border-color: var(--accent-strong);
   box-shadow: 0 12px 24px rgba(37, 99, 235, 0.12);
 }
+summary { cursor: pointer;}
 details summary h2,
 details summary h3,
 details summary h4,
