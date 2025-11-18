@@ -402,9 +402,16 @@ details li { margin-bottom: 0.35rem; }
     </details>
     {% endif %}
     {% for group in test_data.models %}
+    {% set agg = group.aggregate %}
     <details data-model-group="{{ group.model_name }}">
-      <summary><h4>{{ model_display_names.get(group.model_name, group.model_name) }}</h4></summary>
-      {% set agg = group.aggregate %}
+      <summary>
+        <h4>
+          {{ model_display_names.get(group.model_name, group.model_name) }}
+          {% if agg and agg.n_samples %}
+            &nbsp;—&nbsp;{{ '%.0f%%'|format((agg.n_pass / agg.n_samples) * 100) }}
+          {% endif %}
+        </h4>
+      </summary>
       {% if agg %}
       <p>Samples: {{ agg.n_samples }} | Passes: {{ agg.n_pass }}</p>
       <table>
