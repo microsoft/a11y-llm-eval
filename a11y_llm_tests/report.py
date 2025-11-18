@@ -67,6 +67,8 @@ table {
 caption {
   text-align: left;
   padding: 1rem 1.25rem 0.5rem;
+  --heatmap-low: #2d3748; /* fallback low value */
+  --heatmap-high: #16a34a; /* fallback high value */
   font-weight: 700;
   font-size: 1.05rem;
   color: var(--text-primary);
@@ -231,6 +233,12 @@ figure img {
   box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.12);
 }
 .agg-table { margin-top: 1rem; }
+/* Heatmap cells for pass@k tables */
+.pass-at-k-cell {
+  transition: background-color 0.25s ease, color 0.25s ease;
+  text-align: center;
+  font-weight: 600;
+}
 footer {
   padding: 2rem 1.5rem 3rem;
   color: var(--text-secondary);
@@ -263,7 +271,7 @@ details li { margin-bottom: 0.35rem; }
 <tr>
   <th>{{ model_display_names.get(model, model) }}</th>
   <td>{{ loop.index }}</td>
-  <td>{{ "%.0f%%"|format(stats.pass_rate * 100) }}</td>
+  <td class="pass-at-k-cell" data-pass="{{ '%.4f'|format(stats.pass_rate) }}">{{ "%.0f%%"|format(stats.pass_rate * 100) }}</td>
   <td>{{ "%.2f"|format(stats.avg_failures) }}</td>
   <td>{{ "%.2f"|format(stats.avg_axe_failures) }}</td>
   <td>{{ "%.2f"|format(stats.avg_assertion_failures) }}</td>
@@ -298,7 +306,8 @@ details li { margin-bottom: 0.35rem; }
           <td>{{ a.n_samples }}</td>
           <td>{{ a.n_pass }}</td>
           {% for k in info.ks %}
-            <td>{% if a.pass_at_k.get(k) is not none %}{{ '%.0f%%'|format(a.pass_at_k.get(k) * 100) }}{% else %}-{% endif %}</td>
+            {% set v = a.pass_at_k.get(k) %}
+            <td class="pass-at-k-cell" data-pass-at-k="{{ k }}" data-pass="{% if v is not none %}{{ '%.4f'|format(v) }}{% else %}{% endif %}">{% if v is not none %}{{ '%.0f%%'|format(v * 100) }}{% else %}-{% endif %}</td>
           {% endfor %}
         </tr>
         {% endfor %}
@@ -416,7 +425,9 @@ details li { margin-bottom: 0.35rem; }
       <p>Samples: {{ agg.n_samples }} | Passes: {{ agg.n_pass }}</p>
       <table>
         <thead><tr>{% for k,v in agg.pass_at_k.items() %}<th>pass@{{ k }}</th>{% endfor %}</tr></thead>
-        <tbody><tr>{% for k,v in agg.pass_at_k.items() %}<td>{{ '%.0f%%'|format(v * 100) }}</td>{% endfor %}</tr></tbody>
+        <tbody><tr>{% for k,v in agg.pass_at_k.items() %}
+          <td class="pass-at-k-cell" data-pass-at-k="{{ k }}" data-pass="{{ '%.4f'|format(v) }}">{{ '%.0f%%'|format(v * 100) }}</td>
+        {% endfor %}</tr></tbody>
       </table>
       {% set _percent = (100.0 * (agg.n_pass / agg.n_samples)) if agg.n_samples else 0 %}
       <div class="pass-rate-bar" role="img" aria-label="Pass ratio - {{ _percent }} percent"><span style="width: {{ _percent }}%"></span></div>
@@ -591,6 +602,54 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 
   applyFilters();
+});
+</script>
+<script>
+// Heatmap coloring for pass@k cells: maps 0.0-1.0 to a green-ish scale and ensures text contrast
+document.addEventListener('DOMContentLoaded', function () {
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function hexToRgb(hex) {
+    const h = hex.replace('#','');
+    return [parseInt(h.substring(0,2),16), parseInt(h.substring(2,4),16), parseInt(h.substring(4,6),16)];
+  }
+  function rgbToHex(r,g,b){
+    return '#' + [r,g,b].map(x=>{ const s = Math.round(x).toString(16); return s.length===1 ? '0'+s : s; }).join('');
+  }
+  function luminance(r,g,b){
+    const rs = r/255, gs = g/255, bs = b/255;
+    const a = [rs,gs,bs].map(c=> c <= 0.03928 ? c/12.92 : Math.pow((c+0.055)/1.055, 2.4));
+    return 0.2126*a[0] + 0.7152*a[1] + 0.0722*a[2];
+  }
+  function contrastRatio(l1, l2){
+    const hi = Math.max(l1,l2), lo = Math.min(l1,l2);
+    return (hi + 0.05) / (lo + 0.05);
+  }
+
+  // Define heatmap endpoints
+  const lowColor = getComputedStyle(document.documentElement).getPropertyValue('--heatmap-low').trim() || '#2d3748';
+  const highColor = getComputedStyle(document.documentElement).getPropertyValue('--heatmap-high').trim() || '#16a34a';
+  const lowRgb = hexToRgb(lowColor.replace(/\s/g,''));
+  const highRgb = hexToRgb(highColor.replace(/\s/g,''));
+
+  const cells = Array.from(document.querySelectorAll('.pass-at-k-cell'));
+  cells.forEach(function(cell){
+    const v = cell.getAttribute('data-pass');
+    if (!v) return;
+    const t = Math.min(1, Math.max(0, parseFloat(v)));
+    const r = lerp(lowRgb[0], highRgb[0], t);
+    const g = lerp(lowRgb[1], highRgb[1], t);
+    const b = lerp(lowRgb[2], highRgb[2], t);
+    const bg = rgbToHex(r,g,b);
+    cell.style.backgroundColor = bg;
+    // compute readable foreground (black or white) based on WCAG contrast
+    const Lbg = luminance(r,g,b);
+    const Lwhite = luminance(255,255,255);
+    const Lblack = luminance(0,0,0);
+    const contrastWithWhite = contrastRatio(Lwhite, Lbg);
+    const contrastWithBlack = contrastRatio(Lblack, Lbg);
+    const fg = contrastWithWhite >= contrastWithBlack ? '#ffffff' : '#000000';
+    cell.style.color = fg;
+  });
 });
 </script>
 </body>
