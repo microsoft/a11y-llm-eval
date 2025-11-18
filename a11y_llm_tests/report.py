@@ -273,36 +273,38 @@ details li { margin-bottom: 0.35rem; }
 </tbody>
 </table>
 <p>* These tests do not comprehensively test all WCAG requirements, only a subset of the most common issues. WCAG failures may still exist even for passing tests.</p>
-{% if aggregates %}
+{% if aggregates_by_test %}
 <details>
   <summary><h2>Pass@k Aggregates</h2></summary>
-  <p>Pass@k is a formula that determines the likelyhood that if you pick random k samples from the set, then at least one of them would pass. For example, pass@10=.50 means that there is a 50 percent likelyhood that at least 1 of the 10 randomly selected samples from the set would pass.</p>
-  <p>Pass@K is a metric used to evaluate the performance of code generation models, especially in scenarios where multiple code samples are generated for a single problem.</p>
-  <table class="agg-table">
-  <thead>
-  <tr>
-    <th>Test</th><th>Model</th><th>Samples</th><th>Passes</th>
-    {% if aggregates and aggregates[0].pass_at_k %}
-      {% for k,v in aggregates[0].pass_at_k.items() %}
-        <th>pass@{{ k }}</th>
-      {% endfor %}
-    {% endif %}
-  </tr>
-  </thead>
-  <tbody>
-  {% for a in aggregates %}
-  <tr>
-  <td>{{ a.test_name }}</td>
-  <td>{{ model_display_names.get(a.model_name, a.model_name) }}</td>
-  <td>{{ a.n_samples }}</td>
-  <td>{{ a.n_pass }}</td>
-  {% for k,v in a.pass_at_k.items() %}
-    <td>{{ '%.2f'|format(v) }}</td>
+  <p>Pass@k is a formula that determines the likelihood that if you pick random k samples from the set, then at least one of them would pass. For example, pass@10=.50 means that there is a 50 percent likelihood that at least 1 of the 10 randomly selected samples from the set would pass.</p>
+  <p>Pass@K is a metric used to evaluate the performance of models when multiple samples are generated per test case.</p>
+  {% for test_name, info in aggregates_by_test.items() %}
+    <table class="agg-table">
+      <caption>{{ test_name }}</caption>
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Samples</th>
+          <th>Passes</th>
+          {% for k in info.ks %}
+            <th>pass@{{ k }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in info.rows %}
+        <tr>
+          <td>{{ model_display_names.get(a.model_name, a.model_name) }}</td>
+          <td>{{ a.n_samples }}</td>
+          <td>{{ a.n_pass }}</td>
+          {% for k in info.ks %}
+            <td>{% if a.pass_at_k.get(k) is not none %}{{ '%.0f%%'|format(a.pass_at_k.get(k) * 100) }}{% else %}-{% endif %}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   {% endfor %}
-  </tr>
-  {% endfor %}
-  </tbody>
-  </table>
 </details>
 {% endif %}
 </section>
@@ -407,7 +409,7 @@ details li { margin-bottom: 0.35rem; }
       <p>Samples: {{ agg.n_samples }} | Passes: {{ agg.n_pass }}</p>
       <table>
         <thead><tr>{% for k,v in agg.pass_at_k.items() %}<th>pass@{{ k }}</th>{% endfor %}</tr></thead>
-        <tbody><tr>{% for k,v in agg.pass_at_k.items() %}<td>{{ '%.3f'|format(v) }}</td>{% endfor %}</tr></tbody>
+        <tbody><tr>{% for k,v in agg.pass_at_k.items() %}<td>{{ '%.0f%%'|format(v * 100) }}</td>{% endfor %}</tr></tbody>
       </table>
       {% set _percent = (100.0 * (agg.n_pass / agg.n_samples)) if agg.n_samples else 0 %}
       <div class="pass-rate-bar" role="img" aria-label="Pass ratio - {{ _percent }} percent"><span style="width: {{ _percent }}%"></span></div>
@@ -725,6 +727,41 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     })
 
   summary = OrderedDict(sorted(summary.items(), key=lambda item: (-item[1]["pass_rate"], item[1]["avg_failures"])) )
+  # Build aggregates_by_test: for each test, list all models and their aggregates (ensures unique table per test)
+  aggregates_by_test = OrderedDict()
+  tests_in_order = list(grouped_results.keys())
+  for test_name in tests_in_order:
+    models_info = grouped_results.get(test_name, {}).get('models', [])
+    rows = []
+    ks_set = []
+    for m in models_info:
+      model_name = m.get('model_name')
+      agg = agg_index.get((test_name, model_name))
+      if agg:
+        pass_at_k = agg.get('pass_at_k') or {}
+        # preserve order of keys as they appear; avoid duplicates
+        for k in pass_at_k.keys():
+          if k not in ks_set:
+            ks_set.append(k)
+        rows.append({
+          'model_name': model_name,
+          'n_samples': agg.get('n_samples', 0),
+          'n_pass': agg.get('n_pass', 0),
+          'pass_at_k': pass_at_k,
+        })
+      else:
+        rows.append({
+          'model_name': model_name,
+          'n_samples': 0,
+          'n_pass': 0,
+          'pass_at_k': {},
+        })
+    # try to sort ks numerically when possible
+    try:
+      ks_sorted = sorted(ks_set, key=lambda x: int(x))
+    except Exception:
+      ks_sorted = sorted(ks_set)
+    aggregates_by_test[test_name] = {'rows': rows, 'ks': ks_sorted}
 
   html = Template(TEMPLATE).render(
     run_id=data.get("run_id", "unknown"),
@@ -734,6 +771,7 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     summary=summary,
     results=results,
     aggregates=data.get("aggregates", []),
+    aggregates_by_test=aggregates_by_test,
     grouped_results=grouped_results,
     site_name=os.getenv("SITE_NAME", "A11y LLM Eval"),
     footer_content=os.getenv("FOOTER_CONTENT", ""),
