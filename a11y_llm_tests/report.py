@@ -310,7 +310,7 @@ details li { margin-bottom: 0.35rem; }
 <summary><h2>Methodology</h2></summary>
   <p>This report shows how well various LLMs generate accessible HTML.</p>
   <ul>
-    <li>Each test uses a prompt to generate HTML. The generated HTML is thentested for accessibility.</li>
+    <li>Each test uses a prompt to generate HTML. The generated HTML is then tested for accessibility.</li>
     <li>The prompts intentionally do not include specific accessibility instructions. The goal is to see if the LLMs produce accessible HTML by default.</li>
     <li>The resulting HTML is rendered in a browser via Playwright (Chromium). This allows the HTML's JavaScript and CSS to execute, which can impact accessibility.</li>
     <li>The rendered HTML is evaluated using <a href="https://github.com/dequelabs/axe-core">axe-core</a> to identify common accessibility issues.</li>
