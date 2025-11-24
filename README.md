@@ -72,7 +72,7 @@ export OPENAI_API_KEY=... # etc. or put in .env and use dotenv
 cp config/models.yaml.example config/models.yaml
 
 # Run all tests against configured models
-python -m a11y_llm_tests.cli run --models config/models.yaml --out runs
+python -m a11y_llm_tests.cli run --models-file config/models.yaml --out runs
 ```
 
 ## Adding a Test Case
