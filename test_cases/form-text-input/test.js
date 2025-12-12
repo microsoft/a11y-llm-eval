@@ -4,20 +4,17 @@
  */
 
 /**
- * Get all text inputs including native inputs, textareas, and custom implementations
+ * Get all text input elements, including native inputs and custom implementations.
+ * This finds elements that appear to be text inputs for testing purposes,
+ * regardless of whether they have proper ARIA roles.
  */
 const getTextInputs = async (page) => {
-    // Native text-like inputs
-    const nativeInputs = 'input[type="text"], input[type="email"], input[type="tel"], input:not([type])';
-
-    // Textarea (may be used for any text field)
-    const textareas = 'textarea';
-
+    // Native text-like inputs and textareas
+    const nativeSelector = 'input[type="text"], input[type="email"], input[type="tel"], input:not([type]), textarea';
     // Custom implementations - contenteditable or role="textbox"
-    // Scoped to .form-field to avoid matching unrelated editable regions
-    const customInputs = '.form-field [contenteditable="true"], .form-field [contenteditable="plaintext-only"], .form-field [role="textbox"]';
+    const customSelector = '[contenteditable="true"], [contenteditable="plaintext-only"], [role="textbox"]';
 
-    return await page.locator(`${nativeInputs}, ${textareas}, ${customInputs}`).filter({ visible: true });
+    return page.locator(`${nativeSelector}, ${customSelector}`);
 };
 
 /**
@@ -29,7 +26,7 @@ const getFormFields = async (page) => {
 
 module.exports.run = async ({ page, assert, utils }) => {
 
-    // Assertion 1: Each text input has an accessible name (R - WCAG 4.1.2, 1.3.1)
+    // Assertion 1: Each text input has an accessible name (R - WCAG 4.1.2, 1.3.1, 3.3.2)
     await assert("Each text input has an accessible name", async () => {
         const inputs = await getTextInputs(page);
         const count = await inputs.count();
@@ -43,34 +40,18 @@ module.exports.run = async ({ page, assert, utils }) => {
             const input = inputs.nth(i);
 
             const hasAccessibleName = await input.evaluate((el) => {
-                // Method 1: Check the labels property (works for <label for="id"> and wrapped labels)
-                if (el.labels && el.labels.length > 0) {
-                    return el.labels[0].textContent.trim().length > 0;
+                const accName = window.axe.commons.text.accessibleText(el);
+                if (!accName || accName.trim().length === 0) {
+                    return false;
                 }
 
-                // Method 2: Check aria-label
-                if (el.getAttribute('aria-label') && el.getAttribute('aria-label').trim().length > 0) {
-                    return true;
+                // Exclude cases where accessible name comes only from placeholder (WCAG 3.3.2)
+                const placeholder = el.getAttribute('placeholder');
+                if (placeholder && accName.trim() === placeholder.trim()) {
+                    return false;
                 }
 
-                // Method 3: Check aria-labelledby
-                const labelledbyId = el.getAttribute('aria-labelledby');
-                if (labelledbyId) {
-                    const ids = labelledbyId.split(' ');
-                    for (const id of ids) {
-                        const labelElement = document.getElementById(id);
-                        if (labelElement && labelElement.textContent.trim().length > 0) {
-                            return true;
-                        }
-                    }
-                }
-
-                // Method 4: Check title attribute as fallback (not recommended but valid)
-                if (el.getAttribute('title') && el.getAttribute('title').trim().length > 0) {
-                    return true;
-                }
-
-                return false;
+                return true;
             });
 
             if (hasAccessibleName) {
@@ -82,37 +63,54 @@ module.exports.run = async ({ page, assert, utils }) => {
     });
 
     // Assertion 2: Each text input has textbox role (R - WCAG 4.1.2)
+    // Check that form fields intended for text input contain proper textbox elements
     await assert("Each text input has textbox role", async () => {
-        const inputs = await getTextInputs(page);
-        const count = await inputs.count();
+        const formFields = await getFormFields(page);
+        const fieldCount = await formFields.count();
 
-        if (count === 0) {
-            return { pass: false, message: "No text inputs found on the page" };
+        if (fieldCount === 0) {
+            return { pass: false, message: "No form fields found" };
         }
 
-        let validRoleCount = 0;
+        let textInputFields = 0;
+        let fieldsWithTextbox = 0;
 
-        for (let i = 0; i < count; i++) {
-            const input = inputs.nth(i);
+        // Selectors for text-input-like elements
+        const textInputSelector = 'input[type="text"], input[type="email"], input[type="tel"], input:not([type]), textarea, [contenteditable="true"], [contenteditable="plaintext-only"]';
+        const buttonSelector = 'button, input[type="submit"], input[type="button"]';
+        const nativeInputSelector = 'input[type="text"], input[type="email"], input[type="tel"], input:not([type]), textarea';
 
-            const hasTextboxRole = await input.evaluate((el) => {
-                // Native inputs and textareas implicitly have textbox role
-                const tagName = el.tagName.toLowerCase();
-                if (tagName === 'input' || tagName === 'textarea') {
-                    return true;
-                }
+        for (let i = 0; i < fieldCount; i++) {
+            const field = formFields.nth(i);
 
-                // Custom elements need explicit role="textbox"
-                const role = el.getAttribute('role');
-                return role === 'textbox';
-            });
+            // Check if this field appears to be a text input field
+            const hasTextInputElements = await field.locator(textInputSelector).count() > 0;
+            const hasOnlyButtons = !hasTextInputElements && await field.locator(buttonSelector).count() > 0;
 
-            if (hasTextboxRole) {
-                validRoleCount++;
+            if (hasOnlyButtons || !hasTextInputElements) {
+                continue; // Skip button-only fields
             }
+
+            textInputFields++;
+
+            // Check for proper textbox role (native inputs have implicit role)
+            if (await field.locator(nativeInputSelector).count() > 0) {
+                fieldsWithTextbox++;
+                continue;
+            }
+
+            // Check for explicit role="textbox" on custom elements
+            if (await field.locator('[role="textbox"]').count() > 0) {
+                fieldsWithTextbox++;
+            }
+            // Otherwise: has contenteditable but no role="textbox" - failure case
         }
 
-        return validRoleCount === count;
+        if (textInputFields === 0) {
+            return { pass: false, message: "No text input fields found" };
+        }
+
+        return fieldsWithTextbox === textInputFields;
     });
 
     // Assertion 3: Helper text is programmatically associated (R - WCAG 1.3.1)
@@ -127,84 +125,48 @@ module.exports.run = async ({ page, assert, utils }) => {
         let fieldsWithHelperText = 0;
         let fieldsWithAssociatedHelper = 0;
 
+        // Helper text selectors - testing showed LLMs consistently use these patterns
+        const helperSelector = '[class*="helper"], [class*="hint"], [class*="description"], [class*="help"], small, .form-text, p:not(:empty)';
+
         for (let i = 0; i < fieldCount; i++) {
             const field = formFields.nth(i);
 
-            const helperInfo = await field.evaluate((el) => {
-                const input = el.querySelector('input');
-                const label = el.querySelector('label');
+            // Check if field has an input
+            const inputLocator = field.locator('input, textarea, [role="textbox"], [contenteditable="true"]');
+            if (await inputLocator.count() === 0) {
+                continue;
+            }
 
-                if (!input) return { hasHelper: false, isAssociated: false };
+            // Check for helper text elements (excluding labels)
+            const helperLocator = field.locator(helperSelector);
+            const helperCount = await helperLocator.count();
 
-                // Find potential helper text elements
-                const helperSelectors = [
-                    '[class*="helper"]',
-                    '[class*="hint"]',
-                    '[class*="description"]',
-                    '[class*="help"]',
-                    'small',
-                    '.form-text',
-                    'p:not(:empty)'
-                ];
-
-                let helperElement = null;
-                for (const selector of helperSelectors) {
-                    const el2 = el.querySelector(selector);
-                    if (el2 && el2 !== label && !el2.contains(input)) {
-                        helperElement = el2;
-                        break;
-                    }
+            // Filter out labels from helper count
+            let hasHelper = false;
+            for (let j = 0; j < helperCount; j++) {
+                const helper = helperLocator.nth(j);
+                const tagName = await helper.evaluate(el => el.tagName.toLowerCase());
+                if (tagName !== 'label') {
+                    hasHelper = true;
+                    break;
                 }
+            }
 
-                // Also check for text content outside label/input
-                if (!helperElement) {
-                    const allText = el.textContent || '';
-                    const labelText = label ? label.textContent : '';
-                    const inputValue = input.value || '';
-                    const remainingText = allText.replace(labelText, '').replace(inputValue, '').trim();
+            if (!hasHelper) {
+                continue;
+            }
 
-                    if (remainingText.length > 10) {
-                        // There's significant text that might be helper text
-                        // Check if any element contains it
-                        const children = el.querySelectorAll('*');
-                        for (const child of children) {
-                            if (child !== label && child !== input && !label?.contains(child) &&
-                                child.textContent.trim().length > 10 &&
-                                child.children.length === 0) {
-                                helperElement = child;
-                                break;
-                            }
-                        }
-                    }
-                }
+            fieldsWithHelperText++;
 
-                if (!helperElement) {
-                    return { hasHelper: false, isAssociated: true };
-                }
+            // Check if input has an accessible description via standard attributes
+            const input = inputLocator.first();
+            const describedby = await input.getAttribute('aria-describedby');
+            const ariaDesc = await input.getAttribute('aria-description');
+            const title = await input.getAttribute('title');
+            const hasDescription = !!(describedby || ariaDesc || title);
 
-                // Check if helper text is associated via aria-describedby
-                const describedbyId = input.getAttribute('aria-describedby');
-                if (!describedbyId) {
-                    return { hasHelper: true, isAssociated: false };
-                }
-
-                // Verify the referenced element exists
-                const ids = describedbyId.split(' ');
-                for (const id of ids) {
-                    const describingEl = document.getElementById(id);
-                    if (describingEl && describingEl.textContent.trim().length > 0) {
-                        return { hasHelper: true, isAssociated: true };
-                    }
-                }
-
-                return { hasHelper: true, isAssociated: false };
-            });
-
-            if (helperInfo.hasHelper) {
-                fieldsWithHelperText++;
-                if (helperInfo.isAssociated) {
-                    fieldsWithAssociatedHelper++;
-                }
+            if (hasDescription) {
+                fieldsWithAssociatedHelper++;
             }
         }
 
@@ -231,18 +193,17 @@ module.exports.run = async ({ page, assert, utils }) => {
         for (let i = 0; i < count; i++) {
             const input = inputs.nth(i);
 
-            const isFocusable = await input.evaluate((el) => {
-                const tabindex = el.getAttribute('tabindex');
-                const isDisabled = el.disabled;
-                const isHidden = el.type === 'hidden';
+            // Skip hidden inputs
+            if (!await input.isVisible()) {
+                continue;
+            }
 
-                // tabindex >= 0 or no tabindex (defaults to focusable for inputs)
-                const hasFocusableTabindex = tabindex === null || parseInt(tabindex, 10) >= 0;
+            // Check tabindex - elements with tabindex < 0 are not keyboard navigable
+            // (they can receive programmatic focus but not Tab navigation)
+            const tabindex = await input.getAttribute('tabindex');
+            const isKeyboardNavigable = tabindex === null || parseInt(tabindex, 10) >= 0;
 
-                return hasFocusableTabindex && !isDisabled && !isHidden;
-            });
-
-            if (isFocusable) {
+            if (isKeyboardNavigable) {
                 focusableCount++;
             }
         }
@@ -250,8 +211,11 @@ module.exports.run = async ({ page, assert, utils }) => {
         return focusableCount === count;
     });
 
-    // Assertion 5: Input labels are visible (BP - WCAG 2.4.6)
-    await assert("Input labels are visible", async () => {
+    // Assertion 5: Visible labels are programmatically associated (R - WCAG 2.4.6)
+    // Note: This tests that visible label text is accessible to screen readers via:
+    // 1. Programmatic association (label[for], aria-labelledby) - preferred
+    // 2. aria-label that matches visible text in the form field - acceptable fallback
+    await assert("Visible label text is accessible", async () => {
         const inputs = await getTextInputs(page);
         const count = await inputs.count();
 
@@ -265,16 +229,12 @@ module.exports.run = async ({ page, assert, utils }) => {
             const input = inputs.nth(i);
 
             const hasVisibleLabel = await input.evaluate((el) => {
-                // Check for visible <label> element
+                // Check for visible <label> element using axe-core's visibility check
                 if (el.labels && el.labels.length > 0) {
                     const label = el.labels[0];
-                    const style = window.getComputedStyle(label);
-                    const isVisible = style.display !== 'none' &&
-                        style.visibility !== 'hidden' &&
-                        style.opacity !== '0' &&
-                        label.offsetWidth > 0 &&
-                        label.offsetHeight > 0;
-                    return isVisible;
+                    if (window.axe.commons.dom.isVisible(label, false, true)) {
+                        return true;
+                    }
                 }
 
                 // Check for aria-labelledby referencing a visible element
@@ -283,15 +243,20 @@ module.exports.run = async ({ page, assert, utils }) => {
                     const ids = labelledbyId.split(' ');
                     for (const id of ids) {
                         const labelElement = document.getElementById(id);
-                        if (labelElement) {
-                            const style = window.getComputedStyle(labelElement);
-                            if (style.display !== 'none' &&
-                                style.visibility !== 'hidden' &&
-                                style.opacity !== '0' &&
-                                labelElement.offsetWidth > 0 &&
-                                labelElement.offsetHeight > 0) {
-                                return true;
-                            }
+                        if (labelElement && window.axe.commons.dom.isVisible(labelElement, false, true)) {
+                            return true;
+                        }
+                    }
+                }
+
+                // Fallback: check if aria-label matches visible text in parent form-field
+                const ariaLabel = el.getAttribute('aria-label');
+                if (ariaLabel) {
+                    const formField = el.closest('.form-field');
+                    if (formField) {
+                        const visibleText = formField.textContent || '';
+                        if (visibleText.toLowerCase().includes(ariaLabel.toLowerCase().trim())) {
+                            return true;
                         }
                     }
                 }
@@ -305,7 +270,7 @@ module.exports.run = async ({ page, assert, utils }) => {
         }
 
         return visibleLabelCount === count;
-    }, { type: 'BP' });
+    });
 
     // Assertion 6: Required fields are programmatically indicated (BP - WCAG 3.3.2)
     await assert("Required fields are programmatically indicated", async () => {
@@ -324,39 +289,24 @@ module.exports.run = async ({ page, assert, utils }) => {
         for (let i = 0; i < count; i++) {
             const input = inputs.nth(i);
 
-            const requiredInfo = await input.evaluate((el) => {
-                const hasRequiredAttr = el.hasAttribute('required');
-                const hasAriaRequired = el.getAttribute('aria-required') === 'true';
-                const isProgrammaticallyRequired = hasRequiredAttr || hasAriaRequired;
+            // Check programmatic indication using Playwright getAttribute
+            const hasRequiredAttr = await input.getAttribute('required') !== null;
+            const hasAriaRequired = await input.getAttribute('aria-required') === 'true';
+            const isProgrammaticallyRequired = hasRequiredAttr || hasAriaRequired;
 
-                // Check for visual required indicators
-                // Look for asterisk (*) near the input or in its label
-                let hasVisualIndicator = false;
+            // Check for visual required indicators in parent form-field
+            const formField = input.locator('xpath=ancestor::*[contains(@class, "form-field")]').first();
+            let hasVisualIndicator = false;
 
-                if (el.labels && el.labels.length > 0) {
-                    const labelText = el.labels[0].textContent || '';
-                    hasVisualIndicator = labelText.includes('*') ||
-                                        labelText.toLowerCase().includes('required');
-                }
+            if (await formField.count() > 0) {
+                const fieldText = await formField.textContent() || '';
+                hasVisualIndicator = fieldText.includes('*') ||
+                                    fieldText.toLowerCase().includes('required');
+            }
 
-                // Also check parent form-field wrapper
-                const formField = el.closest('.form-field');
-                if (formField) {
-                    const fieldText = formField.textContent || '';
-                    hasVisualIndicator = hasVisualIndicator ||
-                                        fieldText.includes('*') ||
-                                        fieldText.toLowerCase().includes('required');
-                }
-
-                return {
-                    visuallyRequired: hasVisualIndicator,
-                    programmaticallyRequired: isProgrammaticallyRequired
-                };
-            });
-
-            if (requiredInfo.visuallyRequired) {
+            if (hasVisualIndicator) {
                 visuallyRequiredCount++;
-                if (requiredInfo.programmaticallyRequired) {
+                if (isProgrammaticallyRequired) {
                     programmaticallyIndicatedCount++;
                 }
             }
