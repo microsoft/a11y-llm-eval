@@ -36,9 +36,7 @@ module.exports.run = async ({ page, assert, utils }) => {
         }
 
         let passCount = 0;
-        for (let i = 0; i < count; i++) {
-            const input = inputs.nth(i);
-
+        for (const input of await inputs.all()){
             const hasAccessibleName = await input.evaluate((el) => {
                 const accName = window.axe.commons.text.accessibleText(el);
                 if (!accName || accName.trim().length === 0) {
@@ -80,9 +78,7 @@ module.exports.run = async ({ page, assert, utils }) => {
         const buttonSelector = 'button, input[type="submit"], input[type="button"]';
         const nativeInputSelector = 'input[type="text"], input[type="email"], input[type="tel"], input:not([type]), textarea';
 
-        for (let i = 0; i < fieldCount; i++) {
-            const field = formFields.nth(i);
-
+        for (const field of await formFields.all()) {
             // Check if this field appears to be a text input field
             const hasTextInputElements = await field.locator(textInputSelector).count() > 0;
             const hasOnlyButtons = !hasTextInputElements && await field.locator(buttonSelector).count() > 0;
@@ -128,9 +124,7 @@ module.exports.run = async ({ page, assert, utils }) => {
         // Helper text selectors - testing showed LLMs consistently use these patterns
         const helperSelector = '[class*="helper"], [class*="hint"], [class*="description"], [class*="help"], small, .form-text, p:not(:empty)';
 
-        for (let i = 0; i < fieldCount; i++) {
-            const field = formFields.nth(i);
-
+        for (const field of await formFields.all()) {
             // Check if field has an input
             const inputLocator = field.locator('input, textarea, [role="textbox"], [contenteditable="true"]');
             if (await inputLocator.count() === 0) {
@@ -143,8 +137,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 
             // Filter out labels from helper count
             let hasHelper = false;
-            for (let j = 0; j < helperCount; j++) {
-                const helper = helperLocator.nth(j);
+            for (const helper of await helperLocator.all()) {
                 const tagName = await helper.evaluate(el => el.tagName.toLowerCase());
                 if (tagName !== 'label') {
                     hasHelper = true;
@@ -190,9 +183,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 
         let focusableCount = 0;
 
-        for (let i = 0; i < count; i++) {
-            const input = inputs.nth(i);
-
+        for (const input of await inputs.all()) {
             // Skip hidden inputs
             if (!await input.isVisible()) {
                 continue;
@@ -225,9 +216,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 
         let visibleLabelCount = 0;
 
-        for (let i = 0; i < count; i++) {
-            const input = inputs.nth(i);
-
+        for (const input of await inputs.all()) {
             const hasVisibleLabel = await input.evaluate((el) => {
                 // Check for visible <label> element using axe-core's visibility check
                 if (el.labels && el.labels.length > 0) {
@@ -286,9 +275,7 @@ module.exports.run = async ({ page, assert, utils }) => {
         let visuallyRequiredCount = 0;
         let programmaticallyIndicatedCount = 0;
 
-        for (let i = 0; i < count; i++) {
-            const input = inputs.nth(i);
-
+        for (const input of await inputs.all()) {
             // Check programmatic indication using Playwright getAttribute
             const hasRequiredAttr = await input.getAttribute('required') !== null;
             const hasAriaRequired = await input.getAttribute('aria-required') === 'true';
