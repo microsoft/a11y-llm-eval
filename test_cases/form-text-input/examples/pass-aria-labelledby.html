@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pass - ARIA Labelledby - Contact Form</title>
+    <script id="a11y-assertions" type="application/json">{
+        "assertions": {
+            "Each text input has an accessible name": "pass",
+            "Each text input has textbox role": "pass",
+            "Helper text is programmatically associated": "pass",
+            "Text inputs are keyboard focusable": "pass",
+            "Visible label text is accessible": "pass",
+            "Required fields are programmatically indicated": "pass"
+        }
+    }</script>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            line-height: 1.5;
+            max-width: 500px;
+            margin: 2rem auto;
+            padding: 1rem;
+        }
+        .form-field {
+            margin-bottom: 1.5rem;
+        }
+        .label-text {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+        input[type="text"],
+        input[type="email"],
+        input[type="tel"] {
+            width: 100%;
+            padding: 0.5rem;
+            font-size: 1rem;
+            border: 1px solid #666;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .hint {
+            font-size: 0.875rem;
+            color: #555;
+            margin-top: 0.25rem;
+        }
+        button[type="submit"] {
+            background: #0066cc;
+            color: white;
+            padding: 0.75rem 1.5rem;
+            font-size: 1rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Contact Us</h1>
+        <form>
+            <div class="form-field">
+                <span id="name-label" class="label-text">Full Name</span>
+                <span aria-hidden="true">*</span>
+                <input type="text" id="fullname" name="fullname"
+                       aria-labelledby="name-label"
+                       aria-required="true"
+                       autocomplete="name">
+            </div>
+
+            <div class="form-field">
+                <span id="email-label" class="label-text">Email Address</span>
+                <span aria-hidden="true">*</span>
+                <input type="email" id="email" name="email"
+                       aria-labelledby="email-label"
+                       aria-required="true"
+                       aria-describedby="email-hint"
+                       autocomplete="email">
+                <p id="email-hint" class="hint">Format: name@example.com</p>
+            </div>
+
+            <div class="form-field">
+                <span id="phone-label" class="label-text">Phone Number</span>
+                <input type="tel" id="phone" name="phone"
+                       aria-labelledby="phone-label"
+                       aria-describedby="phone-hint"
+                       autocomplete="tel">
+                <p id="phone-hint" class="hint">Format: (555) 123-4567</p>
+            </div>
+
+            <div class="form-field">
+                <button type="submit">Send Message</button>
+            </div>
+        </form>
+    </main>
+</body>
+</html>

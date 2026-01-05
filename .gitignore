@@ -431,3 +431,7 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Claude specific files
+.claude/
+CLAUDE.md

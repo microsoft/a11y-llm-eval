@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fail - Wrong Role - Contact Form</title>
+    <script id="a11y-assertions" type="application/json">{
+        "assertions": {
+            "Each text input has an accessible name": "pass",
+            "Each text input has textbox role": "fail",
+            "Helper text is programmatically associated": "pass",
+            "Text inputs are keyboard focusable": "pass",
+            "Visible label text is accessible": "pass",
+            "Required fields are programmatically indicated": "pass"
+        }
+    }</script>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            line-height: 1.5;
+            max-width: 500px;
+            margin: 2rem auto;
+            padding: 1rem;
+        }
+        .form-field {
+            margin-bottom: 1.5rem;
+        }
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+        .custom-input {
+            width: 100%;
+            padding: 0.5rem;
+            font-size: 1rem;
+            border: 1px solid #666;
+            border-radius: 4px;
+            box-sizing: border-box;
+            min-height: 1.5em;
+        }
+        .custom-input:empty::before {
+            content: attr(data-placeholder);
+            color: #999;
+        }
+        .hint {
+            font-size: 0.875rem;
+            color: #555;
+            margin-top: 0.25rem;
+        }
+        button[type="submit"] {
+            background: #0066cc;
+            color: white;
+            padding: 0.75rem 1.5rem;
+            font-size: 1rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Contact Us</h1>
+        <form>
+            <!-- FAIL: contenteditable div without role="textbox" -->
+            <div class="form-field">
+                <label id="fullname-label">
+                    Full Name <span aria-hidden="true">*</span>
+                </label>
+                <div class="custom-input" contenteditable="true"
+                     aria-labelledby="fullname-label"
+                     aria-required="true"
+                     data-placeholder="Enter your name"></div>
+            </div>
+
+            <div class="form-field">
+                <label id="email-label">
+                    Email Address <span aria-hidden="true">*</span>
+                </label>
+                <div class="custom-input" contenteditable="true"
+                     aria-labelledby="email-label"
+                     aria-required="true"
+                     aria-describedby="email-hint"
+                     data-placeholder="Enter your email"></div>
+                <p id="email-hint" class="hint">Format: name@example.com</p>
+            </div>
+
+            <div class="form-field">
+                <label id="phone-label">Phone Number</label>
+                <div class="custom-input" contenteditable="true"
+                     aria-labelledby="phone-label"
+                     aria-describedby="phone-hint"
+                     data-placeholder="Enter your phone"></div>
+                <p id="phone-hint" class="hint">Format: (555) 123-4567</p>
+            </div>
+
+            <div class="form-field">
+                <button type="submit">Send Message</button>
+            </div>
+        </form>
+    </main>
+</body>
+</html>
