@@ -5,9 +5,7 @@ import pytest
 
 from a11y_llm_tests import node_bridge
 
-
-HELPER_PATH = str((Path(__file__).resolve().parents[1] / 'node_runner' / 'helpers' / 'get-label.js').resolve())
-
+HELPER_PATH = str((Path(__file__).resolve().parents[1] / 'node_runner' / 'helpers' / 'get-visual-label.js').resolve())
 
 CASES = [
     (
@@ -63,9 +61,6 @@ CASES = [
     
 ]
 
-#TODO: Add more cases: aria-label, aria-describedby (should be ignored), hidden labels, complex visual layout, etc.
-
-
 @pytest.mark.parametrize('name,html_snippet,expected', CASES, ids=[c[0] for c in CASES])
 def test_get_visual_label(name, html_snippet, expected, tmp_path):
         # Build a minimal HTML document containing the snippet
@@ -91,7 +86,6 @@ module.exports.run = async ({{page, assert}}) => {{
     }});
 }};
 """
-        print(f"Test JS:\n{test_js}")
         test_js_path = tmp_path / 'test.js'
         test_js_path.write_text(test_js, encoding='utf-8')
 

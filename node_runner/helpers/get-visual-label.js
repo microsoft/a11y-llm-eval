@@ -9,7 +9,7 @@ const SOURCE_NONE = "NONE";
 
 // getVisualLabel: returns an representing the visual label associated with a form control element and it's source (e.g. <label>, nearby text, etc.)
 const getVisualLabel = async (el, opts = {}) => {
-    const { maxDistance = 8000 } = opts;
+    const { maxDistance = 300 } = opts;
 
     const visibleLabel = await el.evaluate((el, args) => {
         const {

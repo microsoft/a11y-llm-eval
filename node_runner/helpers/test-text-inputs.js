@@ -2,18 +2,14 @@
 const detailedResults = require('./detailed-results');
 const getName = require('./get-name');
 const { getVisualLabel, SOURCE_PLACEHOLDER } = require('./get-visual-label');
-const { getAllFormFieldWrappers, FIELD_WRAPPER_SELECTOR } = require('./get-form-field-wrapper');
+const { getAllFormFieldWrappers } = require('./get-form-field-wrapper');
+const { getHelperText, SOURCE_ARIA_DESCRIBEDBY, SOURCE_TITLE } = require('./get-helper-text');
 
 let testFn = {};
 
 // Get all text inputs
 const getTextInputs = async (scope) => {
-    // Native text-like inputs and textareas
-    const nativeSelector = 'input[type="text"], input[type="email"], input[type="tel"], input:not([type]), textarea';
-    // Custom implementations - contenteditable or role="textbox"
-    const customSelector = '[contenteditable="true"], [contenteditable="plaintext-only"], [role="textbox"]';
-
-    return scope.locator(`${nativeSelector}, ${customSelector}`);
+    return scope.getByRole('textbox');
 };
 
 
@@ -46,120 +42,29 @@ testFn.testEachInputHasName = async (scope) => {
     return results;
 }
 
-// Check that each text input has textbox role (R - WCAG 4.1.2)
-testFn.testEachInputHasRole = async (scope) => {
-    let results = new detailedResults();
-    const formFields = await getFormFields(scope);
-    const fieldCount = await formFields.count();
-
-    if (fieldCount === 0) {
-        results.addMessage("No form fields found in scope");
-        return results;
-    }
-
-    let textInputFields = 0;
-
-    // Selectors for text-input-like elements
-    const textInputSelector = 'input[type="text"], input[type="email"], input[type="tel"], input:not([type]), textarea, [contenteditable="true"], [contenteditable="plaintext-only"]';
-    const buttonSelector = 'button, input[type="submit"], input[type="button"]';
-    const nativeInputSelector = 'input[type="text"], input[type="email"], input[type="tel"], input:not([type]), textarea';
-
-    for (const field of await formFields.all()) {
-        // Check if this field appears to be a text input field
-        const hasTextInputElements = await field.locator(textInputSelector).count() > 0;
-        const hasOnlyButtons = !hasTextInputElements && await field.locator(buttonSelector).count() > 0;
-
-        if (hasOnlyButtons || !hasTextInputElements) {
-            continue; // Skip button-only fields
-        }
-
-        textInputFields++;
-
-        // Check for proper textbox role (native inputs have implicit role)
-        if (await field.locator(nativeInputSelector).count() > 0) {
-            results.addPass(field);
-            continue;
-        }
-
-        // Check for explicit role="textbox" on custom elements
-        if (await field.locator('[role="textbox"]').count() > 0) {
-            results.addPass(field);
-            continue;
-        }
-
-        // Otherwise: has contenteditable but no role="textbox" - failure case
-        results.addFail(field);
-    }
-
-    if (textInputFields === 0) {
-        results.addMessage("No text input fields found in scope");
-    }
-
-    return results;
-}
-
 // Check that helper text is programmatically associated (R - WCAG 1.3.1)
 testFn.testHelperTextAssociated = async (scope) => {
     let results = new detailedResults();
-    const formFields = await getFormFields(scope);
-    const fieldCount = await formFields.count();
+    const inputs = await getTextInputs(scope);
+    const count = await inputs.count();
 
-    if (fieldCount === 0) {
-        results.addMessage("No form fields found in scope");
-        return results;;
+    if (count === 0) {
+        results.addMessage("No text inputs found in scope");
+        return results;
     }
 
-    let fieldsWithHelperText = 0;
-
-    // Helper text selectors - testing showed LLMs consistently use these patterns
-    const helperSelector = '[class*="helper"], [class*="hint"], [class*="description"], [class*="help"], small, .form-text, p:not(:empty)';
-
-    for (const field of await formFields.all()) {
-        // Check if field has an input
-        const inputLocator = field.locator('input, textarea, [role="textbox"], [contenteditable="true"]');
-        if (await inputLocator.count() === 0) {
-            continue;
+    for (const input of await inputs.all()) {
+        const helperText = await getHelperText(input);
+        // Exclude placeholder-only labels since they are not persistant visible labels
+        if (helperText.text.trim().length == 0) {
+            continue; // no helper text to check
         }
-
-        // Check for helper text elements (excluding labels)
-        const helperLocator = field.locator(helperSelector);
-        const helperCount = await helperLocator.count();
-
-        // Filter out labels from helper count
-        let hasHelper = false;
-        for (const helper of await helperLocator.all()) {
-            const tagName = await helper.evaluate(el => el.tagName.toLowerCase());
-            if (tagName !== 'label') {
-                hasHelper = true;
-                break;
-            }
-        }
-
-        if (!hasHelper) {
-            continue;
-        }
-
-        fieldsWithHelperText++;
-
-        // Check if input has an accessible description via standard attributes
-        const input = inputLocator.first();
-        const describedby = await input.getAttribute('aria-describedby');
-        const ariaDesc = await input.getAttribute('aria-description');
-        const title = await input.getAttribute('title');
-        const hasDescription = !!(describedby || ariaDesc || title);
-
-        if (hasDescription) {
-            results.addPass(field);
+        
+        if (helperText.source == SOURCE_ARIA_DESCRIBEDBY || helperText.source == SOURCE_TITLE) {
+            results.addPass(input);
         } else {
-            results.addFail(field);
+            results.addFail(input);
         }
-    }
-
-    // If there's helper text, it must be associated
-    // If no helper text found, pass (nothing to associate)
-    if (fieldsWithHelperText === 0) {
-        results.addMessage("No helper text found to associate");
-        results.forcePass();
     }
 
     return results;
