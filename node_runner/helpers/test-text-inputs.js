@@ -1,7 +1,9 @@
 
 const detailedResults = require('./detailed-results');
 const getName = require('./get-name');
-const FIELD_WRAPPER_SELECTOR = '[class*="field"], [class*="input"], [class*="control"], [class*="item"], [class*="group"]';
+const { getVisualLabel, SOURCE_PLACEHOLDER } = require('./get-visual-label');
+const { getAllFormFieldWrappers, FIELD_WRAPPER_SELECTOR } = require('./get-form-field-wrapper');
+
 let testFn = {};
 
 // Get all text inputs
@@ -17,7 +19,7 @@ const getTextInputs = async (scope) => {
 
 // Get all form field wrappers
 const getFormFields = async (scope) => {
-    return await scope.locator(FIELD_WRAPPER_SELECTOR);
+    return await getAllFormFieldWrappers(scope);
 };
 
 // Check that each text input has an accessible name (R - WCAG 4.1.2)
@@ -195,8 +197,8 @@ testFn.testEachInputFocusable = async (scope) => {
     return results;
 }
 
-// Check that visible labels are programmatically associated (R - WCAG 2.4.6)
-testFn.testEachInputHasLabel = async (scope) => {
+// Check that persistant visible labels are defined (R - WCAG 2.4.6)
+testFn.testEachInputHasPersistantVisualLabel = async (scope) => {
     let results = new detailedResults();
     const inputs = await getTextInputs(scope);
     const count = await inputs.count();
@@ -207,43 +209,9 @@ testFn.testEachInputHasLabel = async (scope) => {
     }
 
     for (const input of await inputs.all()) {
-        const hasVisibleLabel = await input.evaluate((el) => {
-            // Check for visible <label> element using axe-core's visibility check
-            if (el.labels && el.labels.length > 0) {
-                const label = el.labels[0];
-                if (window.axe.commons.dom.isVisible(label, false, true)) {
-                    return true;
-                }
-            }
-
-            // Check for aria-labelledby referencing a visible element
-            const labelledbyId = el.getAttribute('aria-labelledby');
-            if (labelledbyId) {
-                const ids = labelledbyId.split(' ');
-                for (const id of ids) {
-                    const labelElement = document.getElementById(id);
-                    if (labelElement && window.axe.commons.dom.isVisible(labelElement, false, true)) {
-                        return true;
-                    }
-                }
-            }
-
-            // Fallback: check if aria-label matches visible text in parent form-field
-            const ariaLabel = el.getAttribute('aria-label');
-            if (ariaLabel) {
-                const formField = el.closest(FIELD_WRAPPER_SELECTOR);
-                if (formField) {
-                    const visibleText = formField.textContent || '';
-                    if (visibleText.toLowerCase().includes(ariaLabel.toLowerCase().trim())) {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
-        });
-
-        if (hasVisibleLabel) {
+        const visualLabel = await getVisualLabel(input);
+        // Exclude placeholder-only labels since they are not persistant visible labels
+        if (visualLabel && visualLabel.text.trim().length > 0 && visualLabel.source !== SOURCE_PLACEHOLDER) {
             results.addPass(input);
         } else {
             results.addFail(input);

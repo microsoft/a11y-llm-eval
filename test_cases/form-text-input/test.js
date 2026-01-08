@@ -32,7 +32,7 @@ module.exports.run = async ({ page, assert, utils }) => {
 
     // Assertion 5: tests that Visual labels are defined and persistant (R - WCAG 2.4.6)
     await assert("Visual labels are defined and persistant", async () => {
-        const results = await utils.testTextInputs.testEachInputHasLabel(page);
+        const results = await utils.testTextInputs.testEachInputHasPersistantVisualLabel(page);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
