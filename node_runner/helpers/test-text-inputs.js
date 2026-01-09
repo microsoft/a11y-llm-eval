@@ -378,7 +378,7 @@ testFn.testIdentifyInputPurposeAutocomplete = async (scope, discoveryCache) => {
         }
         applicable++;
 
-        const attr = await item.locator.getAttribute('autocomplete');
+        const attr = item.autocomplete;
         const val = (attr || '').trim().toLowerCase();
 
         // If autocomplete is missing or is 'on'/'off', this fails when we expect a specific token

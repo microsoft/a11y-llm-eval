@@ -26,7 +26,7 @@ async function discover(scope) {
   const facts = [];
   for (let i = 0; i < count; i++) {
     const input = inputsLocator.nth(i);
-    const [name, visualLabel, helperText, visible, tabIndex, requiredAttr, ariaRequired] = await Promise.all([
+    const [name, visualLabel, helperText, visible, tabIndex, requiredAttr, ariaRequired, autocomplete] = await Promise.all([
       getName(input),
       getVisualLabel(input),
       getHelperText(input),
@@ -34,6 +34,7 @@ async function discover(scope) {
       input.getAttribute('tabindex'),
       input.getAttribute('required'),
       input.getAttribute('aria-required'),
+      input.getAttribute('autocomplete'),
     ]);
 
     const programmaticallyRequired = (requiredAttr !== null) || (ariaRequired === 'true');
@@ -47,6 +48,7 @@ async function discover(scope) {
       requiredAttr,
       ariaRequired,
       programmaticallyRequired,
+      autocomplete,
     });
   }
 
