@@ -3,20 +3,23 @@
  * Tests WCAG 4.1.2, 2.1.1, 2.4.7, 1.3.1, 3.3.2
  */
 
-const { getAllFormFieldWrappers } = require('../../node_runner/helpers/get-form-field-wrapper');
+// Using shared discovery cache from utils.testTextInputs to avoid repeated scans
 
 module.exports.run = async ({ page, assert, utils }) => {
 
+    // Prime a single-pass discovery to share across checks
+    const discovery = await utils.testTextInputs.discover(page);
+
     // Assertion 1: Each text input has an accessible name (R - WCAG 4.1.2, 1.3.1, 3.3.2)
     await assert("Each text input has an accessible name", async () => {
-        const results = await utils.testTextInputs.testEachInputHasName(page);
+        const results = await utils.testTextInputs.testEachInputHasName(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
     // Assertion 2: Each text input has textbox role (R - WCAG 4.1.2)
     // Check that form fields intended for text input contain proper textbox elements
     await assert("Each text input has textbox role", async () => {
-        const formFields = await getAllFormFieldWrappers(page);
+        const formFields = discovery.wrappers;
 
         // Compute required counts with no element-handle loops.
         const withTextbox = formFields.filter({ has: page.getByRole('textbox') });
@@ -46,25 +49,25 @@ module.exports.run = async ({ page, assert, utils }) => {
 
     // Assertion 3: Helper text is programmatically associated (R - WCAG 1.3.1)
     await assert("Helper text is programmatically associated", async () => {
-        const results = await utils.testTextInputs.testHelperTextAssociated(page);
+        const results = await utils.testTextInputs.testHelperTextAssociated(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
     // Assertion 4: Text inputs are keyboard focusable (R - WCAG 2.1.1)
     await assert("Text inputs are keyboard focusable", async () => {
-        const results = await utils.testTextInputs.testEachInputFocusable(page);
+        const results = await utils.testTextInputs.testEachInputFocusable(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
     // Assertion 5: tests that Visual labels are defined and persistant (R - WCAG 2.4.6)
     await assert("Visual labels are defined and persistant", async () => {
-        const results = await utils.testTextInputs.testEachInputHasPersistantVisualLabel(page);
+        const results = await utils.testTextInputs.testEachInputHasPersistantVisualLabel(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
     // Assertion 6: Required fields are programmatically indicated (BP - WCAG 3.3.2)
     await assert("Required fields are programmatically indicated", async () => {
-        const results = await utils.testTextInputs.testRequiredFieldsIndicated(page);
+        const results = await utils.testTextInputs.testRequiredFieldsIndicated(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     }, { type: 'BP' });
 
