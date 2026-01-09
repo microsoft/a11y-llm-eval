@@ -17,41 +17,30 @@ module.exports.run = async ({ page, assert, utils }) => {
     // Check that form fields intended for text input contain proper textbox elements
     await assert("Each text input has textbox role", async () => {
         const formFields = await getAllFormFieldWrappers(page);
-        const fieldCount = await formFields.count();
+
+        // Compute required counts with no element-handle loops.
+        const withTextbox = formFields.filter({ has: page.getByRole('textbox') });
+
+        // Prefer hasNot for Playwright >= 1.37; fallback to CSS :has if needed.
+        const buttonOnly = formFields
+            .filter({ has: page.getByRole('button') })
+            .filter({ hasNot: page.getByRole('textbox') });
+
+        const [fieldCount, textInputFields, totalButtonOnly] = await Promise.all([
+            formFields.count(),
+            withTextbox.count(),
+            buttonOnly.count(),
+        ]);
 
         if (fieldCount === 0) {
-            // fail if no form fields found
             return { pass: false, message: "No form fields found in scope" };
         }
-
-        let totalButtonFields = 0;
-        let textInputFields = 0;
-
-        for (const field of await formFields.all()) {
-            // Check if this field appears to be a text input field
-            const hasTextInputElements = await field.getByRole('textbox').count() > 0;
-            const hasOnlyButtons = !hasTextInputElements && await field.getByRole('button').count() > 0;
-
-            if (hasOnlyButtons) {
-                totalButtonFields++;
-                continue;
-            }
-
-            if (hasTextInputElements) {
-                textInputFields++;
-                continue;
-            }
-        }
-
         if (textInputFields === 0) {
-            // fail if no text input fields found at all
             return { pass: false, message: "No text input fields found in scope" };
         }
-
-        if (textInputFields === fieldCount - totalButtonFields) {
+        if (textInputFields === fieldCount - totalButtonOnly) {
             return { pass: true, message: "Text input fields with textbox role found" };
         }
-
         return { pass: false, message: "Some text input fields do not have textbox role" };
     });
 
