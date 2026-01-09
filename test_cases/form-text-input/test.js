@@ -16,7 +16,13 @@ module.exports.run = async ({ page, assert, utils }) => {
         return { pass: results.passed(), message: results.getMessage() };
     });
 
-    // Assertion 2: Each text input has textbox role (R - WCAG 4.1.2)
+    // Assertion 2: Visible label text is included in accessible name (R - WCAG 2.5.3)
+    await assert("Visible label is included in accessible name", async () => {
+        const results = await utils.testTextInputs.testLabelInName(page, discovery);
+        return { pass: results.passed(), message: results.getMessage() };
+    });
+
+    // Assertion 3: Each text input has textbox role (R - WCAG 4.1.2)
     // Check that form fields intended for text input contain proper textbox elements
     await assert("Each text input has textbox role", async () => {
         const formFields = discovery.wrappers;
@@ -47,25 +53,25 @@ module.exports.run = async ({ page, assert, utils }) => {
         return { pass: false, message: "Some text input fields do not have textbox role" };
     });
 
-    // Assertion 3: Helper text is programmatically associated (R - WCAG 1.3.1)
+    // Assertion 4: Helper text is programmatically associated (R - WCAG 1.3.1)
     await assert("Helper text is programmatically associated", async () => {
         const results = await utils.testTextInputs.testHelperTextAssociated(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
-    // Assertion 4: Text inputs are keyboard focusable (R - WCAG 2.1.1)
+    // Assertion 5: Text inputs are keyboard focusable (R - WCAG 2.1.1)
     await assert("Text inputs are keyboard focusable", async () => {
         const results = await utils.testTextInputs.testEachInputFocusable(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
-    // Assertion 5: tests that Visual labels are defined and persistant (R - WCAG 2.4.6)
+    // Assertion 6: tests that Visual labels are defined and persistant (R - WCAG 2.4.6)
     await assert("Visual labels are defined and persistant", async () => {
         const results = await utils.testTextInputs.testEachInputHasPersistantVisualLabel(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
-    // Assertion 6: Required fields are programmatically indicated (BP - WCAG 3.3.2)
+    // Assertion 7: Required fields are programmatically indicated (BP - WCAG 3.3.2)
     await assert("Required fields are programmatically indicated", async () => {
         const results = await utils.testTextInputs.testRequiredFieldsIndicated(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };

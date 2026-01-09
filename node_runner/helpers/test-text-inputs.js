@@ -196,6 +196,65 @@ testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
     return results;
 }
 
+// Check that visible label text is included in the accessible name (R - WCAG 2.5.3)
+testFn.testLabelInName = async (scope, discoveryCache) => {
+    let results = new detailedResults();
+    const d = discoveryCache || await discover(scope);
+    const count = d.inputs.length;
+
+    if (count === 0) {
+        results.addMessage("No text inputs found in scope");
+        return results;
+    }
+
+    // Normalize helper: collapse whitespace, lowercase
+    const norm = (s) => (s || '')
+        .replace(/[\s\u00A0]+/g, ' ')
+        .trim()
+        .toLowerCase();
+
+    // Strip common non-essential indicators from the visible label (e.g., '*', trailing ':', '(required)')
+    const stripLabelNoise = (s) => {
+        if (!s) return '';
+        let t = s.replace(/\(\s*required\s*\)/gi, '');
+        t = t.replace(/\brequired\b/gi, '');
+        t = t.replace(/^\*+|\*+$/g, '');
+        t = t.replace(/[:：]\s*$/g, '');
+        return t;
+    };
+
+    // Only applies when there is a visible text label (not placeholder-only)
+    let applicable = 0;
+    for (const item of d.inputs) {
+        const vl = item.visualLabel;
+        if (!vl || !vl.text || !vl.text.trim()) {
+            continue; // no visible text label
+        }
+        applicable++;
+
+        const labelText = stripLabelNoise(vl.text);
+        const nameText = item.name || '';
+
+        const labelNorm = norm(labelText);
+        const nameNorm = norm(nameText);
+
+        // Accessible name should contain the visible label text in the same order
+        if (labelNorm && nameNorm.includes(labelNorm)) {
+            results.addPass(item.locator);
+        } else {
+            results.addFail(item.locator);
+        }
+    }
+
+    if (applicable === 0) {
+        // Nothing to check; treat as pass with context message
+        results.addMessage("No inputs with visible text labels applicable to 2.5.3");
+        results.forcePass();
+    }
+
+    return results;
+}
+
 // Expose discovery so callers can prime and pass a cache
 testFn.discover = discover;
 

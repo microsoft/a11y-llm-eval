@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fail - Placeholder Only - Contact Form</title>
+    <title>Fail - Label In Name - Contact Form</title>
     <script id="a11y-assertions" type="application/json">{
         "assertions": {
             "Each text input has an accessible name": "pass",
             "Each text input has textbox role": "pass",
             "Helper text is programmatically associated": "pass",
             "Text inputs are keyboard focusable": "pass",
-            "Visual labels are defined and persistant": "fail",
-            "Visible label is included in accessible name": "pass",
+            "Visual labels are defined and persistant": "pass",
+            "Visible label is included in accessible name": "fail",
             "Required fields are programmatically indicated": "pass"
         }
     }</script>
@@ -26,6 +26,11 @@
         .form-field {
             margin-bottom: 1.5rem;
         }
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
         input[type="text"],
         input[type="email"],
         input[type="tel"] {
@@ -36,9 +41,10 @@
             border-radius: 4px;
             box-sizing: border-box;
         }
-        input::placeholder {
-            color: #333;
-            opacity: 1;
+        .hint {
+            font-size: 0.875rem;
+            color: #555;
+            margin-top: 0.25rem;
         }
         button[type="submit"] {
             background: #0066cc;
@@ -55,18 +61,30 @@
     <main>
         <h1>Contact Us</h1>
         <form>
-            <!-- FAIL: Placeholder is styled to look prominent but disappears when user types -->
-            <!-- This is a common anti-pattern - placeholder is NOT a substitute for a label -->
             <div class="form-field">
-                <input type="text" name="fullname" placeholder="Full Name *" required>
+                <label for="fullname">
+                    Full Name <span aria-hidden="true">*</span>
+                </label>
+                <input type="text" id="fullname" name="fullname"
+                       required autocomplete="name" aria-label="test">
             </div>
 
             <div class="form-field">
-                <input type="email" name="email" placeholder="Email Address *" required>
+                <label for="email">
+                    Email Address <span aria-hidden="true">*</span>
+                </label>
+                <input type="email" id="email" name="email"
+                       required autocomplete="email"
+                       aria-describedby="email-hint" aria-label="test">
+                <p id="email-hint" class="hint">Format: name@example.com</p>
             </div>
 
             <div class="form-field">
-                <input type="tel" name="phone" placeholder="Phone Number">
+                <label for="phone">Phone Number</label>
+                <input type="tel" id="phone" name="phone"
+                       autocomplete="tel"
+                       aria-describedby="phone-hint" aria-label="test">
+                <p id="phone-hint" class="hint">Format: (555) 123-4567</p>
             </div>
 
             <div class="form-field">
