@@ -77,5 +77,11 @@ module.exports.run = async ({ page, assert, utils }) => {
         return { pass: results.passed(), message: results.getMessage() };
     }, { type: 'BP' });
 
+    // Assertion 8: Inputs use appropriate autocomplete for purpose (R - WCAG 1.3.5)
+    await assert("Inputs use appropriate autocomplete for purpose", async () => {
+        const results = await utils.testTextInputs.testIdentifyInputPurposeAutocomplete(page, discovery);
+        return { pass: results.passed(), message: results.getMessage() };
+    });
+
     return {}; // assertions collected via injected assert
 };
