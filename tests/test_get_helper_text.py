@@ -59,8 +59,20 @@ CASES = [
     ),
     (
         'ignore_only_single_character_visual_helper',
-        '<div class="form-field"><span id="name-label" class="label-text">Full Name</span><span aria-hidden="true">*</span><input type="text" id="fullname" name="fullname" aria-labelledby="name-label" aria-required="true" autocomplete="name"></div>',
+        '<div class="form-field"><span id="name-label" class="label-text">Full Name</span><span aria-hidden="true">*</span><input type="text" id="i" name="fullname" aria-labelledby="name-label" aria-required="true" autocomplete="name"></div>',
         ''
+    )
+    ,
+    (
+        'placeholder_used_as_helper',
+        '<span>Phone</span><input id="i" type="text" placeholder="Enter your name">',
+        'enter your name',
+    )
+    ,
+    (
+        'placeholder_used_as_label_excluded',
+        '<input id="i" type="text" placeholder="Enter your name">',
+        '',
     )
 ]
 

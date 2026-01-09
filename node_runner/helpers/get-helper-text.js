@@ -1,5 +1,5 @@
 const { FIELD_WRAPPER_SELECTOR } = require('./get-form-field-wrapper');
-const { getVisualLabel } = require('./get-visual-label');
+const { getVisualLabel, SOURCE_PLACEHOLDER } = require('./get-visual-label');
 
 const SOURCE_HELPER_NEARBY = "HELPER_NEARBY";
 const SOURCE_HELPER_DISTANT = "HELPER_DISTANT";
@@ -15,10 +15,14 @@ const getHelperText = async (el, opts = {}) => {
 
     // Get the visual label text to exclude from helper text
     let visualLabelText = '';
+    let visualLabelIsPlaceholder = false;
     try {
         const vLabel = await getVisualLabel(el);
-        if (vLabel && typeof vLabel === 'object' && vLabel.text) {
-            visualLabelText = (vLabel.text || '').trim();
+        if (vLabel && typeof vLabel === 'object') {
+            if (vLabel.text) {
+                visualLabelText = (vLabel.text || '').trim();
+            }
+            visualLabelIsPlaceholder = vLabel.source === SOURCE_PLACEHOLDER;
         }
     } catch (_) {}
 
@@ -31,7 +35,8 @@ const getHelperText = async (el, opts = {}) => {
             SOURCE_HELPER_DISTANT,
             SOURCE_ARIA_DESCRIBEDBY,
             SOURCE_TITLE,
-            SOURCE_NONE
+            SOURCE_NONE,
+            visualLabelIsPlaceholder
         } = args;
 
         function isVisible(node) {
@@ -99,10 +104,22 @@ const getHelperText = async (el, opts = {}) => {
             return { text: titleAttr.trim(), source: SOURCE_TITLE };
         }
 
-        // 3) Nearby visual helper text within the field wrapper
+        // 3) Nearby visual helper text within the field wrapper (and placeholder when not used as label)
         const wrapper = el.closest(FIELD_WRAPPER_SELECTOR) || document.body;
         const candidates = [];
         const inputRect = el.getBoundingClientRect();
+
+        // Treat placeholder as helper text when it is not acting as the visual label
+        try {
+            const placeholderAttr = el.getAttribute && el.getAttribute('placeholder');
+            const pt = (placeholderAttr || '').replace(/\s+/g, ' ').trim();
+            if (!visualLabelIsPlaceholder && pt && pt.length > 1) {
+                // Ensure it's not identical to the visual label text
+                if (!visualLabelText || pt !== visualLabelText) {
+                    candidates.push({ node: el, text: pt, rect: inputRect, distance: 0, dy: 0 });
+                }
+            }
+        } catch (_) {}
 
         function isFollowing(node, ref) {
             try {
@@ -208,7 +225,8 @@ const getHelperText = async (el, opts = {}) => {
         SOURCE_HELPER_DISTANT,
         SOURCE_ARIA_DESCRIBEDBY,
         SOURCE_TITLE,
-        SOURCE_NONE
+        SOURCE_NONE,
+        visualLabelIsPlaceholder
     });
 
     return helper || '';
