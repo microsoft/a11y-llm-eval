@@ -2,228 +2,224 @@ const { FIELD_WRAPPER_SELECTOR } = require('./get-form-field-wrapper');
 const { getVisualLabel, SOURCE_PLACEHOLDER } = require('./get-visual-label');
 
 const SOURCE_HELPER_NEARBY = "HELPER_NEARBY";
-const SOURCE_HELPER_DISTANT = "HELPER_DISTANT";
 const SOURCE_ARIA_DESCRIBEDBY = "ARIA_DESCRIBEDBY";
+const SOURCE_ARIA_DESCRIPTION = "ARIA_DESCRIPTION";
 const SOURCE_TITLE = "TITLE";
 const SOURCE_NONE = "NONE";
 
-// getHelperText: returns an object representing helper text associated with a form control element
-// Preference order: aria-describedby -> title attribute -> nearby visual helper text
-// Helper text must NOT be the visual label or part of the accessible name
+// getHelperText: returns all potential helper text associated with a form control element
+// Looks for text sourced from aria-describedby, aria-description, title attribute, nearby visual text
+// (including single-character indicators like "*") and placeholder when not used as label.
+// Helper text must NOT be the visual label.
+// Returns: Array<{ text: string, source: string }>
 const getHelperText = async (el, opts = {}) => {
-    const { maxDistance = 300 } = opts;
-
-    // Get the visual label text to exclude from helper text
+    // Get the visual label text so we can exclude it from helper text
     let visualLabelText = '';
     let visualLabelIsPlaceholder = false;
-    try {
-        const vLabel = await getVisualLabel(el);
-        if (vLabel && typeof vLabel === 'object') {
-            if (vLabel.text) {
-                visualLabelText = (vLabel.text || '').trim();
-            }
-            visualLabelIsPlaceholder = vLabel.source === SOURCE_PLACEHOLDER;
+
+    const vLabel = await getVisualLabel(el);
+    if (vLabel && typeof vLabel === 'object') {
+        if (vLabel.text) {
+            visualLabelText = String(vLabel.text).trim();
         }
-    } catch (_) {}
+        visualLabelIsPlaceholder = vLabel.source === SOURCE_PLACEHOLDER;
+    }
 
     const helper = await el.evaluate((el, args) => {
         const {
             FIELD_WRAPPER_SELECTOR,
-            maxDistance,
             visualLabelText,
             SOURCE_HELPER_NEARBY,
-            SOURCE_HELPER_DISTANT,
             SOURCE_ARIA_DESCRIBEDBY,
+            SOURCE_ARIA_DESCRIPTION,
             SOURCE_TITLE,
             SOURCE_NONE,
             visualLabelIsPlaceholder
         } = args;
 
-        function isVisible(node) {
-            return window.axe.commons.dom.isVisible(node, false, true);
+        const labelLower = (visualLabelText || '').toLowerCase();
+
+        function normText(s) {
+            return (s || '').replace(/\s+/g, ' ').trim();
         }
 
-        function textOf(node) {
-            if (!node) return '';
-            return (node.textContent || '').replace(/\s+/g, ' ').trim();
+        function splitWords(s) {
+            return (s || '').split(/\s+/).map(w => w.trim()).filter(Boolean);
         }
 
-        // Accessible name to exclude from helper text
-        const accessibleName = (window.axe.commons.text.accessibleText(el) || '').trim();
+        // Heuristic: is this text node mostly just the visual label (or a small fragment of it)?
+        function isMostlyFromLabel(txtLower, labelLower) {
+            if (!txtLower || !labelLower) return false;
 
-        function isNameOrLabelText(txt) {
-            if (!txt) return true; // treat empty as not helpful
-            const t = txt.trim();
-            if (!t) return true;
-            const name = accessibleName;
-            const label = visualLabelText || '';
-            // Exclude if matches or is contained within name or label
-            if (t === name || t === label) return true;
-            if (name && (name.includes(t))) return true;
-            if (label && (label.includes(t))) return true;
+            // Very short / punctuation-like text that appears in the label (e.g. "*")
+            if (txtLower.length <= 2 && labelLower.includes(txtLower)) {
+                return true;
+            }
+
+            const txtWords = splitWords(txtLower);
+            const labelWords = splitWords(labelLower);
+            if (!txtWords.length || !labelWords.length) return false;
+
+            const labelSet = new Set(labelWords);
+            let overlap = 0;
+            for (const w of txtWords) {
+                if (labelSet.has(w)) overlap++;
+            }
+
+            // If all words in this node are also label words, and it's short,
+            // treat it as label text, not helper text (e.g. "full name", "full", "name").
+            if (overlap === txtWords.length && txtWords.length <= 3) {
+                return true;
+            }
+
             return false;
         }
 
-        function looksLikeError(node) {
-            if (!node) return false;
-            const role = node.getAttribute && node.getAttribute('role');
-            if (role && (role === 'alert')) return true;
-            if (node.hasAttribute && node.hasAttribute('aria-live')) return true;
-            const cls = (node.className || '').toString().toLowerCase();
-            if (/(error|invalid|validation)/.test(cls)) return true;
-            return false;
+        const helpers = [];
+
+        function addHelper(text, source, nodeForOrder) {
+            const t = normText(text);
+            if (!t) return;
+            helpers.push({ text: t, source, _node: nodeForOrder || null });
         }
 
-        function looksLikeHelper(node) {
-            if (!node) return false;
-            const cls = (node.className || '').toString().toLowerCase();
-            if (/(hint|help|description|instructions|note|assist|guidance)/.test(cls)) return true;
-            if (node.tagName === 'SMALL') return true; // often used for hints
-            const role = node.getAttribute && node.getAttribute('role');
-            if (role === 'tooltip') return true;
-            return false;
+        // --- 0. aria-description attribute ---
+        const ariaDescriptionAttr = el.getAttribute && el.getAttribute('aria-description');
+        const ariaDescriptionText = normText(ariaDescriptionAttr);
+        if (ariaDescriptionText) {
+            addHelper(ariaDescriptionText, SOURCE_ARIA_DESCRIPTION, el);
         }
 
-        // 1) aria-describedby
-        const parts = [];
+        // --- 1. aria-describedby ---
         const describedby = el.getAttribute && el.getAttribute('aria-describedby');
+        const describedIds = new Set();
+
         if (describedby) {
             for (const id of describedby.split(/\s+/)) {
+                if (!id) continue;
+                describedIds.add(id);
+            }
+
+            const ariaParts = [];
+            let firstNode = null;
+            for (const id of describedIds) {
                 const target = document.getElementById(id);
-                if (target && isVisible(target) && !looksLikeError(target)) {
-                    const t = textOf(target);
-                    if (t && !isNameOrLabelText(t)) parts.push(t);
-                }
+                if (!target) continue;
+
+                // Skip obvious error messages
+                const cls = (target.className || '').toString().toLowerCase();
+                if (/error|invalid|validation|err/.test(cls)) continue;
+
+                const t = normText(target.textContent);
+                if (!t) continue;
+
+                if (!firstNode) firstNode = target;
+                ariaParts.push(t);
+            }
+
+            const ariaText = normText(ariaParts.join(' '));
+            if (ariaText) {
+                addHelper(ariaText, SOURCE_ARIA_DESCRIBEDBY, firstNode || el);
+                hasAriaHelper = true;
             }
         }
-        if (parts.length) return { text: parts.join(' '), source: SOURCE_ARIA_DESCRIBEDBY };
 
-        // 2) title attribute
+        // --- 2. title attribute (only if no aria-describedby text) ---
         const titleAttr = el.getAttribute && el.getAttribute('title');
-        if (titleAttr && !isNameOrLabelText(titleAttr)) {
-            return { text: titleAttr.trim(), source: SOURCE_TITLE };
+        const titleText = normText(titleAttr);
+        if (titleText) {
+            addHelper(titleText, SOURCE_TITLE, el);
         }
 
-        // 3) Nearby visual helper text within the field wrapper (and placeholder when not used as label)
+        // --- 3. Placeholder used as helper (only if not used as label) ---
+        const placeholderAttr = el.getAttribute && el.getAttribute('placeholder');
+        const placeholderText = normText(placeholderAttr);
+        if (!visualLabelIsPlaceholder && placeholderText && placeholderText.toLowerCase() !== labelLower) {
+            addHelper(placeholderText, SOURCE_HELPER_NEARBY, el);
+        }
+
+        // --- 4. Visual helper text nearby via TreeWalker ---
         const wrapper = el.closest(FIELD_WRAPPER_SELECTOR) || document.body;
-        const candidates = [];
-        const inputRect = el.getBoundingClientRect();
 
-        // Treat placeholder as helper text when it is not acting as the visual label
-        try {
-            const placeholderAttr = el.getAttribute && el.getAttribute('placeholder');
-            const pt = (placeholderAttr || '').replace(/\s+/g, ' ').trim();
-            if (!visualLabelIsPlaceholder && pt && pt.length > 1) {
-                // Ensure it's not identical to the visual label text
-                if (!visualLabelText || pt !== visualLabelText) {
-                    candidates.push({ node: el, text: pt, rect: inputRect, distance: 0, dy: 0 });
+        const walker = document.createTreeWalker(
+            wrapper,
+            NodeFilter.SHOW_TEXT,
+            {
+                acceptNode(node) {
+                    if (!node || !node.parentElement) return NodeFilter.FILTER_REJECT;
+
+                    // Don't treat text inside the control itself as helper text
+                    if (el.contains(node.parentElement)) {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+
+                    // Skip nodes that belong to aria-describedby targets
+                    const parent = node.parentElement;
+                    if (parent.id && describedIds.has(parent.id)) {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+
+                    const parentTag = parent.tagName || '';
+                    const parentCls = (parent.className || '').toString().toLowerCase();
+
+                    // Skip obvious labels (fallback)
+                    if (parentTag === 'LABEL') {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+
+                    // Skip obvious error messages
+                    if (/error|invalid|validation|err/.test(parentCls)) {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+
+                    const txt = normText(node.nodeValue);
+                    if (!txt) return NodeFilter.FILTER_REJECT;
+
+                    const txtLower = txt.toLowerCase();
+
+                    // Skip text that appears to be (mostly) the visual label itself,
+                    // including small fragments like "*".
+                    if (labelLower && isMostlyFromLabel(txtLower, labelLower)) {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+
+                    return NodeFilter.FILTER_ACCEPT;
                 }
-            }
-        } catch (_) {}
-
-        function isFollowing(node, ref) {
-            try {
-                return !!(ref.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING);
-            } catch (_) {
-                return false;
-            }
-        }
-
-        const walker = document.createTreeWalker(wrapper, NodeFilter.SHOW_ELEMENT, {
-            acceptNode(node) {
-                if (node === el) return NodeFilter.FILTER_REJECT;
-                if (!isVisible(node)) return NodeFilter.FILTER_REJECT;
-                if (node.contains(el)) return NodeFilter.FILTER_REJECT;
-                if (looksLikeError(node)) return NodeFilter.FILTER_REJECT;
-                const txt = textOf(node);
-                if (!txt) return NodeFilter.FILTER_REJECT;
-                if (isNameOrLabelText(txt)) return NodeFilter.FILTER_REJECT;
-                // Prefer elements that look like helper text
-                return looksLikeHelper(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
-            }
-        }, false);
+            },
+            false
+        );
 
         while (walker.nextNode()) {
             const node = walker.currentNode;
-            const rect = node.getBoundingClientRect();
-            const dx = (rect.left + rect.right) / 2 - (inputRect.left + inputRect.right) / 2;
-            const dy = (rect.top + rect.bottom) / 2 - (inputRect.top + inputRect.bottom) / 2;
-            const distance = Math.hypot(dx, dy);
-            candidates.push({ node, text: textOf(node), rect, distance, dy });
+            const txt = normText(node.nodeValue);
+            if (!txt) continue;
+            addHelper(txt, SOURCE_HELPER_NEARBY, node.parentElement || node);
         }
 
-        if (candidates.length === 0) {
-            // Second pass: allow generic nearby text below the control if not name/label
-            const walker2 = document.createTreeWalker(wrapper, NodeFilter.SHOW_ELEMENT, {
-                acceptNode(node) {
-                    if (node === el) return NodeFilter.FILTER_REJECT;
-                    if (!isVisible(node)) return NodeFilter.FILTER_REJECT;
-                    if (node.contains(el)) return NodeFilter.FILTER_REJECT;
-                    if (looksLikeError(node)) return NodeFilter.FILTER_REJECT;
-                    const txt = textOf(node);
-                    if (!txt || isNameOrLabelText(txt)) return NodeFilter.FILTER_REJECT;
-                    return NodeFilter.FILTER_ACCEPT;
-                }
-            }, false);
-
-            while (walker2.nextNode()) {
-                const node = walker2.currentNode;
-                const rect = node.getBoundingClientRect();
-                const dx = (rect.left + rect.right) / 2 - (inputRect.left + inputRect.right) / 2;
-                const dy = (rect.top + rect.bottom) / 2 - (inputRect.top + inputRect.bottom) / 2;
-                const distance = Math.hypot(dx, dy);
-                candidates.push({ node, text: textOf(node), rect, distance, dy });
-            }
+        if (!helpers.length) {
+            return [{ text: '', source: SOURCE_NONE }];
         }
 
-        if (candidates.length === 0) {
-            return { text: '', source: SOURCE_NONE };
-        }
-
-        // Helper text aggregation: include all nearby helper texts within maxDistance, no below preference
-        function byDomOrder(a, b) {
+        // Order helpers by the DOM position of their associated node
+        const ordered = helpers.slice().sort((a, b) => {
+            const na = a._node;
+            const nb = b._node;
+            if (!na || !nb || na === nb) return 0;
             try {
-                const pos = a.node.compareDocumentPosition(b.node);
-                if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1; // a before b
-                if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;  // a after b
-            } catch (_) {}
-            return a.distance - b.distance;
-        }
+                const pos = na.compareDocumentPosition(nb);
+                if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+                if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+            } catch (e) {}
+            return 0;
+        });
 
-        function isSingleCharText(txt) {
-            return ((txt || '').trim().length === 1);
-        }
-
-        function joinNonTrivial(items) {
-            const out = [];
-            for (const t of items) {
-                const s = (t || '').trim();
-                if (!s) continue;
-                if (isSingleCharText(s)) continue; // omit single-character helper text
-                out.push(s);
-            }
-            return out.join(' ');
-        }
-
-        const within = candidates.filter(c => c.distance <= maxDistance);
-        if (within.length > 0) {
-            const texts = within.sort(byDomOrder).map(c => c.text);
-            const combined = joinNonTrivial(texts);
-            if (combined) return { text: combined, source: SOURCE_HELPER_NEARBY };
-            // if all within are trivial, fall through to distant aggregate
-        }
-
-        // Fallback: include all distant helper texts
-        const texts = candidates.sort((a, b) => a.distance - b.distance).map(c => c.text);
-        const combined = joinNonTrivial(texts);
-        return combined ? { text: combined, source: SOURCE_HELPER_DISTANT } : { text: '', source: SOURCE_NONE };
+        return ordered.map(({ _node, ...rest }) => rest);
     }, {
         FIELD_WRAPPER_SELECTOR,
-        maxDistance,
         visualLabelText,
         SOURCE_HELPER_NEARBY,
-        SOURCE_HELPER_DISTANT,
         SOURCE_ARIA_DESCRIBEDBY,
+        SOURCE_ARIA_DESCRIPTION,
         SOURCE_TITLE,
         SOURCE_NONE,
         visualLabelIsPlaceholder
@@ -232,9 +228,56 @@ const getHelperText = async (el, opts = {}) => {
     return helper || '';
 }
 
+// Utility to combine helper text entries into a single string
+// Accepts either a single helper object or an array of helpers
+// Returns a space-normalized string of all helper texts
+const combineHelperTexts = (helper) => {
+    const helpers = Array.isArray(helper)
+        ? helper
+        : (helper ? [helper] : []);
+
+    return helpers
+        .map(h => (h && h.text) ? String(h.text) : '')
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+};
+
+
+
+// Compute the accessible description text from helper entries.
+// Accepts the result of getHelperText (single object or array) and
+// returns the first matching text in this priority order:
+// 1) ARIA_DESCRIBEDBY
+// 2) ARIA_DESCRIPTION
+// 3) TITLE
+// Other sources are ignored.
+const getAccessibleDescription = (helper) => {
+    const helpers = Array.isArray(helper)
+        ? helper
+        : (helper ? [helper] : []);
+
+    const priorities = [
+        SOURCE_ARIA_DESCRIBEDBY,
+        SOURCE_ARIA_DESCRIPTION,
+        SOURCE_TITLE,
+    ];
+
+    for (const source of priorities) {
+        const match = helpers.find(h => h && h.source === source && h.text && String(h.text).trim());
+        if (match) {
+            return String(match.text).trim();
+        }
+    }
+
+    return '';
+};
+
 module.exports.getHelperText = getHelperText;
 module.exports.SOURCE_HELPER_NEARBY = SOURCE_HELPER_NEARBY;
-module.exports.SOURCE_HELPER_DISTANT = SOURCE_HELPER_DISTANT;
 module.exports.SOURCE_ARIA_DESCRIBEDBY = SOURCE_ARIA_DESCRIBEDBY;
+module.exports.SOURCE_ARIA_DESCRIPTION = SOURCE_ARIA_DESCRIPTION;
 module.exports.SOURCE_TITLE = SOURCE_TITLE;
 module.exports.SOURCE_NONE = SOURCE_NONE;
+module.exports.combineHelperTexts = combineHelperTexts;
+module.exports.getAccessibleDescription = getAccessibleDescription;

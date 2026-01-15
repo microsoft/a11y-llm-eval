@@ -58,7 +58,11 @@ CASES = [
         '<span>Phone</span><input id="i" type="text" placeholder="Enter your name" aria-describedby="desc"><span id="desc">Include area code</span>',
         'phone',
     ),
-    
+    (
+        'astrisk_in_label',
+        '<div class="form-field"><label><span class="label-text">Full Name <span aria-hidden="true">*</span></span><input id="i" type="text" name="fullname" required autocomplete="name"></label></div>',
+        'full name *',
+    ),
 ]
 
 @pytest.mark.parametrize('name,html_snippet,expected', CASES, ids=[c[0] for c in CASES])

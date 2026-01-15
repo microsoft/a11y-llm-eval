@@ -1,9 +1,8 @@
 
 const detailedResults = require('./detailed-results');
-const getName = require('./get-name');
 const { getVisualLabel, SOURCE_PLACEHOLDER } = require('./get-visual-label');
 const { getAllFormFieldWrappers } = require('./get-form-field-wrapper');
-const { getHelperText, SOURCE_ARIA_DESCRIBEDBY, SOURCE_TITLE } = require('./get-helper-text');
+const { combineHelperTexts, getHelperText, SOURCE_ARIA_DESCRIBEDBY, SOURCE_TITLE } = require('./get-helper-text');
 const { discover } = require('./discovery');
 
 let testFn = {};
@@ -12,7 +11,6 @@ let testFn = {};
 const getTextInputs = async (scope) => {
     return scope.getByRole('textbox');
 };
-
 
 // Get all form field wrappers
 const getFormFields = async (scope) => {
@@ -53,15 +51,34 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
         return results;
     }
 
+    const isTrivialHelperText = (txt) => {
+        if (!txt) return true;
+        const t = txt.trim();
+        if (!t) return true;
+        if (t.length === 1) return true; // treat single-character hints (e.g., '*') as trivial
+        return false;
+    };
+
     for (const item of d.inputs) {
-        const helperText = item.helperText;
-        if (!helperText || helperText.text.trim().length === 0) {
-            continue; // no helper text to check
+        const helpers = Array.isArray(item.helperText)
+            ? item.helperText
+            : (item.helperText ? [item.helperText] : []);
+
+        const meaningfulHelpers = helpers.filter(h => !isTrivialHelperText(h && h.text));
+
+        if (meaningfulHelpers.length === 0) {
+            continue; // no meaningful helper text to check
         }
-        if (helperText.source == SOURCE_ARIA_DESCRIBEDBY || helperText.source == SOURCE_TITLE) {
+
+        const hasProgrammaticAssociation = meaningfulHelpers.some(h =>
+            h && (h.source === SOURCE_ARIA_DESCRIBEDBY || h.source === SOURCE_TITLE)
+        );
+
+        if (hasProgrammaticAssociation) {
             results.addPass(item.locator);
         } else {
             results.addFail(item.locator);
+            results.addMessage("Found `" + combineHelperTexts(meaningfulHelpers) + "`");
         }
     }
 
@@ -119,6 +136,9 @@ testFn.testEachInputHasPersistantVisualLabel = async (scope, discoveryCache) => 
     return results;
 }
 
+
+// Check if any inputs appear to be required (by visual indicators in label/help)
+// and verify they have proper programmatic indication
 testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
     let results = new detailedResults();
     const d = discoveryCache || await discover(scope);
@@ -128,10 +148,6 @@ testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
         results.addMessage("No text inputs found in scope");
         return results;
     }
-
-    // Check if any inputs appear to be required (by visual indicators in label/help)
-    // and verify they have proper programmatic indication
-    let visuallyRequiredCount = 0;
 
     // Helper to detect an asterisk at start or end of a label
     const hasAsteriskRequiredIndicator = (labelObj) => {
@@ -166,14 +182,27 @@ testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
         return false;
     };
 
+    let visuallyRequiredCount = 0;
+    let programmaticallyRequiredCount = 0;
+
     for (const item of d.inputs) {
         const isProgrammaticallyRequired = item.programmaticallyRequired;
         const label = item.visualLabel;
-        const helpText = item.helperText;
+        const helpers = Array.isArray(item.helperText)
+            ? item.helperText
+            : (item.helperText ? [item.helperText] : []);
 
         // Determine if this field looks required based on the label/help text
         const labelIndicatesRequired = hasAsteriskRequiredIndicator(label) || hasTextualRequiredIndicator(label?.text);
-        const helpTextIndicatesRequired = hasTextualRequiredIndicator(helpText?.text);
+
+        let helpTextIndicatesRequired = false;
+        for (const h of helpers) {
+            if (!h) continue;
+            if (hasAsteriskRequiredIndicator(h) || hasTextualRequiredIndicator(h.text)) {
+                helpTextIndicatesRequired = true;
+                break;
+            }
+        }
         const hasVisualIndicator = labelIndicatesRequired || helpTextIndicatesRequired;
 
         if (hasVisualIndicator) {
@@ -183,12 +212,17 @@ testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
             } else {
                 results.addFail(item.locator);
             }
+        } else if (isProgrammaticallyRequired) {
+            programmaticallyRequiredCount++;
+            // Programmatically required but no visual indicator
+            results.addFail(item.locator);
+            results.addMessage("Input is programmatically required but has no visual required indicator");
         }
     }
 
     // If fields appear required visually, they should be programmatically indicated
     // If no visually required fields, we pass (nothing to check)
-    if (visuallyRequiredCount === 0) {
+    if (visuallyRequiredCount === 0 && programmaticallyRequiredCount === 0) {
         results.addMessage("No visually required fields found");
         results.forcePass();
     }

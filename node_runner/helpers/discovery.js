@@ -10,7 +10,7 @@ const { getAllFormFieldWrappers } = require('./get-form-field-wrapper');
 //     locator,
 //     name,
 //     visualLabel, // { text, source }
-//     helperText,  // { text, source }
+//     helperText,  // Array<{ text, source }>
 //     visible,
 //     tabIndex,    // string|null
 //     requiredAttr, // string|null
