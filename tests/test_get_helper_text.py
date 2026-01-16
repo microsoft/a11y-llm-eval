@@ -194,7 +194,7 @@ CASES = [
         {
             "combined": "enter your name",
             "helpers": [
-                {"text": "Enter your name", "source": "HELPER_NEARBY"},
+                {"text": "Enter your name", "source": "CSS_PLACEHOLDER"},
             ],
             "accessible_description": "",
         },
@@ -204,10 +204,10 @@ CASES = [
         '<style>#i:empty::before { content: attr(data-placeholder); }</style>'
         '<label id="lbl">Full name</label><input id="i" aria-labelledby="lbl" type="text" data-placeholder="Enter your name">',
         {
-            # Here, the placeholder helper is excluded because it is mostly from the label
-            "combined": "",
+            # CSS pseudo-element placeholder is treated as helper text
+            "combined": "enter your name",
             "helpers": [
-                {"text": "", "source": "NONE"}
+                {"text": "Enter your name", "source": "CSS_PLACEHOLDER"}
             ],
             "accessible_description": "",
         },

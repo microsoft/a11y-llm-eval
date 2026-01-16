@@ -2,7 +2,7 @@
 const detailedResults = require('./detailed-results');
 const { getVisualLabel, SOURCE_PLACEHOLDER } = require('./get-visual-label');
 const { getAllFormFieldWrappers } = require('./get-form-field-wrapper');
-const { combineHelperTexts, getHelperText, SOURCE_ARIA_DESCRIBEDBY, SOURCE_TITLE } = require('./get-helper-text');
+const { combineHelperTexts, getHelperText, SOURCE_ARIA_DESCRIBEDBY, SOURCE_TITLE, SOURCE_CSS_PLACEHOLDER } = require('./get-helper-text');
 const { discover } = require('./discovery');
 
 let testFn = {};
@@ -107,6 +107,63 @@ testFn.testEachInputFocusable = async (scope, discoveryCache) => {
         } else {
             results.addFail(item.locator);
         }
+    }
+
+    return results;
+}
+
+// Check that placeholder text is programmatically defined as a property (R - WCAG 4.1.2)
+// Accepts native `placeholder` and ARIA `aria-placeholder` attributes as valid.
+// Flags cases where a control appears to use a non-standard placeholder attribute
+// (e.g., `data-placeholder`) without also providing a standard programmatic property.
+testFn.testPlaceholderTextDefined = async (scope, discoveryCache) => {
+    let results = new detailedResults();
+    const d = discoveryCache || await discover(scope);
+    const count = d.inputs.length;
+
+    if (count === 0) {
+        results.addMessage("No text inputs found in scope");
+        return results;
+    }
+
+    let applicable = 0;
+
+    for (const item of d.inputs) {
+        const placeholder = item.placeholder;
+        const ariaPlaceholder = item.ariaPlaceholder;
+
+        const hasStandardPlaceholder = (
+            (placeholder !== null && placeholder !== undefined) ||
+            (ariaPlaceholder !== null && ariaPlaceholder !== undefined)
+        );
+
+        const helpers = Array.isArray(item.helperText)
+            ? item.helperText
+            : (item.helperText ? [item.helperText] : []);
+
+        const hasCssPlaceholder = helpers.some(h => h && h.source === SOURCE_CSS_PLACEHOLDER && h.text);
+
+        if (!hasStandardPlaceholder && !hasCssPlaceholder) {
+            // No placeholder-related behavior; nothing to check for this field.
+            continue;
+        }
+
+        applicable++;
+
+        if (hasCssPlaceholder && !hasStandardPlaceholder) {
+            // Placeholder-like text rendered only via CSS pseudo-elements,
+            // with no programmatic placeholder or aria-placeholder property.
+            results.addFail(item.locator);
+            results.addMessage("Found CSS placeholder text without programmatic placeholder property");
+        } else if (hasStandardPlaceholder) {
+            // Placeholder text is exposed via a proper property.
+            results.addPass(item.locator);
+        }
+    }
+
+    if (applicable === 0) {
+        results.addMessage("No placeholder text present on text inputs");
+        results.forcePass();
     }
 
     return results;

@@ -15,7 +15,10 @@ const { getAllFormFieldWrappers } = require('./get-form-field-wrapper');
 //     tabIndex,    // string|null
 //     requiredAttr, // string|null
 //     ariaRequired, // string|null
-//     programmaticallyRequired: boolean
+//     programmaticallyRequired: boolean,
+//     autocomplete, // string|null
+//     placeholder, // string|null
+//     ariaPlaceholder, // string|null
 //   }>,
 //   wrappers: Locator
 // }
@@ -26,7 +29,18 @@ async function discover(scope) {
   const facts = [];
   for (let i = 0; i < count; i++) {
     const input = inputsLocator.nth(i);
-    const [name, visualLabel, helperText, visible, tabIndex, requiredAttr, ariaRequired, autocomplete] = await Promise.all([
+    const [
+      name,
+      visualLabel,
+      helperText,
+      visible,
+      tabIndex,
+      requiredAttr,
+      ariaRequired,
+      autocomplete,
+      placeholder,
+      ariaPlaceholder,
+    ] = await Promise.all([
       getName(input),
       getVisualLabel(input),
       getHelperText(input),
@@ -35,6 +49,8 @@ async function discover(scope) {
       input.getAttribute('required'),
       input.getAttribute('aria-required'),
       input.getAttribute('autocomplete'),
+      input.getAttribute('placeholder'),
+      input.getAttribute('aria-placeholder'),
     ]);
 
     const programmaticallyRequired = (requiredAttr !== null) || (ariaRequired === 'true');
@@ -49,6 +65,8 @@ async function discover(scope) {
       ariaRequired,
       programmaticallyRequired,
       autocomplete,
+      placeholder,
+      ariaPlaceholder,
     });
   }
 

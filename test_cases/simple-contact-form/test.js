@@ -83,5 +83,11 @@ module.exports.run = async ({ page, assert, utils }) => {
         return { pass: results.passed(), message: results.getMessage() };
     });
 
+    // Assertion 9: Placeholder text is programmatically defined as a property (R - WCAG 4.1.2)
+    await assert("Placeholder text is programmatically defined as a property", async () => {
+        const results = await utils.testTextInputs.testPlaceholderTextDefined(page, discovery);
+        return { pass: results.passed(), message: results.getMessage() };
+    });
+
     return {}; // assertions collected via injected assert
 };

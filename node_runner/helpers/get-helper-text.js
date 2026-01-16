@@ -6,6 +6,7 @@ const SOURCE_ARIA_DESCRIBEDBY = "ARIA_DESCRIBEDBY";
 const SOURCE_ARIA_DESCRIPTION = "ARIA_DESCRIPTION";
 const SOURCE_ARIA_PLACEHOLDER = "ARIA_PLACEHOLDER";
 const SOURCE_TITLE = "TITLE";
+const SOURCE_CSS_PLACEHOLDER = "CSS_PLACEHOLDER";
 const SOURCE_NONE = "NONE";
 
 // getHelperText: returns all potential helper text associated with a form control element
@@ -35,6 +36,7 @@ const getHelperText = async (el, opts = {}) => {
             SOURCE_ARIA_DESCRIPTION,
             SOURCE_ARIA_PLACEHOLDER,
             SOURCE_TITLE,
+            SOURCE_CSS_PLACEHOLDER,
             SOURCE_NONE,
             visualLabelIsPlaceholder
         } = args;
@@ -191,12 +193,12 @@ const getHelperText = async (el, opts = {}) => {
 
         // --- 3.5. CSS pseudo-element content (e.g. content: attr(data-placeholder)) ---
         const beforeContent = getPseudoContent('::before');
-        if (beforeContent && !isMostlyFromLabel(beforeContent.toLowerCase(), labelLower)) {
-            addHelper(beforeContent, SOURCE_HELPER_NEARBY, el);
+        if (beforeContent) {
+            addHelper(beforeContent, SOURCE_CSS_PLACEHOLDER, el);
         }
         const afterContent = getPseudoContent('::after');
-        if (afterContent && !isMostlyFromLabel(afterContent.toLowerCase(), labelLower)) {
-            addHelper(afterContent, SOURCE_HELPER_NEARBY, el);
+        if (afterContent) {
+            addHelper(afterContent, SOURCE_CSS_PLACEHOLDER, el);
         }
 
         // --- 4. Visual helper text nearby via TreeWalker ---
@@ -288,6 +290,7 @@ const getHelperText = async (el, opts = {}) => {
         SOURCE_ARIA_DESCRIPTION,
         SOURCE_ARIA_PLACEHOLDER,
         SOURCE_TITLE,
+        SOURCE_CSS_PLACEHOLDER,
         SOURCE_NONE,
         visualLabelIsPlaceholder
     });
@@ -346,6 +349,7 @@ module.exports.SOURCE_ARIA_DESCRIBEDBY = SOURCE_ARIA_DESCRIBEDBY;
 module.exports.SOURCE_ARIA_DESCRIPTION = SOURCE_ARIA_DESCRIPTION;
 module.exports.SOURCE_ARIA_PLACEHOLDER = SOURCE_ARIA_PLACEHOLDER;
 module.exports.SOURCE_TITLE = SOURCE_TITLE;
+module.exports.SOURCE_CSS_PLACEHOLDER = SOURCE_CSS_PLACEHOLDER;
 module.exports.SOURCE_NONE = SOURCE_NONE;
 module.exports.combineHelperTexts = combineHelperTexts;
 module.exports.getAccessibleDescription = getAccessibleDescription;
