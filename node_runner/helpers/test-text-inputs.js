@@ -112,9 +112,9 @@ testFn.testEachInputFocusable = async (scope, discoveryCache) => {
     return results;
 }
 
-// Check that persistant visible labels are defined (R - WCAG 3.3.2)
-// This does not consider placeholder-only labels as persistant visible labels, and does not check for programmatic association
-testFn.testEachInputHasPersistantVisualLabel = async (scope, discoveryCache) => {
+// Check that persistent visible labels are defined (R - WCAG 3.3.2)
+// This does not consider placeholder-only labels as persistent visible labels, and does not check for programmatic association
+testFn.testEachInputHasPersistentVisualLabel = async (scope, discoveryCache) => {
     let results = new detailedResults();
     const d = discoveryCache || await discover(scope);
     const count = d.inputs.length;

@@ -65,9 +65,9 @@ module.exports.run = async ({ page, assert, utils }) => {
         return { pass: results.passed(), message: results.getMessage() };
     });
 
-    // Assertion 6: tests that Visual labels are defined and persistant (R - WCAG 2.4.6)
-    await assert("Visual labels are defined and persistant", async () => {
-        const results = await utils.testTextInputs.testEachInputHasPersistantVisualLabel(page, discovery);
+    // Assertion 6: tests that Visual labels are defined and persistent (R - WCAG 3.3.2)
+    await assert("Visual labels are defined and persistent", async () => {
+        const results = await utils.testTextInputs.testEachInputHasPersistentVisualLabel(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
