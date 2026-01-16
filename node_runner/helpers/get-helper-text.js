@@ -4,6 +4,7 @@ const { getVisualLabel, SOURCE_PLACEHOLDER } = require('./get-visual-label');
 const SOURCE_HELPER_NEARBY = "HELPER_NEARBY";
 const SOURCE_ARIA_DESCRIBEDBY = "ARIA_DESCRIBEDBY";
 const SOURCE_ARIA_DESCRIPTION = "ARIA_DESCRIPTION";
+const SOURCE_ARIA_PLACEHOLDER = "ARIA_PLACEHOLDER";
 const SOURCE_TITLE = "TITLE";
 const SOURCE_NONE = "NONE";
 
@@ -32,6 +33,7 @@ const getHelperText = async (el, opts = {}) => {
             SOURCE_HELPER_NEARBY,
             SOURCE_ARIA_DESCRIBEDBY,
             SOURCE_ARIA_DESCRIPTION,
+            SOURCE_ARIA_PLACEHOLDER,
             SOURCE_TITLE,
             SOURCE_NONE,
             visualLabelIsPlaceholder
@@ -88,6 +90,13 @@ const getHelperText = async (el, opts = {}) => {
         const ariaDescriptionText = normText(ariaDescriptionAttr);
         if (ariaDescriptionText) {
             addHelper(ariaDescriptionText, SOURCE_ARIA_DESCRIPTION, el);
+        }
+
+        // --- 0.5 aria-placeholder attribute ---
+        const ariaPlaceholderAttr = el.getAttribute && el.getAttribute('aria-placeholder');
+        const ariaPlaceholderText = normText(ariaPlaceholderAttr);
+        if (ariaPlaceholderText) {
+            addHelper(ariaPlaceholderText, SOURCE_ARIA_PLACEHOLDER, el);
         }
 
         // --- 1. aria-describedby ---
@@ -220,6 +229,7 @@ const getHelperText = async (el, opts = {}) => {
         SOURCE_HELPER_NEARBY,
         SOURCE_ARIA_DESCRIBEDBY,
         SOURCE_ARIA_DESCRIPTION,
+        SOURCE_ARIA_PLACEHOLDER,
         SOURCE_TITLE,
         SOURCE_NONE,
         visualLabelIsPlaceholder
@@ -277,6 +287,7 @@ module.exports.getHelperText = getHelperText;
 module.exports.SOURCE_HELPER_NEARBY = SOURCE_HELPER_NEARBY;
 module.exports.SOURCE_ARIA_DESCRIBEDBY = SOURCE_ARIA_DESCRIBEDBY;
 module.exports.SOURCE_ARIA_DESCRIPTION = SOURCE_ARIA_DESCRIPTION;
+module.exports.SOURCE_ARIA_PLACEHOLDER = SOURCE_ARIA_PLACEHOLDER;
 module.exports.SOURCE_TITLE = SOURCE_TITLE;
 module.exports.SOURCE_NONE = SOURCE_NONE;
 module.exports.combineHelperTexts = combineHelperTexts;

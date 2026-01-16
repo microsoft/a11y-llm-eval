@@ -177,6 +177,17 @@ CASES = [
         },
     ),
     (
+        'aria_placeholder_attribute',
+        '<span>Phone</span><input id="i" type="text" aria-placeholder="Enter your name">',
+        {
+            "combined": "enter your name",
+            "helpers": [
+                {"text": "Enter your name", "source": "ARIA_PLACEHOLDER"},
+            ],
+            "accessible_description": "",
+        },
+    ),
+    (
         'complex_case_with_multiple_sources',
         '<label for="i">Name</label>*<input id="i" type="text" aria-describedby="desc" title="Your full name"><span id="desc" class="hint">Include first and last name</span><span>Use lowercase letters</span>',
         {
