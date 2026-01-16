@@ -49,6 +49,18 @@ const getHelperText = async (el, opts = {}) => {
             return (s || '').split(/\s+/).map(w => w.trim()).filter(Boolean);
         }
 
+        const STOP_WORDS = new Set([
+            'enter',
+            'type',
+            'provide',
+            'input',
+            'please',
+            'your',
+            'the',
+            'a',
+            'an'
+        ]);
+
         // Heuristic: is this text node mostly just the visual label (or a small fragment of it)?
         function isMostlyFromLabel(txtLower, labelLower) {
             if (!txtLower || !labelLower) return false;
@@ -63,14 +75,19 @@ const getHelperText = async (el, opts = {}) => {
             if (!txtWords.length || !labelWords.length) return false;
 
             const labelSet = new Set(labelWords);
+
+            // Remove generic prompt words like "enter", "please", "your"
+            const txtContentWords = txtWords.filter(w => !STOP_WORDS.has(w));
+            if (!txtContentWords.length) return false;
+
             let overlap = 0;
-            for (const w of txtWords) {
+            for (const w of txtContentWords) {
                 if (labelSet.has(w)) overlap++;
             }
 
-            // If all words in this node are also label words, and it's short,
-            // treat it as label text, not helper text (e.g. "full name", "full", "name").
-            if (overlap === txtWords.length && txtWords.length <= 3) {
+            // If all non-stopword words in this node are label words, and it's short,
+            // treat it as label text, not helper text (e.g. "full name", "enter your name").
+            if (overlap === txtContentWords.length && txtContentWords.length <= 3) {
                 return true;
             }
 
@@ -83,6 +100,27 @@ const getHelperText = async (el, opts = {}) => {
             const t = normText(text);
             if (!t) return;
             helpers.push({ text: t, source, _node: nodeForOrder || null });
+        }
+
+        function getPseudoContent(pseudo) {
+            try {
+                const style = window.getComputedStyle(el, pseudo);
+                if (!style) return '';
+
+                let content = style.getPropertyValue('content');
+                if (!content || content === 'none' || content === 'normal') return '';
+
+                content = content.trim();
+
+                if ((content.startsWith('"') && content.endsWith('"')) ||
+                    (content.startsWith("'") && content.endsWith("'"))) {
+                    content = content.slice(1, -1);
+                }
+
+                return normText(content);
+            } catch (e) {
+                return '';
+            }
         }
 
         // --- 0. aria-description attribute ---
@@ -136,15 +174,29 @@ const getHelperText = async (el, opts = {}) => {
         // --- 2. title attribute (only if no aria-describedby text) ---
         const titleAttr = el.getAttribute && el.getAttribute('title');
         const titleText = normText(titleAttr);
-        if (titleText) {
+        if (titleText && !isMostlyFromLabel(titleText.toLowerCase(), labelLower)) {
             addHelper(titleText, SOURCE_TITLE, el);
         }
 
         // --- 3. Placeholder used as helper (only if not used as label) ---
         const placeholderAttr = el.getAttribute && el.getAttribute('placeholder');
         const placeholderText = normText(placeholderAttr);
-        if (!visualLabelIsPlaceholder && placeholderText && placeholderText.toLowerCase() !== labelLower) {
+        if (!visualLabelIsPlaceholder 
+            && placeholderText 
+            && placeholderText.toLowerCase() !== labelLower
+            && !isMostlyFromLabel(placeholderText.toLowerCase(), labelLower)
+        ) {
             addHelper(placeholderText, SOURCE_HELPER_NEARBY, el);
+        }
+
+        // --- 3.5. CSS pseudo-element content (e.g. content: attr(data-placeholder)) ---
+        const beforeContent = getPseudoContent('::before');
+        if (beforeContent && !isMostlyFromLabel(beforeContent.toLowerCase(), labelLower)) {
+            addHelper(beforeContent, SOURCE_HELPER_NEARBY, el);
+        }
+        const afterContent = getPseudoContent('::after');
+        if (afterContent && !isMostlyFromLabel(afterContent.toLowerCase(), labelLower)) {
+            addHelper(afterContent, SOURCE_HELPER_NEARBY, el);
         }
 
         // --- 4. Visual helper text nearby via TreeWalker ---
@@ -170,6 +222,11 @@ const getHelperText = async (el, opts = {}) => {
 
                     const parentTag = parent.tagName || '';
                     const parentCls = (parent.className || '').toString().toLowerCase();
+
+                    // Skip style/script content
+                    if (parentTag === 'STYLE' || parentTag === 'SCRIPT') {
+                        return NodeFilter.FILTER_REJECT;
+                    }
 
                     // Skip obvious labels (fallback)
                     if (parentTag === 'LABEL') {

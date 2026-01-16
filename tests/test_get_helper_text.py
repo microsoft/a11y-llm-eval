@@ -188,6 +188,31 @@ CASES = [
         },
     ),
     (
+        'css_pseudo_placeholder_helper',
+        '<style>#i:empty::before { content: attr(data-placeholder); }</style>'
+        '<input id="i" type="text" data-placeholder="Enter your name">',
+        {
+            "combined": "enter your name",
+            "helpers": [
+                {"text": "Enter your name", "source": "HELPER_NEARBY"},
+            ],
+            "accessible_description": "",
+        },
+    ),
+    (
+        'css_pseudo_placeholder_helper_2',
+        '<style>#i:empty::before { content: attr(data-placeholder); }</style>'
+        '<label id="lbl">Full name</label><input id="i" aria-labelledby="lbl" type="text" data-placeholder="Enter your name">',
+        {
+            # Here, the placeholder helper is excluded because it is mostly from the label
+            "combined": "",
+            "helpers": [
+                {"text": "", "source": "NONE"}
+            ],
+            "accessible_description": "",
+        },
+    ),
+    (
         'complex_case_with_multiple_sources',
         '<label for="i">Name</label>*<input id="i" type="text" aria-describedby="desc" title="Your full name"><span id="desc" class="hint">Include first and last name</span><span>Use lowercase letters</span>',
         {
