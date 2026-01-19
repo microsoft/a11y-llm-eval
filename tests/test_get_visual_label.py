@@ -63,6 +63,16 @@ CASES = [
         '<div class="form-field"><label><span class="label-text">Full Name <span aria-hidden="true">*</span></span><input id="i" type="text" name="fullname" required autocomplete="name"></label></div>',
         'full name *',
     ),
+    (
+        'asterisk_css_after_in_label',
+        '<style>label.required::after { content: " *"; }</style><div class="form-field"><label class="required" for="i">Full Name</label><input id="i" type="text" name="fullname" required autocomplete="name"></div>',
+        'full name *',
+    ),
+    (
+        'transparent_text_excluded',
+        '<style>.visually-hidden-text { color: transparent; }</style><label for="i">Full<span class="visually-hidden-text"> Invisible</span> Name</label><input id="i" type="text">',
+        'full name',
+    ),
 ]
 
 @pytest.mark.parametrize('name,html_snippet,expected', CASES, ids=[c[0] for c in CASES])

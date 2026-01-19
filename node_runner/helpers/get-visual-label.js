@@ -29,8 +29,72 @@ const getVisualLabel = async (el, opts = {}) => {
 
         function textOf(node) {
             if (!node) return '';
-            // prefer visible inline text; trim whitespace and collapse
-            return (node.textContent || '').replace(/\s+/g, ' ').trim();
+
+            // Gather visible text from this node and its descendants, excluding fully transparent elements.
+            const collect = (n) => {
+                if (!n) return '';
+
+                // If this is an element that is fully transparent, skip its subtree.
+                if (n.nodeType === Node.ELEMENT_NODE && window.getComputedStyle) {
+                    const cs = window.getComputedStyle(n);
+                    if (cs && cs.color) {
+                        // color can be rgb/rgba; treat fully transparent as invisible.
+                        const color = cs.color.trim().toLowerCase();
+                        if (color.startsWith('rgba')) {
+                            const m = color.match(/rgba\([^,]+,[^,]+,[^,]+,\s*([0-9.]+)\)/);
+                            if (m && parseFloat(m[1]) === 0) {
+                                return '';
+                            }
+                        }
+                        if (color === 'transparent') {
+                            return '';
+                        }
+                    }
+                }
+
+                if (n.nodeType === Node.TEXT_NODE) {
+                    return (n.nodeValue || '');
+                }
+
+                let buffer = '';
+                for (let child = n.firstChild; child; child = child.nextSibling) {
+                    buffer += collect(child);
+                }
+                return buffer;
+            };
+
+            // base text from DOM text nodes (visible-only)
+            let text = collect(node).replace(/\s+/g, ' ').trim();
+
+            // include simple CSS pseudo-element content (e.g., asterisks for required fields)
+            if (node.nodeType === Node.ELEMENT_NODE && window.getComputedStyle) {
+                const pseudoContent = (which) => {
+                    const cs = window.getComputedStyle(node, which);
+                    if (!cs) return '';
+                    let c = cs.getPropertyValue('content');
+                    if (!c || c === 'none' || c === 'normal') return '';
+                    // strip surrounding quotes Playwright/JS engines add around string content
+                    c = c.trim();
+                    if ((c.startsWith('"') && c.endsWith('"')) || (c.startsWith("'") && c.endsWith("'"))) {
+                        c = c.slice(1, -1);
+                    }
+                    return c.trim();
+                };
+
+                const before = pseudoContent('::before');
+                const after = pseudoContent('::after');
+
+                const parts = [];
+                if (before) parts.push(before);
+                if (text) parts.push(text);
+                if (after) parts.push(after);
+
+                if (parts.length) {
+                    text = parts.join(' ');
+                }
+            }
+
+            return text;
         }
 
         // Use a single parts array for programmatic labels first
