@@ -71,11 +71,11 @@ module.exports.run = async ({ page, assert, utils }) => {
         return { pass: results.passed(), message: results.getMessage() };
     });
 
-    // Assertion 7: Required fields are programmatically indicated (BP - WCAG 3.3.2)
-    await assert("Required fields are programmatically indicated", async () => {
+    // Assertion 7: Required fields are indicated (visually and programmatically) (R - WCAG 3.3.2, 4.1.2)
+    await assert("Required fields are indicated (visually and programmatically)", async () => {
         const results = await utils.testTextInputs.testRequiredFieldsIndicated(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
-    }, { type: 'BP' });
+    });
 
     // Assertion 8: Inputs use appropriate autocomplete for purpose (R - WCAG 1.3.5)
     await assert("Inputs use appropriate autocomplete for purpose", async () => {
