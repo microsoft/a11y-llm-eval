@@ -404,6 +404,30 @@ details li { margin-bottom: 0.35rem; }
 <section>
   <details>
     <summary><h3>{{ test_name }}</h3></summary>
+    {% set assertion_names = assertion_names_by_test.get(test_name) %}
+    {% if assertion_names %}
+    <div class="filters assertion-filters" role="region" aria-label="Filters for assertions in {{ test_name }} test case">
+      <label>
+        Assertion
+        <select class="assertion-name-filter">
+          <option value="">All assertions</option>
+          {% for assertion_name in assertion_names|sort %}
+            <option value="{{ assertion_name }}">{{ assertion_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        Assertion result
+        <select class="assertion-status-filter">
+          <option value="">All results</option>
+          <option value="pass">Pass</option>
+          <option value="fail">Fail</option>
+        </select>
+      </label>
+      <button type="button" class="assertion-reset-filters">Reset</button>
+    </div>
+    <p class="filters-summary assertion-filter-count" aria-live="polite" aria-atomic="true"></p>
+    {% endif %}
     {% if test_data.prompt %}
     <details>
       <summary>Prompt</summary>
@@ -460,7 +484,7 @@ details li { margin-bottom: 0.35rem; }
             </summary>
             <ul>
               {% for a in r.test_function.assertions %}
-              <li>
+              <li data-assertion-name="{{ a.name }}" data-assertion-status="{{ a.status }}">
                 {% if a.status == "fail" %}
                   <span role="img" aria-label="Fail">❌</span>:
                 {% elif a.status == "pass" %}
@@ -555,7 +579,8 @@ document.addEventListener('DOMContentLoaded', function () {
         const cardResult = card.getAttribute('data-result');
         const matchesModel = !modelValue || cardModel === modelValue;
         const matchesResult = !resultValue || cardResult === resultValue;
-        const shouldShowCard = matchesModel && matchesResult;
+        const hiddenByAssertion = card.classList.contains('hidden-by-assertion');
+        const shouldShowCard = matchesModel && matchesResult && !hiddenByAssertion;
 
         card.style.display = shouldShowCard ? '' : 'none';
         if (shouldShowCard) {
@@ -581,6 +606,8 @@ document.addEventListener('DOMContentLoaded', function () {
       const message = anyVisible ? `Showing ${visibleCardCount} of ${totalCardCount} samples` : `Showing 0 of ${totalCardCount} samples`;
       countEl.textContent = message;
     }
+
+    updateAssertionCounts();
   }
 
   if (modelFilter) {
@@ -602,6 +629,87 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 
   applyFilters();
+  const assertionFilterContainers = Array.from(document.querySelectorAll('.assertion-filters'));
+
+  assertionFilterContainers.forEach(function (container) {
+    const nameFilter = container.querySelector('.assertion-name-filter');
+    const statusFilter = container.querySelector('.assertion-status-filter');
+    const resetAssertionButton = container.querySelector('.assertion-reset-filters');
+    const testCaseSection = container.closest('section');
+    if (!testCaseSection) return;
+
+    const sampleCards = Array.from(testCaseSection.querySelectorAll('.sample-card'));
+
+    function applyAssertionFilters() {
+      const nameValue = nameFilter ? nameFilter.value : '';
+      const statusValue = statusFilter ? statusFilter.value : '';
+
+      sampleCards.forEach(function (card) {
+        const assertionItems = Array.from(card.querySelectorAll('li[data-assertion-name][data-assertion-status]'));
+        let matches = true;
+
+        if (nameValue || statusValue) {
+          matches = assertionItems.some(function (item) {
+            const itemName = item.getAttribute('data-assertion-name') || '';
+            const itemStatus = item.getAttribute('data-assertion-status') || '';
+            const matchesName = !nameValue || itemName === nameValue;
+            const matchesStatus = !statusValue || itemStatus === statusValue;
+            return matchesName && matchesStatus;
+          });
+        }
+
+        card.classList.toggle('hidden-by-assertion', !matches);
+      });
+
+      applyFilters();
+    }
+
+    if (nameFilter) {
+      nameFilter.addEventListener('change', applyAssertionFilters);
+    }
+    if (statusFilter) {
+      statusFilter.addEventListener('change', applyAssertionFilters);
+    }
+    if (resetAssertionButton) {
+      resetAssertionButton.addEventListener('click', function () {
+        if (nameFilter) {
+          nameFilter.value = '';
+        }
+        if (statusFilter) {
+          statusFilter.value = '';
+        }
+        sampleCards.forEach(function (card) {
+          card.classList.remove('hidden-by-assertion');
+        });
+        applyFilters();
+      });
+    }
+
+    applyAssertionFilters();
+  });
+
+  function updateAssertionCounts() {
+    const containers = Array.from(document.querySelectorAll('.assertion-filters'));
+    containers.forEach(function (container) {
+      const summaryEl = container.parentElement.querySelector('.assertion-filter-count');
+      if (!summaryEl) return;
+      const testCaseSection = container.closest('section');
+      if (!testCaseSection) return;
+      const cards = Array.from(testCaseSection.querySelectorAll('.sample-card'));
+      const total = cards.length;
+      let visible = 0;
+      cards.forEach(function (card) {
+        if (card.style.display !== 'none') {
+          visible += 1;
+        }
+      });
+      if (!total) {
+        summaryEl.textContent = '';
+      } else {
+        summaryEl.textContent = `Showing ${visible} of ${total} samples in this test case`;
+      }
+    });
+  }
 });
 </script>
 <script>
@@ -664,6 +772,17 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
   from collections import defaultdict
 
   results = data.get("results", [])
+
+  assertion_names_by_test = defaultdict(set)
+  for r in results:
+    test_name = r.get("test_name")
+    if not test_name:
+      continue
+    assertions = r.get("test_function", {}).get("assertions", [])
+    for a in assertions:
+      name = a.get("name")
+      if name:
+        assertion_names_by_test[test_name].add(name)
 
   # Build display name mapping with precedence:
   # 1. Stored meta.models_info
@@ -829,6 +948,9 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
       ks_sorted = sorted(ks_set)
     aggregates_by_test[test_name] = {'rows': rows, 'ks': ks_sorted}
 
+  # Convert assertion_names_by_test sets to sorted lists for template rendering
+  assertion_names_by_test = {k: sorted(v) for k, v in assertion_names_by_test.items()}
+
   html = Template(TEMPLATE).render(
     run_id=data.get("run_id", "unknown"),
     models=data.get("models", []),
@@ -839,6 +961,7 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     aggregates=data.get("aggregates", []),
     aggregates_by_test=aggregates_by_test,
     grouped_results=grouped_results,
+    assertion_names_by_test=assertion_names_by_test,
     site_name=os.getenv("SITE_NAME", "A11y LLM Eval"),
     footer_content=os.getenv("FOOTER_CONTENT", ""),
     n_samples=sampling_meta.get("samples_per_case", 0),
