@@ -161,16 +161,26 @@ def run(
     # Build generation tasks
     results = []  # stub pending evaluation records
     prompts_map = {}
-    gen_tasks = []  # (test_name, model, sample_index, prompt, seed)
+    # Round-robin task queues per model to avoid hammering a single LLM
+    tasks_by_model = {model: [] for model in model_names}
     for td in test_dirs:
         prompt_text = (td / "prompt.md").read_text(encoding="utf-8")
         prompts_map[td.name] = prompt_text
         for model in model_names:
             for sample_index in range(samples):
                 seed = (base_seed + sample_index) if base_seed is not None else None
-                gen_tasks.append((td.name, model, sample_index, prompt_text, seed, temperature, disable_cache))
+                tasks_by_model[model].append((td.name, model, sample_index, prompt_text, seed, temperature, disable_cache))
 
-    gen_tasks.sort(key=lambda t: (t[0], t[1], t[2]))
+    # Flatten into a single task list using round-robin across models
+    gen_tasks = []  # (test_name, model, sample_index, prompt, seed)
+    made_progress = True
+    while made_progress:
+        made_progress = False
+        for model in model_names:
+            queue = tasks_by_model.get(model)
+            if queue:
+                gen_tasks.append(queue.pop(0))
+                made_progress = True
 
     if gen_tasks:
         pool_size = None
