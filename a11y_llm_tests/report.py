@@ -317,6 +317,202 @@ details li { margin-bottom: 0.35rem; }
 </details>
 {% endif %}
 </section>
+<section>
+<details open>
+  <summary><h2>Analysis</h2></summary>
+  <p>This section summarizes where models perform well, where they struggle, and the most frequent types of accessibility issues observed across all samples.</p>
+
+  <p><strong>Interpretation.</strong>
+  {% if global_hardest_tests %}
+    The hardest test cases overall are
+    {% for row in global_hardest_tests %}
+      {{ row.test_name }}{% if not loop.last %}, {% endif %}
+    {% endfor %}, where models still fail WCAG checks more often than elsewhere.
+  {% endif %}
+  {% if per_model_easiest %}
+    Across models, the strongest areas tend to be the “easiest tests by model” listed below, indicating patterns the models already handle relatively well.
+  {% endif %}
+  {% if common_axe_failures %}
+    The most frequent WCAG issues involve axe-core rules such as
+    {% for f in common_axe_failures[:3] %}
+      {{ f.id }}{% if not loop.last %}, {% endif %}
+    {% endfor %}, highlighting recurring accessibility gaps in the generated HTML.
+  {% endif %}
+  </p>
+
+  {% if global_hardest_tests %}
+  <h3>Where models can improve the most (hardest tests)</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Test case</th>
+        <th>Overall WCAG pass rate</th>
+        <th>Avg WCAG failures / sample</th>
+        <th>Best model</th>
+        <th>Best model pass rate</th>
+        <th>Hardest model</th>
+        <th>Hardest model pass rate</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in global_hardest_tests %}
+      <tr>
+        <th>{{ row.test_name }}</th>
+        <td>{{ "%.0f%%"|format(row.pass_rate * 100) }}</td>
+        <td>{{ "%.2f"|format(row.avg_wcag_failures) }}</td>
+        <td>{% if row.best_model %}{{ model_display_names.get(row.best_model, row.best_model) }}{% else %}-{% endif %}</td>
+        <td>{% if row.best_model_pass_rate is not none %}{{ "%.0f%%"|format(row.best_model_pass_rate * 100) }}{% else %}-{% endif %}</td>
+        <td>{% if row.worst_model %}{{ model_display_names.get(row.worst_model, row.worst_model) }}{% else %}-{% endif %}</td>
+        <td>{% if row.worst_model_pass_rate is not none %}{{ "%.0f%%"|format(row.worst_model_pass_rate * 100) }}{% else %}-{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if per_model_hardest %}
+  <h3>Hardest tests by model</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Model</th>
+        <th>Most challenging test cases</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for model, tests_info in per_model_hardest.items() %}
+      <tr>
+        <th>{{ model_display_names.get(model, model) }}</th>
+        <td>
+          {% if tests_info %}
+            {% for t in tests_info %}
+              {{ t.test_name }} ({{ "%.0f%%"|format(t.pass_rate * 100) }}{% if not loop.last %}, {% endif %})
+            {% endfor %}
+          {% else %}
+            -
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if per_model_easiest %}
+  <h3>Where models perform well (easiest tests by model)</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Model</th>
+        <th>Strongest test cases</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for model, tests_info in per_model_easiest.items() %}
+      <tr>
+        <th>{{ model_display_names.get(model, model) }}</th>
+        <td>
+          {% if tests_info %}
+            {% for t in tests_info %}
+              {{ t.test_name }} ({{ "%.0f%%"|format(t.pass_rate * 100) }}{% if not loop.last %}, {% endif %})
+            {% endfor %}
+          {% else %}
+            -
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if common_axe_failures %}
+  <h3>Most common WCAG failures (axe-core)</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Rule</th>
+        <th>Impact</th>
+        <th>Total occurrences</th>
+        <th>Models affected</th>
+        <th>Tests affected</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in common_axe_failures %}
+      <tr>
+        <th>{{ f.id }}</th>
+        <td>{{ f.impact or "-" }}</td>
+        <td>{{ f.count }}</td>
+        <td>{{ f.n_models }}</td>
+        <td>{{ f.n_tests }}</td>
+        <td>{{ f.description or "" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if common_axe_bp_failures %}
+  <h3>Most common best-practice issues (axe-core)</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Rule</th>
+        <th>Impact</th>
+        <th>Total occurrences</th>
+        <th>Models affected</th>
+        <th>Tests affected</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in common_axe_bp_failures %}
+      <tr>
+        <th>{{ f.id }}</th>
+        <td>{{ f.impact or "-" }}</td>
+        <td>{{ f.count }}</td>
+        <td>{{ f.n_models }}</td>
+        <td>{{ f.n_tests }}</td>
+        <td>{{ f.description or "" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if analysis_assertions_by_test %}
+  <h3>Assertion-level patterns (per test case)</h3>
+  {% for test_name, assertions in analysis_assertions_by_test.items() %}
+    {% if assertions %}
+      <h4>{{ test_name }}</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>Assertion</th>
+            <th>Type</th>
+            <th>Failure rate</th>
+            <th>Failures / total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in assertions %}
+          <tr>
+            <th>{{ a.name }}</th>
+            <td>{{ a.type }}</td>
+            <td>{{ "%.0f%%"|format(a.fail_rate * 100) }}</td>
+            <td>{{ a.fail_count }} / {{ a.total }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p><small>Assertion statistics are computed within this test case only and are not compared across different test cases.</small></p>
+    {% endif %}
+  {% endfor %}
+  {% endif %}
+</details>
+</section>
 <details open>
 <summary><h2>Methodology</h2></summary>
   <p>This report shows how well various LLMs generate accessible HTML.</p>
@@ -862,6 +1058,84 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         per_model[model]["costs"].append(float(cost))
       except (TypeError, ValueError):
         pass
+  # Build per-test/per-model stats and failure patterns for analysis
+  test_model_stats = defaultdict(lambda: defaultdict(lambda: {
+    "n_samples": 0,
+    "n_pass": 0,
+    "total_wcag_failures": 0.0,
+    "total_axe_failures": 0.0,
+    "total_assertion_failures": 0.0,
+  }))
+
+  assertion_stats_by_test = defaultdict(lambda: defaultdict(lambda: {
+    "fail": 0,
+    "total": 0,
+    "type": "R",
+  }))
+
+  axe_wcag_failure_stats = {}
+  axe_bp_failure_stats = {}
+
+  for r in results:
+    test_name = r.get("test_name")
+    model = r.get("model_name")
+    if not test_name or not model:
+      continue
+
+    stats = test_model_stats[test_name][model]
+    stats["n_samples"] += 1
+    if r.get("result") == "PASS":
+      stats["n_pass"] += 1
+
+    tf = r.get("test_function") or {}
+    assertion_failures = tf.get("total_assertion_failures") or 0
+    stats["total_assertion_failures"] += assertion_failures
+
+    axe = r.get("axe") or {}
+    axe_failures = axe.get("failure_count") or 0
+    stats["total_axe_failures"] += axe_failures
+    stats["total_wcag_failures"] += (assertion_failures + axe_failures)
+
+    # Assertion-level stats (per test case only)
+    for a in tf.get("assertions") or []:
+      name = a.get("name")
+      if not name:
+        continue
+      atype = (a.get("type") or "R").upper()
+      a_stats = assertion_stats_by_test[test_name][name]
+      a_stats["total"] += 1
+      if a.get("status") == "fail":
+        a_stats["fail"] += 1
+      a_stats["type"] = atype
+
+    # Axe WCAG failure patterns
+    if axe:
+      for v in axe.get("failures") or []:
+        vid = v.get("id") or "unknown"
+        entry = axe_wcag_failure_stats.setdefault(vid, {
+          "count": 0,
+          "models": set(),
+          "tests": set(),
+          "impact": v.get("impact"),
+          "description": v.get("description"),
+        })
+        entry["count"] += 1
+        entry["models"].add(model)
+        entry["tests"].add(test_name)
+
+      for v in axe.get("best_practice_failures") or []:
+        vid = v.get("id") or "unknown"
+        entry = axe_bp_failure_stats.setdefault(vid, {
+          "count": 0,
+          "models": set(),
+          "tests": set(),
+          "impact": v.get("impact"),
+          "description": v.get("description"),
+        })
+        entry["count"] += 1
+        entry["models"].add(model)
+        entry["tests"].add(test_name)
+
   # create summary
   summary = {}
   for m, s in per_model.items():
@@ -951,6 +1225,146 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
   # Convert assertion_names_by_test sets to sorted lists for template rendering
   assertion_names_by_test = {k: sorted(v) for k, v in assertion_names_by_test.items()}
 
+  # Global test-level difficulty across all models
+  global_test_stats = []
+  for test_name, models_stats in test_model_stats.items():
+    total_samples = sum(s["n_samples"] for s in models_stats.values())
+    if not total_samples:
+      continue
+    total_pass = sum(s["n_pass"] for s in models_stats.values())
+    total_wcag_failures = sum(s["total_wcag_failures"] for s in models_stats.values())
+    pass_rate = (total_pass / total_samples) if total_samples else 0.0
+    avg_wcag_failures = (total_wcag_failures / total_samples) if total_samples else 0.0
+
+    best_model = None
+    best_rate = None
+    worst_model = None
+    worst_rate = None
+    for model, s in models_stats.items():
+      if not s["n_samples"]:
+        continue
+      pr = s["n_pass"] / s["n_samples"]
+      if best_rate is None or pr > best_rate:
+        best_rate = pr
+        best_model = model
+      if worst_rate is None or pr < worst_rate:
+        worst_rate = pr
+        worst_model = model
+
+    global_test_stats.append({
+      "test_name": test_name,
+      "pass_rate": pass_rate,
+      "avg_wcag_failures": avg_wcag_failures,
+      "best_model": best_model,
+      "best_model_pass_rate": best_rate,
+      "worst_model": worst_model,
+      "worst_model_pass_rate": worst_rate,
+    })
+  # Hardest tests: only include cases where there is room to improve
+  hardest_candidates = [
+    t for t in global_test_stats
+    if (t["pass_rate"] < 1.0) or (t["avg_wcag_failures"] > 0.0)
+  ]
+
+  global_hardest_tests = sorted(
+    hardest_candidates,
+    key=lambda x: (x["pass_rate"], -x["avg_wcag_failures"]),
+  )[:5]
+
+  # Easiest tests: exclude any test that already appears in the hardest list
+  hardest_names = {t["test_name"] for t in global_hardest_tests}
+  easiest_candidates = [
+    t for t in global_test_stats
+    if t["test_name"] not in hardest_names
+  ]
+
+  global_easiest_tests = sorted(
+    easiest_candidates,
+    key=lambda x: (-x["pass_rate"], x["avg_wcag_failures"]),
+  )[:5]
+
+  # Per-model hardest/easiest tests
+  per_model_tests = defaultdict(list)
+  for test_name, models_stats in test_model_stats.items():
+    for model, s in models_stats.items():
+      if not s["n_samples"]:
+        continue
+      pr = s["n_pass"] / s["n_samples"]
+      avg_wcag = (s["total_wcag_failures"] / s["n_samples"]) if s["n_samples"] else 0.0
+      per_model_tests[model].append({
+        "test_name": test_name,
+        "pass_rate": pr,
+        "avg_wcag_failures": avg_wcag,
+      })
+
+  per_model_hardest = {}
+  per_model_easiest = {}
+  for model, tests in per_model_tests.items():
+    if not tests:
+      per_model_hardest[model] = []
+      per_model_easiest[model] = []
+      continue
+
+    sorted_tests = sorted(tests, key=lambda x: (x["pass_rate"], -x["avg_wcag_failures"]))
+
+    # Easiest per model: tests with pass rate >= 80%
+    easiest = []
+    for t in reversed(sorted_tests):  # start from highest pass rate
+      if t["pass_rate"] >= 0.80:
+        easiest.append(t)
+      if len(easiest) >= 3:
+        break
+    per_model_easiest[model] = easiest
+
+    # Hardest per model: exclude any test that qualifies as "easiest" (>= 80% pass)
+    easiest_names_model = {t["test_name"] for t in easiest}
+    hardest = []
+    for t in sorted_tests:  # from lowest pass rate upward
+      if t["test_name"] in easiest_names_model:
+        continue
+      # Only include genuinely difficult tests (some failures)
+      if t["pass_rate"] < 1.0 or t["avg_wcag_failures"] > 0.0:
+        hardest.append(t)
+      if len(hardest) >= 3:
+        break
+    per_model_hardest[model] = hardest
+
+  # Common axe-core failure patterns
+  def _prepare_axe_list(src_dict, limit=10):
+    items = []
+    for rid, info in src_dict.items():
+      items.append({
+        "id": rid,
+        "count": info.get("count", 0),
+        "impact": info.get("impact"),
+        "description": info.get("description"),
+        "n_models": len(info.get("models") or []),
+        "n_tests": len(info.get("tests") or []),
+      })
+    items.sort(key=lambda x: (-x["count"], x["id"]))
+    return items[:limit]
+
+  common_axe_failures = _prepare_axe_list(axe_wcag_failure_stats)
+  common_axe_bp_failures = _prepare_axe_list(axe_bp_failure_stats)
+
+  # Assertion-level analysis per test case (not compared across tests)
+  analysis_assertions_by_test = {}
+  for test_name, assertions in assertion_stats_by_test.items():
+    rows = []
+    for name, s in assertions.items():
+      if not s["total"]:
+        continue
+      fail_rate = s["fail"] / s["total"]
+      rows.append({
+        "name": name,
+        "type": s.get("type") or "R",
+        "fail_rate": fail_rate,
+        "fail_count": s["fail"],
+        "total": s["total"],
+      })
+    rows.sort(key=lambda x: (-x["fail_rate"], -x["fail_count"], x["name"]))
+    analysis_assertions_by_test[test_name] = rows[:5]
+
   html = Template(TEMPLATE).render(
     run_id=data.get("run_id", "unknown"),
     models=data.get("models", []),
@@ -966,5 +1380,12 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     footer_content=os.getenv("FOOTER_CONTENT", ""),
     n_samples=sampling_meta.get("samples_per_case", 0),
     prompting_meta=prompting_meta,
+    global_hardest_tests=global_hardest_tests,
+    global_easiest_tests=global_easiest_tests,
+    per_model_hardest=per_model_hardest,
+    per_model_easiest=per_model_easiest,
+    common_axe_failures=common_axe_failures,
+    common_axe_bp_failures=common_axe_bp_failures,
+    analysis_assertions_by_test=analysis_assertions_by_test,
   )
   out_html.write_text(html, encoding="utf-8")
