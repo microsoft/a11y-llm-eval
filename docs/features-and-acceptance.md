@@ -167,6 +167,45 @@ Screenshot naming:
 
 ---
 
+## Feature: Prompt variants (instruction benchmarks)
+
+### Behavior
+
+The harness can optionally benchmark multiple **instruction sets** (custom instructions appended at the system prompt level) against the **control** using the same test cases.
+
+This is enabled via `run --instruction-sets-file <path>`.
+
+- Control behavior when instruction sets are enabled:
+  - Control is generated using the configured base system prompt **with no custom instructions**.
+- Each instruction set is benchmarked **separately** (no combining instruction sets).
+- Instruction sets may request a different number of samples than control.
+
+Artifacts for variants are written under separate directories:
+
+- Variant HTML: `<run_dir>/raw_variants/<variant_id>/<test_name>/<model>__s<sample_index>.html`
+- Variant screenshots: `<run_dir>/screenshots_variants/<variant_id>/<test_name>__<model>__s<sample_index>.png`
+
+Schema additions:
+
+- Each `results[]` record includes `prompt_variant_id` ("control" or the instruction set id).
+- Each `aggregates[]` record includes `prompt_variant_id`.
+- `meta.prompt_variants` describes the variants included in the run (id/name/description/custom instruction path/sample count).
+
+### Acceptance criteria
+
+- When `--instruction-sets-file` is provided:
+  - Control samples are still written to `<run_dir>/raw/` using existing naming rules.
+  - Variant samples are written to `<run_dir>/raw_variants/<variant_id>/...` using `__s<idx>` naming.
+  - `results.json` includes `meta.prompt_variants` with at least:
+    - a `control` entry
+    - one entry per configured instruction set
+
+- When `--instruction-sets-file` is not provided:
+  - No `raw_variants/` or `screenshots_variants/` outputs are required.
+  - Existing single-run behavior remains unchanged.
+
+---
+
 ## Feature: Evaluation (pass/fail logic)
 
 ### Behavior
@@ -220,6 +259,7 @@ with edge cases:
 - `--base-seed` (when provided) yields `seed = base_seed + sample_index`.
 - `sample_index` values in `results.json` are 0-based and cover the full range `[0, samples-1]` for multi-sample runs.
 - `pass_at_k` is stored with **string keys** (e.g. `"1"`, `"5"`) for JSON stability.
+- When prompt variants are present, aggregates are computed per (test, model, variant) and stored with `prompt_variant_id`.
 
 ---
 
@@ -238,6 +278,11 @@ The report summarizes:
 - Requirement assertion and best-practice assertion rates.
 - Axe WCAG failures and axe best-practice failures tracked separately.
 - When multiple samples exist, per-test/per-model aggregates can be displayed.
+
+When prompt variants exist:
+
+- The main tables reflect the **control** results.
+- The report includes an additional section that compares each variant against control.
 
 ### Acceptance criteria
 

@@ -14,6 +14,7 @@ from .schema import (
     AxeResult,
     GenerationMeta,
     AggregateRecord,
+    PromptVariant,
 )
 from .metrics import compute_pass_at_k, format_pass_at_k
 
@@ -29,7 +30,7 @@ app = typer.Typer(add_completion=False)
 
 def _evaluate_worker(args_tuple):
     """Top-level worker for multiprocessing to ensure picklability on spawn-based systems (macOS, Windows)."""
-    html_path, test_js_path, screenshot_path, test_name, model, sample_index, gen_meta, prompt_text = args_tuple
+    html_path, test_js_path, screenshot_path, test_name, model, sample_index, gen_meta, prompt_text, prompt_variant_id = args_tuple
     html = Path(html_path).read_text(encoding="utf-8")
     sp = Path(screenshot_path)
     sp.parent.mkdir(parents=True, exist_ok=True)
@@ -91,13 +92,16 @@ def _evaluate_worker(args_tuple):
             effective_system_prompt=gen_meta.get("effective_system_prompt", generator.get_effective_system_prompt()),
         ),
         sample_index=sample_index,
+        prompt_variant_id=prompt_variant_id,
     )
-    return json.loads(rec.model_dump_json()), test_name, model, result_pass
+    return json.loads(rec.model_dump_json()), test_name, model, prompt_variant_id, result_pass
 
 
 def _generate_worker(task):
     """Top-level generation worker for multiprocessing; receives a tuple of parameters."""
-    test_name, model, sample_index, prompt_text, seed, temperature, disable_cache = task
+    test_name, model, sample_index, prompt_text, seed, temperature, disable_cache, system_prompt_override, custom_instructions_text, prompt_variant_id = task
+    # Configure prompts within this worker process for the specific variant.
+    generator.configure_prompts(system_prompt_override, custom_instructions_text)
     html, meta = generator.generate_html_with_meta(
         model,
         prompt_text,
@@ -106,7 +110,55 @@ def _generate_worker(task):
         seed=seed,
         disable_cache=disable_cache,
     )
-    return test_name, model, sample_index, prompt_text, meta, html
+    return test_name, model, sample_index, prompt_text, meta, html, prompt_variant_id
+
+
+def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[dict]:
+    """Load instruction sets YAML.
+
+    Expected format:
+      instruction_sets:
+        - id: concise
+          name: Concise
+          description: ...
+          system_prompt_append_markdown: path/to/file.md
+          samples: 10
+    """
+    path = Path(instruction_sets_file)
+    if not path.is_absolute():
+        path = (base_dir / path).resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Instruction sets file not found: {path}")
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    sets = data.get("instruction_sets") or []
+    if not isinstance(sets, list):
+        raise ValueError("instruction_sets must be a list")
+    out = []
+    for s in sets:
+        if not isinstance(s, dict):
+            continue
+        sid = (s.get("id") or "").strip()
+        if not sid:
+            raise ValueError("Each instruction set must include a non-empty 'id'")
+        if sid.lower() == "control":
+            raise ValueError("'control' is reserved; choose a different instruction set id")
+        md_path = s.get("system_prompt_append_markdown")
+        if not md_path:
+            raise ValueError(f"Instruction set '{sid}' must include system_prompt_append_markdown")
+        mdp = Path(md_path)
+        if not mdp.is_absolute():
+            mdp = (base_dir / mdp).resolve()
+        if not mdp.exists():
+            raise FileNotFoundError(f"Instruction markdown not found for '{sid}': {mdp}")
+        out.append({
+            "id": sid,
+            "name": (s.get("name") or sid).strip(),
+            "description": (s.get("description") or "").strip() or None,
+            "markdown_path": str(mdp),
+            "markdown_text": mdp.read_text(encoding="utf-8"),
+            "samples": s.get("samples"),
+        })
+    return out
 
 
 @app.command()
@@ -118,6 +170,8 @@ def run(
     base_seed: int = typer.Option(None, help="Base seed for reproducibility; each sample adds its index."),
     temperature: float = typer.Option(None, help="Override model temperature (if supported)."),
     disable_cache: bool = typer.Option(False, help="Disable generation cache (always re-generate)."),
+    instruction_sets_file: str = typer.Option(None, help="Optional YAML defining custom instruction sets to benchmark vs control."),
+    instruction_samples: int = typer.Option(None, min=1, help="Default samples per instruction set (if not specified in instruction sets file)."),
     test_cases_dir: str = typer.Option("test_cases", help="Directory containing test case folders."),
     processes: int = typer.Option(None, "--processes", "-p", help="Parallel processes for generation (defaults CPU count; use 1 to disable)."),
 ):
@@ -132,10 +186,14 @@ def run(
     defaults_cfg = models_cfg.get("defaults") or {}
     config_dir = Path(models_file).resolve().parent
     system_prompt_override = defaults_cfg.get("system_prompt")
+
+    # Control behavior:
+    # - When benchmarking instruction sets, control must be the base system prompt with no custom instructions.
+    # - Otherwise, keep existing behavior (defaults.custom_instructions_markdown applies).
     instructions_cfg = defaults_cfg.get("custom_instructions_markdown")
     custom_instructions_text = None
     custom_instructions_path = None
-    if instructions_cfg:
+    if instruction_sets_file is None and instructions_cfg:
         instructions_path = Path(instructions_cfg)
         if not instructions_path.is_absolute():
             instructions_path = config_dir / instructions_path
@@ -150,6 +208,10 @@ def run(
             raise typer.Exit(code=1)
         custom_instructions_path = str(instructions_path)
     generator.configure_prompts(system_prompt_override, custom_instructions_text)
+    # Capture prompting meta *now* (important when --processes=1, since workers mutate module state).
+    base_prompting_system_prompt = generator.get_base_system_prompt()
+    base_prompting_effective_system_prompt = generator.get_effective_system_prompt()
+    base_prompting_custom_instructions = generator.get_custom_instructions()
     model_names = [m["name"] for m in models_cfg.get("models", [])]
     models_info = []
     for m in models_cfg.get("models", []):
@@ -158,6 +220,44 @@ def run(
         models_info.append({"name": name, "display_name": display_name})
     tcd = Path(test_cases_dir)
     test_dirs = [p for p in tcd.iterdir() if p.is_dir() and (p / "prompt.md").exists()]
+
+    # Prompt variants: always include control
+    prompt_variants: list[dict] = []
+    prompt_variants.append({
+        "id": "control",
+        "name": "Control",
+        "description": "Base system prompt; no custom instructions" if instruction_sets_file else "Base prompt configuration",
+        "custom_instructions_path": (None if instruction_sets_file else custom_instructions_path),
+        "custom_instructions_text": (None if instruction_sets_file else custom_instructions_text),
+        "n_samples_requested": samples,
+    })
+
+    if instruction_sets_file:
+        try:
+            sets = _load_instruction_sets(instruction_sets_file, config_dir)
+        except Exception as exc:
+            typer.secho(f"Failed to load instruction sets: {exc}", err=True)
+            raise typer.Exit(code=1)
+        for s in sets:
+            n = s.get("samples")
+            if n is None:
+                n = instruction_samples if instruction_samples is not None else samples
+            try:
+                n_int = int(n)
+            except Exception:
+                typer.secho(f"Invalid samples for instruction set '{s.get('id')}': {n}", err=True)
+                raise typer.Exit(code=1)
+            if n_int < 1:
+                typer.secho(f"Invalid samples for instruction set '{s.get('id')}': {n_int}", err=True)
+                raise typer.Exit(code=1)
+            prompt_variants.append({
+                "id": s["id"],
+                "name": s.get("name") or s["id"],
+                "description": s.get("description"),
+                "custom_instructions_path": s.get("markdown_path"),
+                "custom_instructions_text": s.get("markdown_text"),
+                "n_samples_requested": n_int,
+            })
     # Build generation tasks
     results = []  # stub pending evaluation records
     prompts_map = {}
@@ -167,9 +267,22 @@ def run(
         prompt_text = (td / "prompt.md").read_text(encoding="utf-8")
         prompts_map[td.name] = prompt_text
         for model in model_names:
-            for sample_index in range(samples):
-                seed = (base_seed + sample_index) if base_seed is not None else None
-                tasks_by_model[model].append((td.name, model, sample_index, prompt_text, seed, temperature, disable_cache))
+            for variant in prompt_variants:
+                n_samples = int(variant.get("n_samples_requested") or samples)
+                for sample_index in range(n_samples):
+                    seed = (base_seed + sample_index) if base_seed is not None else None
+                    tasks_by_model[model].append((
+                        td.name,
+                        model,
+                        sample_index,
+                        prompt_text,
+                        seed,
+                        temperature,
+                        disable_cache,
+                        system_prompt_override,
+                        variant.get("custom_instructions_text"),
+                        variant.get("id") or "control",
+                    ))
 
     # Flatten into a single task list using round-robin across models
     gen_tasks = []  # (test_name, model, sample_index, prompt, seed)
@@ -194,9 +307,14 @@ def run(
             typer.echo(f"Generating with {pool_size} processes...")
             with multiprocessing.Pool(processes=pool_size) as pool:
                 gen_results_iter = pool.map(_generate_worker, gen_tasks)
-        for test_name, model, sample_index, prompt_text, meta, html in gen_results_iter:
-            raw_path = out_dir / "raw" / test_name
-            html_file = raw_path / f"{model}__s{sample_index}.html" if samples > 1 else raw_path / f"{model}.html"
+        for test_name, model, sample_index, prompt_text, meta, html, prompt_variant_id in gen_results_iter:
+            variant_id = prompt_variant_id or "control"
+            if variant_id == "control":
+                raw_path = out_dir / "raw" / test_name
+                html_file = raw_path / f"{model}__s{sample_index}.html" if samples > 1 else raw_path / f"{model}.html"
+            else:
+                raw_path = out_dir / "raw_variants" / variant_id / test_name
+                html_file = raw_path / f"{model}__s{sample_index}.html"
             html_file.parent.mkdir(exist_ok=True, parents=True)
             html_file.write_text(html, encoding="utf-8")
             rec = ResultRecord(
@@ -223,6 +341,7 @@ def run(
                     effective_system_prompt=meta.get("effective_system_prompt", generator.get_effective_system_prompt()),
                 ),
                 sample_index=sample_index,
+                prompt_variant_id=variant_id,
             )
             results.append(json.loads(rec.model_dump_json()))
 
@@ -243,11 +362,18 @@ def run(
                 "processes_generation": (processes if processes is not None else min(multiprocessing.cpu_count(), len(gen_tasks))) if gen_tasks else None,
             },
             "prompting": {
-                "system_prompt": generator.get_base_system_prompt(),
-                "effective_system_prompt": generator.get_effective_system_prompt(),
-                "custom_instructions": generator.get_custom_instructions(),
+                "system_prompt": base_prompting_system_prompt,
+                "effective_system_prompt": base_prompting_effective_system_prompt,
+                "custom_instructions": base_prompting_custom_instructions,
                 "custom_instructions_path": custom_instructions_path,
             },
+            "prompt_variants": [json.loads(PromptVariant(
+                id=v.get("id") or "control",
+                name=v.get("name"),
+                description=v.get("description"),
+                custom_instructions_path=v.get("custom_instructions_path"),
+                n_samples_requested=v.get("n_samples_requested"),
+            ).model_dump_json()) for v in prompt_variants],
             "models_info": models_info,
             "status": "GENERATED_ONLY",
         },
@@ -296,46 +422,81 @@ def evaluate(
     if not k_values:
         k_values = [1]
 
-    # Map generation meta by triple for reuse
+    # Map generation meta by (test, model, sample_index, variant) for reuse
     gen_meta_map = {}
     for r in prior_data.get("results", []) if prior_data else []:
-        key = (r.get("test_name"), r.get("model_name"), r.get("sample_index"))
+        variant_id = r.get("prompt_variant_id") or "control"
+        key = (r.get("test_name"), r.get("model_name"), r.get("sample_index"), variant_id)
         gen_meta_map[key] = r.get("generation")
 
     # Build evaluation task list
-    tasks = []  # each entry: (html_path, test_js_path, screenshot_path, test_name, model, sample_index, gen_meta, prompt_text)
+    # each entry: (html_path, test_js_path, screenshot_path, test_name, model, sample_index, gen_meta, prompt_text, prompt_variant_id)
+    tasks = []
     for td in test_dirs:
         test_name = td.name
         test_js = td / "test.js"
+        # Control (legacy behavior)
         raw_dir = rd / "raw" / test_name
-        if not raw_dir.exists():
-            typer.secho(f"Skipping missing raw dir for test '{test_name}'", err=True)
-            continue
-        html_files = sorted(raw_dir.glob("**/*.html"))
-        for hf in html_files:
-            fname = hf.name
-            if "__s" in fname:
-                model_part, sample_part = fname.split("__s", 1)
-                sample_index_str = sample_part[:-5] if sample_part.endswith(".html") else sample_part
-                try:
-                    sample_index = int(sample_index_str)
-                except ValueError:
+        if raw_dir.exists():
+            html_files = sorted(raw_dir.glob("**/*.html"))
+            for hf in html_files:
+                fname = hf.name
+                if "__s" in fname:
+                    model_part, sample_part = fname.split("__s", 1)
+                    sample_index_str = sample_part[:-5] if sample_part.endswith(".html") else sample_part
+                    try:
+                        sample_index = int(sample_index_str)
+                    except ValueError:
+                        sample_index = None
+                    model = model_part
+                else:
+                    model = fname[:-5]
                     sample_index = None
-                model = model_part
-            else:
-                model = fname[:-5]
-                sample_index = None
-            screenshot_name = f"{test_name}__{model}__s{sample_index}.png" if sample_index is not None else f"{test_name}__{model}.png"
-            screenshot_path = rd / "screenshots" / screenshot_name
-            gen_meta = gen_meta_map.get((test_name, model, sample_index)) or {}
-            tasks.append((str(hf), str(test_js), str(screenshot_path), test_name, model, sample_index, gen_meta, prompts_map.get(test_name, "")))
+                screenshot_name = f"{test_name}__{model}__s{sample_index}.png" if sample_index is not None else f"{test_name}__{model}.png"
+                screenshot_path = rd / "screenshots" / screenshot_name
+                gen_meta = gen_meta_map.get((test_name, model, sample_index, "control")) or {}
+                if sample_index is None and not gen_meta:
+                    gen_meta = gen_meta_map.get((test_name, model, 0, "control")) or {}
+                tasks.append((str(hf), str(test_js), str(screenshot_path), test_name, model, sample_index, gen_meta, prompts_map.get(test_name, ""), "control"))
+        else:
+            typer.secho(f"Skipping missing raw dir for test '{test_name}'", err=True)
+
+        # Variants
+        variants_root = rd / "raw_variants"
+        if variants_root.exists():
+            for variant_dir in sorted([p for p in variants_root.iterdir() if p.is_dir()]):
+                variant_id = variant_dir.name
+                v_test_dir = variant_dir / test_name
+                if not v_test_dir.exists():
+                    continue
+                v_html_files = sorted(v_test_dir.glob("**/*.html"))
+                for hf in v_html_files:
+                    fname = hf.name
+                    if "__s" in fname:
+                        model_part, sample_part = fname.split("__s", 1)
+                        sample_index_str = sample_part[:-5] if sample_part.endswith(".html") else sample_part
+                        try:
+                            sample_index = int(sample_index_str)
+                        except ValueError:
+                            sample_index = None
+                        model = model_part
+                    else:
+                        model = fname[:-5]
+                        sample_index = None
+                    screenshot_name = f"{test_name}__{model}__s{sample_index}.png" if sample_index is not None else f"{test_name}__{model}.png"
+                    screenshot_path = rd / "screenshots_variants" / variant_id / screenshot_name
+                    gen_meta = gen_meta_map.get((test_name, model, sample_index, variant_id)) or {}
+                    if sample_index is None and not gen_meta:
+                        gen_meta = gen_meta_map.get((test_name, model, 0, variant_id)) or {}
+                    tasks.append((str(hf), str(test_js), str(screenshot_path), test_name, model, sample_index, gen_meta, prompts_map.get(test_name, ""), variant_id))
 
     # Sort tasks for deterministic ordering
-    tasks.sort(key=lambda t: (t[3], t[4], t[5] if t[5] is not None else -1))
+    # Sort tasks for deterministic ordering (control first)
+    tasks.sort(key=lambda t: (t[8] != "control", t[8], t[3], t[4], t[5] if t[5] is not None else -1))
 
 
     all_results = []
-    pass_map = {}  # (test_name, model) -> list[bool]
+    pass_map = {}  # (test_name, model, variant) -> list[bool]
     if not tasks:
         typer.secho("No evaluation tasks found.", err=True)
     else:
@@ -347,24 +508,25 @@ def evaluate(
             pool_size = max(1, processes)
         if pool_size == 1:
             for t in tasks:
-                res, test_name, model, passed = _evaluate_worker(t)
+                res, test_name, model, prompt_variant_id, passed = _evaluate_worker(t)
                 all_results.append(res)
-                pass_map.setdefault((test_name, model), []).append(passed)
+                pass_map.setdefault((test_name, model, prompt_variant_id or "control"), []).append(passed)
         else:
             typer.echo(f"Evaluating with {pool_size} processes...")
             with multiprocessing.Pool(processes=pool_size) as pool:
-                for res, test_name, model, passed in pool.map(_evaluate_worker, tasks):
+                for res, test_name, model, prompt_variant_id, passed in pool.map(_evaluate_worker, tasks):
                     all_results.append(res)
-                    pass_map.setdefault((test_name, model), []).append(passed)
+                    pass_map.setdefault((test_name, model, prompt_variant_id or "control"), []).append(passed)
 
     aggregates: List[dict] = []
-    for (test_name, model), statuses in pass_map.items():
+    for (test_name, model, variant_id), statuses in pass_map.items():
         c = sum(1 for x in statuses if x)
         n = len(statuses)
         pass_at = compute_pass_at_k(c, n, k_values)
         agg = AggregateRecord(
             test_name=test_name,
             model_name=model,
+            prompt_variant_id=variant_id or "control",
             n_samples=n,
             n_pass=c,
             pass_at_k=format_pass_at_k(pass_at),

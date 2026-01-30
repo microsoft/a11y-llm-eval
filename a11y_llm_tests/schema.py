@@ -63,6 +63,20 @@ class GenerationMeta(BaseModel):
     effective_system_prompt: Optional[str] = None
 
 
+class PromptVariant(BaseModel):
+    """Defines a prompt variant for a run.
+
+    A run can include the implicit "control" variant plus zero or more variants that
+    append custom instructions at the system prompt level.
+    """
+
+    id: str  # e.g. "control" or a stable instruction set id
+    name: Optional[str] = None
+    description: Optional[str] = None
+    custom_instructions_path: Optional[str] = None
+    n_samples_requested: Optional[int] = None
+
+
 class ResultRecord(BaseModel):
     test_name: str
     model_name: str
@@ -75,6 +89,8 @@ class ResultRecord(BaseModel):
     generation: GenerationMeta
     # Index of the sample for (test_name, model_name). 0-based. None for legacy single-sample runs.
     sample_index: Optional[int] = None
+    # Prompt variant identifier. None or "control" for baseline runs.
+    prompt_variant_id: Optional[str] = None
 
 
 class RunSummary(BaseModel):
@@ -93,6 +109,8 @@ class AggregateRecord(BaseModel):
     """Aggregate statistics for a (test_name, model_name) pair across multiple samples."""
     test_name: str
     model_name: str
+    # Prompt variant identifier. None or "control" for baseline runs.
+    prompt_variant_id: Optional[str] = None
     n_samples: int
     n_pass: int
     pass_at_k: Dict[str, float]  # JSON-friendly string keys

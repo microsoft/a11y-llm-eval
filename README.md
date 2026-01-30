@@ -53,6 +53,62 @@ Tips:
 - Increase `temperature` (or other diversity params) to reduce sample correlation.
 - Use `--disable-cache` if you want fresh generations even when prompt/model/seed repeat.
 
+### Custom instruction benchmarking (instruction sets)
+
+You can optionally benchmark multiple **custom instruction sets** against the **control** using the same test cases.
+
+- **Control**: the base system prompt with **no custom instructions**.
+- **Each instruction set is run separately** (instruction sets are not combined).
+- Instruction sets can use a **different sample count** than the control.
+
+Step 0: Start from the default instruction sets file
+
+- Use `config/default_instruction_sets.yaml` as a starting point.
+- The default set references `config/instructions/accessible-minimal.md` (a minimal hint that all output must be accessible).
+
+You can also create your own instruction sets YAML file.
+
+```yaml
+instruction_sets:
+  - id: accessible_minimal
+    name: Accessible Minimal
+    description: Minimal reminder that all output must be accessible.
+    system_prompt_append_markdown: config/instructions/accessible-minimal.md
+    # samples: 10
+
+  - id: aria_guardrails
+    name: ARIA Guardrails
+    description: Strong ARIA guidance; avoid invalid ARIA.
+    system_prompt_append_markdown: config/instructions/aria_guardrails.md
+    samples: 20
+```
+
+Step 1: Generate control + instruction set variants
+
+```bash
+python -m a11y_llm_tests.cli run \
+  --samples 5 \
+  --instruction-sets-file default_instruction_sets.yaml
+```
+
+Step 2: Evaluate and generate the report
+
+```bash
+python -m a11y_llm_tests.cli evaluate \
+  <path to run directory> \
+  --k 1,5,10
+```
+
+Variant artifacts:
+
+- Variant HTML: `runs/<ts>/raw_variants/<variant_id>/<test>/<model>__s<idx>.html`
+- Variant screenshots: `runs/<ts>/screenshots_variants/<variant_id>/<test>__<model>__s<idx>.png`
+
+Report:
+
+- The main tables reflect the **control** results.
+- If variants are present, the report includes an **“Instruction Benchmarks (vs Control)”** section with side-by-side metrics and deltas.
+
 
 ## Quick Start
 ```bash

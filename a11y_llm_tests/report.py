@@ -316,6 +316,38 @@ details li { margin-bottom: 0.35rem; }
   {% endfor %}
 </details>
 {% endif %}
+
+{% if variant_comparisons %}
+<details>
+  <summary><h2>Instruction Benchmarks (vs Control)</h2></summary>
+  <p>This section compares each instruction set (system prompt append) against the control configuration. Sample counts may differ between variants.</p>
+  {% for v in variant_comparisons %}
+    <h3>{{ v.name }}</h3>
+    {% if v.description %}<p>{{ v.description }}</p>{% endif %}
+    {% if v.n_samples_requested %}<p><strong>Variant samples per (test, model):</strong> {{ v.n_samples_requested }}</p>{% endif %}
+    <table>
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Control Pass Rate</th>
+          <th>{{ v.name }} Pass Rate</th>
+          <th>Δ Pass Rate</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in v.rows %}
+        <tr>
+          <th>{{ row.model_display }}</th>
+          <td class="pass-at-k-cell" data-pass="{{ '%.4f'|format(row.control_pass_rate) }}">{{ '%.0f%%'|format(row.control_pass_rate * 100) }}</td>
+          <td class="pass-at-k-cell" data-pass="{{ '%.4f'|format(row.variant_pass_rate) }}">{{ '%.0f%%'|format(row.variant_pass_rate * 100) }}</td>
+          <td>{{ '%+.1fpp'|format(row.delta_pass_rate * 100) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endfor %}
+</details>
+{% endif %}
 </section>
 <section>
 <details open>
@@ -967,7 +999,29 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
   prompting_meta = meta_block.get("prompting") or {}
   from collections import defaultdict
 
-  results = data.get("results", [])
+  all_results = data.get("results", []) or []
+
+  def _variant_id(r: dict) -> str:
+    return (r.get("prompt_variant_id") or "control")
+
+  control_results = [r for r in all_results if _variant_id(r) == "control"]
+  results_by_variant = defaultdict(list)
+  for r in all_results:
+    results_by_variant[_variant_id(r)].append(r)
+
+  all_aggregates = data.get("aggregates", []) or []
+  control_aggregates = [a for a in all_aggregates if (a.get("prompt_variant_id") or "control") == "control"]
+
+  prompt_variants_meta = meta_block.get("prompt_variants") or []
+  prompt_variant_meta_by_id = {}
+  for pv in prompt_variants_meta:
+    if isinstance(pv, dict) and pv.get("id"):
+      prompt_variant_meta_by_id[pv.get("id")] = pv
+
+  variant_ids = [vid for vid in results_by_variant.keys() if vid != "control"]
+
+  # Main report content uses control-only results.
+  results = control_results
 
   assertion_names_by_test = defaultdict(set)
   for r in results:
@@ -998,7 +1052,7 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     display = m.get("display_name") or model_display_names.get(name) or name.split('/')[-1]
     model_display_names[name] = display
   # Ensure any model appearing only in results has a mapping
-  for r in results:
+  for r in all_results:
     n = r.get("model_name")
     if n and n not in model_display_names:
       model_display_names[n] = n.split('/')[-1]
@@ -1172,7 +1226,7 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
   grouped_results = OrderedDict()
   agg_index = {}
   # Enhance aggregates with display_model_name (provider prefix stripped)
-  for a in (data.get("aggregates") or []):
+  for a in (control_aggregates or []):
     agg_index[(a.get("test_name"), a.get("model_name"))] = a
 
   prompts_map = (data.get("prompts") or {})
@@ -1186,6 +1240,72 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     })
 
   summary = OrderedDict(sorted(summary.items(), key=lambda item: (-item[1]["pass_rate"], item[1]["avg_failures"])) )
+
+  # Variant comparisons (instruction sets) vs control
+  variant_comparisons = []
+  if variant_ids:
+    def _compute_summary_simple(sub_results):
+      pm = defaultdict(lambda: {
+        "total": 0,
+        "total_passes": 0,
+        "total_axe_failures": 0,
+        "total_assertion_failures": 0,
+        "total_assertion_bp_failures": 0,
+        "axe_bp_total": 0,
+      })
+      for rr in sub_results:
+        model = rr.get("model_name")
+        if not model:
+          continue
+        pm[model]["total"] += 1
+        if rr.get("result") == "PASS":
+          pm[model]["total_passes"] += 1
+        tf = rr.get("test_function") or {}
+        pm[model]["total_assertion_failures"] += tf.get("total_assertion_failures", 0)
+        pm[model]["total_assertion_bp_failures"] += tf.get("total_assertion_bp_failures", 0)
+        axe = rr.get("axe") or {}
+        pm[model]["total_axe_failures"] += (axe.get("failure_count") or 0)
+        pm[model]["axe_bp_total"] += (axe.get("best_practice_count") or 0)
+
+      out = {}
+      for m, s in pm.items():
+        total = s["total"] or 0
+        pass_rate = (s["total_passes"] / total) if total else 0.0
+        total_bp_failures = s["total_assertion_bp_failures"] + s["axe_bp_total"]
+        total_failures = s["total_assertion_failures"] + s["total_axe_failures"]
+        out[m] = {
+          "pass_rate": pass_rate,
+          "avg_failures": (total_failures / total) if total else 0.0,
+        }
+      return out
+
+    control_summary_simple = _compute_summary_simple(control_results)
+    for vid in sorted(variant_ids):
+      v_results = results_by_variant.get(vid) or []
+      v_summary_simple = _compute_summary_simple(v_results)
+      pv = prompt_variant_meta_by_id.get(vid) or {}
+      model_union = sorted(set(control_summary_simple.keys()) | set(v_summary_simple.keys()))
+      rows = []
+      for model in model_union:
+        c = control_summary_simple.get(model) or {"pass_rate": 0.0, "avg_failures": 0.0}
+        v = v_summary_simple.get(model) or {"pass_rate": 0.0, "avg_failures": 0.0}
+        rows.append({
+          "model_name": model,
+          "model_display": model_display_names.get(model, model),
+          "control_pass_rate": c["pass_rate"],
+          "variant_pass_rate": v["pass_rate"],
+          "delta_pass_rate": v["pass_rate"] - c["pass_rate"],
+          "control_avg_failures": c["avg_failures"],
+          "variant_avg_failures": v["avg_failures"],
+          "delta_avg_failures": v["avg_failures"] - c["avg_failures"],
+        })
+      variant_comparisons.append({
+        "id": vid,
+        "name": pv.get("name") or vid,
+        "description": pv.get("description"),
+        "n_samples_requested": pv.get("n_samples_requested"),
+        "rows": rows,
+      })
   # Build aggregates_by_test: for each test, list all models and their aggregates (ensures unique table per test)
   aggregates_by_test = OrderedDict()
   tests_in_order = list(grouped_results.keys())
@@ -1372,7 +1492,7 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     tests=data.get("tests", []),
     summary=summary,
     results=results,
-    aggregates=data.get("aggregates", []),
+    aggregates=control_aggregates,
     aggregates_by_test=aggregates_by_test,
     grouped_results=grouped_results,
     assertion_names_by_test=assertion_names_by_test,
@@ -1387,5 +1507,6 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     common_axe_failures=common_axe_failures,
     common_axe_bp_failures=common_axe_bp_failures,
     analysis_assertions_by_test=analysis_assertions_by_test,
+    variant_comparisons=variant_comparisons,
   )
   out_html.write_text(html, encoding="utf-8")

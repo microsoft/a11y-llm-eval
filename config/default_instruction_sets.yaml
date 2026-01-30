@@ -1,0 +1,11 @@
+# Default instruction sets for benchmarking (vs control).
+# Use with:
+#   python -m a11y_llm_tests.cli run --instruction-sets-file config/default_instruction_sets.yaml ...
+
+instruction_sets:
+  - id: accessible_minimal
+    name: Accessible Minimal
+    description: Minimal reminder that all output must be accessible.
+    system_prompt_append_markdown: instructions/accessible-minimal.md
+    # Optional override. If omitted, defaults to the same value as --samples.
+    # samples: 10
