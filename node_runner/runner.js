@@ -7,6 +7,7 @@ const path = require("path");
 const { chromium } = require("playwright");
 const axeSource = require("axe-core").source;
 const merge = require('deepmerge')
+const testTextInputs = require('./helpers/test-text-inputs');
 
 async function main() {
   const [,, htmlPath, testJsPath, outJsonPath, screenshotPath] = process.argv;
@@ -51,7 +52,7 @@ async function main() {
     });
   }
 
-  const utils = { reload: loadHTML, runAxeOnPage, merge };
+  const utils = { reload: loadHTML, runAxeOnPage, merge, testTextInputs };
 
   try {
     await loadHTML();

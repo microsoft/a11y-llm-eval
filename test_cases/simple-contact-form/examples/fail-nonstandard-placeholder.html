@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fail - Non-standard Placeholder - Contact Form</title>
+    <script id="a11y-assertions" type="application/json">{
+        "assertions": {
+            "Placeholder text is programmatically defined as a property": "fail"
+        }
+    }</script>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            line-height: 1.5;
+            max-width: 500px;
+            margin: 2rem auto;
+            padding: 1rem;
+        }
+        .form-field {
+            margin-bottom: 1.5rem;
+        }
+        .has-placeholder[contenteditable="true"][data-placeholder]:empty::before {
+            content: attr(data-placeholder);
+            color: #666;
+            opacity: 1;
+        }
+        .fake-input {
+            border: 1px solid #666;
+            border-radius: 4px;
+            padding: 0.5rem;
+            min-height: 2.25rem;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Contact Us</h1>
+        <form>
+            <!-- FAIL: Placeholder text is exposed only via a non-standard data-placeholder
+                 attribute and CSS content, not via placeholder/aria-placeholder property. -->
+            <div class="form-field">
+                <label for="message">Message</label>
+                <div
+                    id="message"
+                    class="fake-input has-placeholder"
+                    role="textbox"
+                    contenteditable="true"
+                    data-placeholder="Enter your message"
+                ></div>
+            </div>
+
+            <div class="form-field">
+                <button type="submit">Send Message</button>
+            </div>
+        </form>
+    </main>
+</body>
+</html>

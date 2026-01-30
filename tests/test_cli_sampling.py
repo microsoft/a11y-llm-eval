@@ -91,6 +91,7 @@ def test_cli_sampling_multi(monkeypatch, tmp_path):
         str(latest),
         "--test-cases-dir", str(tmp_path / "test_cases"),
         "--k", "1,2,4",
+        "--processes", "1",
         "--no-generate-report",
         "--processes", "1",
     ])
@@ -145,6 +146,7 @@ def test_cli_sampling_single(monkeypatch, tmp_path):
         str(latest),
         "--test-cases-dir", str(tmp_path / "test_cases"),
         "--k", "1,5",
+        "--processes", "1",
         "--no-generate-report",
         "--processes", "1",
     ])
@@ -213,6 +215,7 @@ def test_bp_failure_not_affect_requirement_pass(monkeypatch, tmp_path):
         str(latest),
         "--test-cases-dir", str(tmp_path / "test_cases"),
         "--k", "1",
+        "--processes", "1",
         "--no-generate-report",
         "--processes", "1",
     ])

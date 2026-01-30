@@ -8,4 +8,4 @@ models:
   - name: azure_ai/gpt-5-mini
     display_name: GPT-5 Mini
   - name: claude-sonnet-4-20250514
-    display_name: Claud Sonnet 4
+    display_name: Claude Sonnet 4
