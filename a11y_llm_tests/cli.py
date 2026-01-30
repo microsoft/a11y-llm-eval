@@ -28,6 +28,20 @@ load_dotenv()
 app = typer.Typer(add_completion=False)
 
 
+def _render_progress(prefix: str, done: int, total: int) -> None:
+    """Render an in-place progress indicator.
+
+    Uses carriage returns to avoid spamming lines.
+    """
+    if total <= 0:
+        return
+    done = max(0, min(done, total))
+    pct = int((done / total) * 100)
+    typer.echo(f"\r{prefix}: {pct}% ({done}/{total})", nl=False)
+    if done >= total:
+        typer.echo("")
+
+
 def _evaluate_worker(args_tuple):
     """Top-level worker for multiprocessing to ensure picklability on spawn-based systems (macOS, Windows)."""
     html_path, test_js_path, screenshot_path, test_name, model, sample_index, gen_meta, prompt_text, prompt_variant_id = args_tuple
@@ -301,49 +315,56 @@ def run(
             pool_size = min(multiprocessing.cpu_count(), len(gen_tasks))
         else:
             pool_size = max(1, processes)
+        def _consume_generation_results(gen_results_iter):
+            total = len(gen_tasks)
+            done = 0
+            _render_progress("Generating", done, total)
+            for test_name, model, sample_index, prompt_text, meta, html, prompt_variant_id in gen_results_iter:
+                done += 1
+                _render_progress("Generating", done, total)
+                variant_id = prompt_variant_id or "control"
+                if variant_id == "control":
+                    raw_path = out_dir / "raw" / test_name
+                    html_file = raw_path / f"{model}__s{sample_index}.html" if samples > 1 else raw_path / f"{model}.html"
+                else:
+                    raw_path = out_dir / "raw_variants" / variant_id / test_name
+                    html_file = raw_path / f"{model}__s{sample_index}.html"
+                html_file.parent.mkdir(exist_ok=True, parents=True)
+                html_file.write_text(html, encoding="utf-8")
+                rec = ResultRecord(
+                    test_name=test_name,
+                    model_name=model,
+                    timestamp=datetime.utcnow(),
+                    generation_html_path=str(html_file),
+                    screenshot_path=None,
+                    test_function=TestFunctionResult(status="PENDING", assertions=[], error=None, duration_ms=None),
+                    axe=None,
+                    result="PENDING",
+                    generation=GenerationMeta(
+                        latency_s=meta.get("latency_s", 0.0),
+                        prompt_hash=meta.get("prompt_hash", generator.compute_prompt_hash(prompt_text)),
+                        cached=meta.get("cached", False),
+                        tokens_in=meta.get("tokens_in"),
+                        tokens_out=meta.get("tokens_out"),
+                        total_tokens=meta.get("total_tokens"),
+                        cost_usd=meta.get("cost_usd"),
+                        seed=meta.get("seed"),
+                        temperature=meta.get("temperature"),
+                        system_prompt=meta.get("system_prompt", generator.get_base_system_prompt()),
+                        custom_instructions=meta.get("custom_instructions", generator.get_custom_instructions()),
+                        effective_system_prompt=meta.get("effective_system_prompt", generator.get_effective_system_prompt()),
+                    ),
+                    sample_index=sample_index,
+                    prompt_variant_id=variant_id,
+                )
+                results.append(json.loads(rec.model_dump_json()))
+
         if pool_size == 1:
-            gen_results_iter = map(_generate_worker, gen_tasks)
+            _consume_generation_results(map(_generate_worker, gen_tasks))
         else:
             typer.echo(f"Generating with {pool_size} processes...")
             with multiprocessing.Pool(processes=pool_size) as pool:
-                gen_results_iter = pool.map(_generate_worker, gen_tasks)
-        for test_name, model, sample_index, prompt_text, meta, html, prompt_variant_id in gen_results_iter:
-            variant_id = prompt_variant_id or "control"
-            if variant_id == "control":
-                raw_path = out_dir / "raw" / test_name
-                html_file = raw_path / f"{model}__s{sample_index}.html" if samples > 1 else raw_path / f"{model}.html"
-            else:
-                raw_path = out_dir / "raw_variants" / variant_id / test_name
-                html_file = raw_path / f"{model}__s{sample_index}.html"
-            html_file.parent.mkdir(exist_ok=True, parents=True)
-            html_file.write_text(html, encoding="utf-8")
-            rec = ResultRecord(
-                test_name=test_name,
-                model_name=model,
-                timestamp=datetime.utcnow(),
-                generation_html_path=str(html_file),
-                screenshot_path=None,
-                test_function=TestFunctionResult(status="PENDING", assertions=[], error=None, duration_ms=None),
-                axe=None,
-                result="PENDING",
-                generation=GenerationMeta(
-                    latency_s=meta.get("latency_s", 0.0),
-                    prompt_hash=meta.get("prompt_hash", generator.compute_prompt_hash(prompt_text)),
-                    cached=meta.get("cached", False),
-                    tokens_in=meta.get("tokens_in"),
-                    tokens_out=meta.get("tokens_out"),
-                    total_tokens=meta.get("total_tokens"),
-                    cost_usd=meta.get("cost_usd"),
-                    seed=meta.get("seed"),
-                    temperature=meta.get("temperature"),
-                    system_prompt=meta.get("system_prompt", generator.get_base_system_prompt()),
-                    custom_instructions=meta.get("custom_instructions", generator.get_custom_instructions()),
-                    effective_system_prompt=meta.get("effective_system_prompt", generator.get_effective_system_prompt()),
-                ),
-                sample_index=sample_index,
-                prompt_variant_id=variant_id,
-            )
-            results.append(json.loads(rec.model_dump_json()))
+                _consume_generation_results(pool.imap(_generate_worker, gen_tasks))
 
     run_json = {
         "run_id": run_id,
@@ -507,16 +528,26 @@ def evaluate(
         else:
             pool_size = max(1, processes)
         if pool_size == 1:
+            total = len(tasks)
+            done = 0
+            _render_progress("Evaluating", done, total)
             for t in tasks:
                 res, test_name, model, prompt_variant_id, passed = _evaluate_worker(t)
                 all_results.append(res)
                 pass_map.setdefault((test_name, model, prompt_variant_id or "control"), []).append(passed)
+                done += 1
+                _render_progress("Evaluating", done, total)
         else:
             typer.echo(f"Evaluating with {pool_size} processes...")
             with multiprocessing.Pool(processes=pool_size) as pool:
-                for res, test_name, model, prompt_variant_id, passed in pool.map(_evaluate_worker, tasks):
+                total = len(tasks)
+                done = 0
+                _render_progress("Evaluating", done, total)
+                for res, test_name, model, prompt_variant_id, passed in pool.imap(_evaluate_worker, tasks):
                     all_results.append(res)
                     pass_map.setdefault((test_name, model, prompt_variant_id or "control"), []).append(passed)
+                    done += 1
+                    _render_progress("Evaluating", done, total)
 
     aggregates: List[dict] = []
     for (test_name, model, variant_id), statuses in pass_map.items():
