@@ -75,6 +75,7 @@ def test_cli_sampling_multi(monkeypatch, tmp_path):
         "--samples", "4",
         "--k", "1,2,4",
         "--base-seed", "100",
+        "--processes", "1",
     ])
     assert gen_result.exit_code == 0, gen_result.output
     runs_dir = tmp_path / "runs"
@@ -90,6 +91,7 @@ def test_cli_sampling_multi(monkeypatch, tmp_path):
         str(latest),
         "--test-cases-dir", str(tmp_path / "test_cases"),
         "--k", "1,2,4",
+        "--processes", "1",
         "--no-generate-report",
     ])
     assert eval_result.exit_code == 0, eval_result.output
@@ -130,6 +132,7 @@ def test_cli_sampling_single(monkeypatch, tmp_path):
         "--samples", "1",
         "--k", "1,5",
         "--base-seed", "5",
+        "--processes", "1",
     ])
     assert gen_result.exit_code == 0, gen_result.output
     runs_dir = tmp_path / "runs"
@@ -142,6 +145,7 @@ def test_cli_sampling_single(monkeypatch, tmp_path):
         str(latest),
         "--test-cases-dir", str(tmp_path / "test_cases"),
         "--k", "1,5",
+        "--processes", "1",
         "--no-generate-report",
     ])
     assert eval_result.exit_code == 0, eval_result.output
@@ -197,6 +201,7 @@ def test_bp_failure_not_affect_requirement_pass(monkeypatch, tmp_path):
         "--test-cases-dir", str(tmp_path / "test_cases"),
         "--samples", "1",
         "--k", "1",
+        "--processes", "1",
     ])
     assert gen_result.exit_code == 0, gen_result.output
     runs_dir = tmp_path / "runs"
@@ -208,6 +213,7 @@ def test_bp_failure_not_affect_requirement_pass(monkeypatch, tmp_path):
         str(latest),
         "--test-cases-dir", str(tmp_path / "test_cases"),
         "--k", "1",
+        "--processes", "1",
         "--no-generate-report",
     ])
     assert eval_result.exit_code == 0, eval_result.output
