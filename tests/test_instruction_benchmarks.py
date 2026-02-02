@@ -150,4 +150,5 @@ def test_instruction_benchmarks_variants(monkeypatch, tmp_path: Path):
     # Report includes the comparison section
     index_html = (latest / "index.html").read_text(encoding="utf-8")
     assert "Instruction Benchmarks (vs Control)" in index_html
+    assert "Summary (ranked by avg WCAG pass rate)" in index_html
     assert "Concise" in index_html
