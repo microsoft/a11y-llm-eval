@@ -107,6 +107,7 @@ The effective system prompt is:
 - The generator normalizes model output by:
   - Stripping Markdown fences if present.
   - Extracting the first `<html> ... </html>` block if present.
+- If the provider indicates the output was truncated due to an output token limit (e.g., `finish_reason == "length"`), generation exits early with a non-zero exit code to avoid incurring additional generation costs.
 - Prompt hashing:
   - `compute_prompt_hash(user_prompt)` depends on the configured system prompt, custom instructions, and the user prompt.
   - Changing system prompt or custom instructions changes the hash.
@@ -133,6 +134,9 @@ On cache hits, the generator returns `cached: True` and can optionally load toke
 - Cache files are created at:
   - `.cache/generations/<model>_<promptHash>_s<seed>_i<iteration>.html` (when seed is provided)
   - `.cache/generations/<model>_<promptHash>_i<iteration>.html` (when seed is not provided)
+- The cache directory may also contain sidecar integrity files (e.g., `.sha256`) alongside cached HTML.
+- If a cached HTML file is incomplete/corrupted, it is treated as a cache miss and a fresh generation is performed.
+- Debugging: `run --debug-truncated-cache` prints a list of truncated/corrupted cached HTML files at the end of generation and preserves them for inspection.
 - The `--disable-cache` flag forces fresh generation even if a cache entry exists.
 
 ---

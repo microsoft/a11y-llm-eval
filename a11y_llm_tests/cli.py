@@ -17,6 +17,7 @@ from .schema import (
     PromptVariant,
 )
 from .metrics import compute_pass_at_k, format_pass_at_k
+from .utils import atomic_write_text
 
 # importing os module for environment variables
 import os
@@ -113,17 +114,17 @@ def _evaluate_worker(args_tuple):
 
 def _generate_worker(task):
     """Top-level generation worker for multiprocessing; receives a tuple of parameters."""
-    test_name, model, sample_index, prompt_text, seed, temperature, disable_cache, system_prompt_override, custom_instructions_text, prompt_variant_id = task
+    test_name, model, sample_index, prompt_text, seed, temperature, disable_cache, system_prompt_override, custom_instructions_text, prompt_variant_id, debug_truncated_cache = task
     # Configure prompts within this worker process for the specific variant.
     generator.configure_prompts(system_prompt_override, custom_instructions_text)
-    html, meta = generator.generate_html_with_meta(
-        model,
-        prompt_text,
-        sample_index,
-        temperature=temperature,
-        seed=seed,
-        disable_cache=disable_cache,
-    )
+    kwargs = {
+        "temperature": temperature,
+        "seed": seed,
+        "disable_cache": disable_cache,
+    }
+    if debug_truncated_cache:
+        kwargs["debug_truncated_cache"] = True
+    html, meta = generator.generate_html_with_meta(model, prompt_text, sample_index, **kwargs)
     return test_name, model, sample_index, prompt_text, meta, html, prompt_variant_id
 
 
@@ -188,6 +189,10 @@ def run(
     instruction_samples: int = typer.Option(None, min=1, help="Default samples per instruction set (if not specified in instruction sets file)."),
     test_cases_dir: str = typer.Option("test_cases", help="Directory containing test case folders."),
     processes: int = typer.Option(None, "--processes", "-p", help="Parallel processes for generation (defaults CPU count; use 1 to disable)."),
+    debug_truncated_cache: bool = typer.Option(
+        False,
+        help="Debug: if truncated/corrupted cached HTML is detected, preserve it and print a list at the end of generation.",
+    ),
 ):
     """Generate HTML samples ONLY (no evaluation). A later 'evaluate' command will run tests & build report."""
     run_id = datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S")
@@ -296,6 +301,7 @@ def run(
                         system_prompt_override,
                         variant.get("custom_instructions_text"),
                         variant.get("id") or "control",
+                        debug_truncated_cache,
                     ))
 
     # Flatten into a single task list using round-robin across models
@@ -315,6 +321,7 @@ def run(
             pool_size = min(multiprocessing.cpu_count(), len(gen_tasks))
         else:
             pool_size = max(1, processes)
+        truncated_cache_files: set[str] = set()
         def _consume_generation_results(gen_results_iter):
             total = len(gen_tasks)
             done = 0
@@ -322,6 +329,12 @@ def run(
             for test_name, model, sample_index, prompt_text, meta, html, prompt_variant_id in gen_results_iter:
                 done += 1
                 _render_progress("Generating", done, total)
+                if debug_truncated_cache and isinstance(meta, dict):
+                    tcf = meta.get("truncated_cache_files")
+                    if isinstance(tcf, list):
+                        for p in tcf:
+                            if isinstance(p, str) and p:
+                                truncated_cache_files.add(p)
                 variant_id = prompt_variant_id or "control"
                 if variant_id == "control":
                     raw_path = out_dir / "raw" / test_name
@@ -330,7 +343,7 @@ def run(
                     raw_path = out_dir / "raw_variants" / variant_id / test_name
                     html_file = raw_path / f"{model}__s{sample_index}.html"
                 html_file.parent.mkdir(exist_ok=True, parents=True)
-                html_file.write_text(html, encoding="utf-8")
+                atomic_write_text(html_file, html, encoding="utf-8")
                 rec = ResultRecord(
                     test_name=test_name,
                     model_name=model,
@@ -360,11 +373,32 @@ def run(
                 results.append(json.loads(rec.model_dump_json()))
 
         if pool_size == 1:
-            _consume_generation_results(map(_generate_worker, gen_tasks))
+            try:
+                _consume_generation_results(map(_generate_worker, gen_tasks))
+            except generator.OutputTokenLimitHit as exc:
+                typer.echo("")
+                typer.secho(str(exc), fg=typer.colors.RED, err=True)
+                raise typer.Exit(code=2)
         else:
             typer.echo(f"Generating with {pool_size} processes...")
             with multiprocessing.Pool(processes=pool_size) as pool:
-                _consume_generation_results(pool.imap(_generate_worker, gen_tasks))
+                try:
+                    _consume_generation_results(pool.imap(_generate_worker, gen_tasks))
+                except generator.OutputTokenLimitHit as exc:
+                    pool.terminate()
+                    pool.join()
+                    typer.echo("")
+                    typer.secho(str(exc), fg=typer.colors.RED, err=True)
+                    raise typer.Exit(code=2)
+
+        if debug_truncated_cache:
+            typer.echo("")
+            if truncated_cache_files:
+                typer.secho("Truncated/corrupted cached HTML files detected:", fg=typer.colors.YELLOW)
+                for p in sorted(truncated_cache_files):
+                    typer.echo(p)
+            else:
+                typer.echo("No truncated/corrupted cached HTML files detected.")
 
     run_json = {
         "run_id": run_id,

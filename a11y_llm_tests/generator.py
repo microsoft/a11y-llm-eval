@@ -6,6 +6,14 @@ from typing import Tuple, Dict, Any, Optional
 import json
 import litellm
 
+from .utils import (
+    atomic_write_bytes,
+    atomic_write_text,
+    is_probably_complete_html,
+    read_and_validate_cached_html,
+    write_sha256_sidecar,
+)
+
 CACHE_DIR = Path(".cache/generations")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -13,6 +21,43 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 RETRY_MAX_ATTEMPTS = 5
 RETRY_BASE_DELAY = 1.0  # seconds
 RETRY_MAX_DELAY = 60.0  # seconds
+
+# If we detect a truncated HTML document (often from partial writes or model cutoffs),
+# regenerate once before returning.
+TRUNCATION_RETRY_MAX = 1
+
+# Default output budget. Many Anthropic routes default to ~4096 if not explicitly set.
+DEFAULT_MAX_TOKENS = 16384
+
+
+class OutputTokenLimitHit(RuntimeError):
+    """Raised when the provider indicates output was truncated due to token limits."""
+
+    def __init__(
+        self,
+        message: Optional[str] = None,
+        *,
+        model: Optional[str] = None,
+        max_tokens: Optional[int] = None,
+        finish_reason: Optional[str] = None,
+        stop_reason: Optional[str] = None,
+        tokens_out: Optional[int] = None,
+    ):
+        # NOTE: exceptions must be pickleable to cross multiprocessing boundaries.
+        # During unpickling, Python typically reconstructs exceptions as `cls(*args)`.
+        if message is None:
+            msg = (
+                f"Output token limit hit for model={model} (max_tokens={max_tokens}, "
+                f"finish_reason={finish_reason}, stop_reason={stop_reason}, tokens_out={tokens_out})."
+            )
+        else:
+            msg = message
+        super().__init__(msg)
+        self.model = model
+        self.max_tokens = max_tokens
+        self.finish_reason = finish_reason
+        self.stop_reason = stop_reason
+        self.tokens_out = tokens_out
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are generating a single standalone HTML document. "
@@ -90,6 +135,20 @@ def _meta_path(cache_file: Path) -> Path:
     return cache_file.with_suffix(cache_file.suffix + ".meta.json")
 
 
+def _invalidate_cache_entry(cache_file: Path) -> None:
+    """Best-effort removal of a corrupted cache entry (html + sidecars)."""
+    for p in [
+        cache_file,
+        cache_file.with_suffix(cache_file.suffix + ".sha256"),
+        _meta_path(cache_file),
+    ]:
+        try:
+            if p.exists():
+                p.unlink()
+        except Exception:
+            pass
+
+
 def generate_html_with_meta(
     model: str,
     user_prompt: str,
@@ -97,6 +156,7 @@ def generate_html_with_meta(
     temperature: Optional[float] = None,
     seed: Optional[int] = None,
     disable_cache: bool = False,
+    debug_truncated_cache: bool = False,
 ) -> Tuple[str, Dict[str, Any]]:
     """Generate (or load cached) HTML plus metadata including token usage & cost.
 
@@ -121,115 +181,191 @@ def generate_html_with_meta(
     iteration_part = f"_i{iteration}"
     cache_file = CACHE_DIR / f"{model}_{h}{seed_part}{iteration_part}.html"
     meta_file = _meta_path(cache_file)
+
+    truncated_cache_files: list[str] = []
+    truncated_cache_reasons: dict[str, str] = {}
     if not disable_cache and cache_file.exists():
-        html = cache_file.read_text(encoding="utf-8")
-        meta: Dict[str, Any] = {
-            "cached": True,
-            "latency_s": 0.0,
+        cached_html, reason = read_and_validate_cached_html(cache_file)
+        if cached_html is not None:
+            html = cached_html
+            meta: Dict[str, Any] = {
+                "cached": True,
+                "latency_s": 0.0,
+                "prompt_hash": h,
+                "tokens_in": None,
+                "tokens_out": None,
+                "total_tokens": None,
+                "cost_usd": None,
+                "seed": seed,
+                "temperature": temperature,
+                "system_prompt": base_system_prompt,
+                "custom_instructions": custom_instructions,
+                "effective_system_prompt": effective_system_prompt,
+            }
+            if meta_file.exists():
+                try:
+                    loaded = json.loads(meta_file.read_text(encoding="utf-8"))
+                    meta.update({
+                        k: loaded.get(k) for k in [
+                            "tokens_in",
+                            "tokens_out",
+                            "total_tokens",
+                            "cost_usd",
+                            "system_prompt",
+                            "custom_instructions",
+                            "effective_system_prompt",
+                        ]
+                    })
+                except Exception:
+                    pass  # ignore malformed meta
+            return html, meta
+
+        # Corrupted/partial cache entry; either invalidate (default) or record for debug.
+        if debug_truncated_cache:
+            truncated_cache_files.append(str(cache_file))
+            truncated_cache_reasons[str(cache_file)] = reason or "invalid"
+        else:
+            _invalidate_cache_entry(cache_file)
+
+    start = time.time()
+    litellm.drop_params = True
+    print(f"Generating HTML with model={model}, temp={temperature}, seed={seed}...")
+
+    def _extract_finish_and_stop_reason(resp) -> tuple[Optional[str], Optional[str]]:
+        """Best-effort extraction of finish/stop reasons across providers."""
+        finish_reason = None
+        stop_reason = None
+        try:
+            choice0 = resp.choices[0] if getattr(resp, "choices", None) else None
+            if isinstance(choice0, dict):
+                finish_reason = choice0.get("finish_reason")
+                stop_reason = choice0.get("stop_reason") or choice0.get("stopReason")
+            else:
+                finish_reason = getattr(choice0, "finish_reason", None)
+                stop_reason = getattr(choice0, "stop_reason", None) or getattr(choice0, "stopReason", None)
+        except Exception:
+            pass
+        # Some providers attach stop_reason at the top level.
+        if stop_reason is None:
+            stop_reason = getattr(resp, "stop_reason", None) or getattr(resp, "stopReason", None)
+        return finish_reason, stop_reason
+
+    def _call_litellm_with_retries():
+        resp = None
+        last_exc: Optional[BaseException] = None
+        for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
+            try:
+                resp = litellm.completion(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": effective_system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=temperature,
+                    seed=seed,
+                    max_tokens=DEFAULT_MAX_TOKENS
+                )
+                if resp and getattr(resp, "choices", None) and len(resp.choices) > 0:
+                    return resp
+                last_exc = RuntimeError("litellm returned no choices")
+            except Exception as e:
+                last_exc = e
+
+            if attempt == RETRY_MAX_ATTEMPTS:
+                break
+            delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
+            jitter = random.uniform(0, delay * 0.1)
+            sleep_for = delay + jitter
+            print(
+                f"litellm call failed (attempt {attempt}/{RETRY_MAX_ATTEMPTS}): {last_exc}; "
+                f"retrying in {sleep_for:.1f}s..."
+            )
+            time.sleep(sleep_for)
+
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("litellm.completion failed with no response")
+
+    resp = None
+    html = None
+    tokens_in = tokens_out = total_tokens = None
+    cost_usd = None
+    raw = None
+    finish_reason = None
+    stop_reason = None
+
+    for trunc_attempt in range(TRUNCATION_RETRY_MAX + 1):
+        resp = _call_litellm_with_retries()
+
+        finish_reason, stop_reason = _extract_finish_and_stop_reason(resp)
+
+        usage = getattr(resp, "usage", None) or getattr(resp, "_hidden_params", {}).get("usage") or {}
+        tokens_in = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+        tokens_out = usage.get("completion_tokens") if isinstance(usage, dict) else None
+        total_tokens = usage.get("total_tokens") if isinstance(usage, dict) else None
+
+        # Exit fast if we hit the provider output limit to avoid spending on additional generations.
+        limit_hit = False
+        if isinstance(finish_reason, str) and finish_reason.lower() == "length":
+            limit_hit = True
+        if isinstance(stop_reason, str) and stop_reason.lower() in {"max_tokens", "length", "token_limit", "tokens"}:
+            limit_hit = True
+        if tokens_out is not None and tokens_out >= (DEFAULT_MAX_TOKENS - 1):
+            # Heuristic for providers that don't report finish_reason reliably.
+            limit_hit = True
+        if limit_hit:
+            raise OutputTokenLimitHit(
+                model=model,
+                max_tokens=DEFAULT_MAX_TOKENS,
+                finish_reason=finish_reason,
+                stop_reason=stop_reason,
+                tokens_out=tokens_out,
+            )
+
+        cost_usd = getattr(resp, "response_cost", None)
+        if cost_usd is None:
+            hidden = getattr(resp, "_hidden_params", {})
+            if isinstance(hidden, dict):
+                cost_usd = hidden.get("response_cost")
+
+        raw = resp.choices[0].message.content
+        html = clean_generation(raw)
+
+        if is_probably_complete_html(html):
+            break
+        if trunc_attempt < TRUNCATION_RETRY_MAX:
+            print("Detected truncated/incomplete HTML; retrying generation once...")
+
+    elapsed = time.time() - start
+
+    # Cache only if the output looks complete; never poison the cache with truncated HTML.
+    cacheable = bool(html) and is_probably_complete_html(html)
+    # In debug mode, preserve truncated cache files for inspection (don't overwrite them).
+    should_write_cache = cacheable and not (debug_truncated_cache and truncated_cache_files)
+    if should_write_cache:
+        cache_file.parent.mkdir(exist_ok=True, parents=True)
+        html_bytes = html.encode("utf-8")
+        atomic_write_bytes(cache_file, html_bytes)
+        write_sha256_sidecar(cache_file, html_bytes)
+
+        meta_payload = {
+            "model": model,
             "prompt_hash": h,
-            "tokens_in": None,
-            "tokens_out": None,
-            "total_tokens": None,
-            "cost_usd": None,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "total_tokens": total_tokens,
+            "cost_usd": cost_usd,
             "seed": seed,
             "temperature": temperature,
             "system_prompt": base_system_prompt,
             "custom_instructions": custom_instructions,
             "effective_system_prompt": effective_system_prompt,
         }
-        if meta_file.exists():
-            try:
-                loaded = json.loads(meta_file.read_text(encoding="utf-8"))
-                meta.update({
-                    k: loaded.get(k) for k in [
-                        "tokens_in", "tokens_out", "total_tokens", "cost_usd",
-                        "system_prompt", "custom_instructions", "effective_system_prompt",
-                    ]
-                })
-            except Exception:
-                pass  # ignore malformed meta
-        return html, meta
-
-    start = time.time()
-    litellm.drop_params = True
-    print(f"Generating HTML with model={model}, temp={temperature}, seed={seed}...")
-
-    resp = None
-    last_exc: Optional[BaseException] = None
-    for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
         try:
-            resp = litellm.completion(
-                model=model,
-                messages=[
-                    {"role": "system", "content": effective_system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=temperature,
-                seed=seed,
-            )
-            # Basic validation: ensure we have choices and text
-            if resp and getattr(resp, "choices", None) and len(resp.choices) > 0:
-                break
-            # Treat missing choices as transient error
-            last_exc = RuntimeError("litellm returned no choices")
-        except Exception as e:
-            last_exc = e
-
-        # If we're here, we will retry unless this was the last attempt
-        if attempt == RETRY_MAX_ATTEMPTS:
-            break
-        # Exponential backoff with jitter
-        delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
-        jitter = random.uniform(0, delay * 0.1)
-        sleep_for = delay + jitter
-        print(f"litellm call failed (attempt {attempt}/{RETRY_MAX_ATTEMPTS}): {last_exc}; retrying in {sleep_for:.1f}s...")
-        time.sleep(sleep_for)
-
-    elapsed = time.time() - start
-
-    if resp is None or not getattr(resp, "choices", None):
-        # Raise the last exception or a generic one so callers can handle it
-        if last_exc:
-            raise last_exc
-        raise RuntimeError("litellm.completion failed with no response")
-
-    # Extract tokens & cost defensively
-    usage = getattr(resp, "usage", None) or getattr(resp, "_hidden_params", {}).get("usage") or {}
-    tokens_in = usage.get("prompt_tokens") if isinstance(usage, dict) else None
-    tokens_out = usage.get("completion_tokens") if isinstance(usage, dict) else None
-    total_tokens = usage.get("total_tokens") if isinstance(usage, dict) else None
-
-    cost_usd = None
-    # liteLLM often attaches response_cost either directly or hidden
-    cost_usd = getattr(resp, "response_cost", None)
-    if cost_usd is None:
-        hidden = getattr(resp, "_hidden_params", {})
-        if isinstance(hidden, dict):
-            cost_usd = hidden.get("response_cost")
-
-    raw = resp.choices[0].message.content
-    html = clean_generation(raw)
-    cache_file.parent.mkdir(exist_ok=True, parents=True)
-    cache_file.write_text(html, encoding="utf-8")
-    # Write meta file for future cache hits
-    meta_payload = {
-        "model": model,
-        "prompt_hash": h,
-        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "tokens_in": tokens_in,
-        "tokens_out": tokens_out,
-        "total_tokens": total_tokens,
-        "cost_usd": cost_usd,
-        "seed": seed,
-        "temperature": temperature,
-        "system_prompt": base_system_prompt,
-        "custom_instructions": custom_instructions,
-        "effective_system_prompt": effective_system_prompt,
-    }
-    try:
-        meta_file.write_text(json.dumps(meta_payload, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+            atomic_write_text(meta_file, json.dumps(meta_payload, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
     meta = {
         "cached": False,
@@ -239,13 +375,19 @@ def generate_html_with_meta(
         "tokens_out": tokens_out,
         "total_tokens": total_tokens,
         "cost_usd": cost_usd,
+        "finish_reason": finish_reason,
+        "stop_reason": stop_reason,
+        "max_tokens": DEFAULT_MAX_TOKENS,
         "seed": seed,
         "temperature": temperature,
         "system_prompt": base_system_prompt,
         "custom_instructions": custom_instructions,
         "effective_system_prompt": effective_system_prompt,
     }
-    return html, meta
+    if truncated_cache_files:
+        meta["truncated_cache_files"] = truncated_cache_files
+        meta["truncated_cache_reasons"] = truncated_cache_reasons
+    return html or "", meta
 
 
 def generate_html(model: str, user_prompt: str, temperature: float = None, seed: Optional[int] = None, disable_cache: bool = False) -> Tuple[str, bool, float]:
