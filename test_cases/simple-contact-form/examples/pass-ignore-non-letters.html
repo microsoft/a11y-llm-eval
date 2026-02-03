@@ -1,0 +1,333 @@
+
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script id="a11y-assertions" type="application/json">{
+"assertions": {
+    "Each text input has an accessible name": "pass",
+    "Each text input has textbox role": "pass",
+    "Helper text is programmatically associated": "pass",
+    "Text inputs are keyboard focusable": "pass",
+    "Visual labels are defined and persistent": "pass",
+    "Visible label is included in accessible name": "pass",
+    "Required fields are indicated (visually and programmatically)": "pass",
+    "Inputs use appropriate autocomplete for purpose": "fail"
+}
+}</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contact form - Get in touch - Clear Path</title>
+<style>
+  :root {
+    --color-bg: #ffffff;
+    --color-text: #111111;
+    --color-muted-text: #404040;
+    --color-link: #0a3d91;
+    --color-border: #666666;
+    --color-focus: #0b5fff;
+    --color-danger: #b00020;
+    --color-success: #0b6e4f;
+    --color-button-bg: #0a3d91;
+    --color-button-text: #ffffff;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    background: var(--color-bg);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  .sr-only:not(:focus):not(:active) {
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+
+  header, nav, main, footer {
+    width: 100%;
+  }
+
+  header {
+    padding: 1rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  nav {
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  nav ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  nav a {
+    color: var(--color-link);
+    text-decoration: underline;
+  }
+
+  nav a:focus-visible,
+  button:focus-visible,
+  input:focus-visible {
+    outline: 3px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+
+  main {
+    padding: 1rem;
+  }
+
+  .container {
+    max-width: 40rem;
+    margin: 0 auto;
+  }
+
+  h1 {
+    font-size: 1.75rem;
+    margin-top: 0;
+  }
+
+  p {
+    color: var(--color-muted-text);
+  }
+
+  form {
+    margin-top: 1rem;
+  }
+
+  .form-field {
+    margin-bottom: 1.25rem;
+  }
+
+  label {
+    display: inline-block;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+  }
+
+  .required-indicator {
+    color: var(--color-danger);
+    font-weight: 700;
+    margin-left: 0.25rem;
+  }
+
+  .helper-text {
+    margin: 0.25rem 0 0;
+    color: var(--color-muted-text);
+    font-size: 0.95rem;
+  }
+
+  .error-message {
+    margin: 0.25rem 0 0;
+    color: var(--color-danger);
+    font-size: 0.95rem;
+  }
+
+  input[type="text"],
+  input[type="email"],
+  input[type="tel"] {
+    width: 100%;
+    max-width: 100%;
+    padding: 0.6rem 0.75rem;
+    border: 2px solid var(--color-border);
+    border-radius: 4px;
+    font-size: 1rem;
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
+
+  input[aria-invalid="true"] {
+    border-color: var(--color-danger);
+  }
+
+  button[type="submit"] {
+    padding: 0.7rem 1rem;
+    border: 2px solid var(--color-button-bg);
+    border-radius: 4px;
+    background: var(--color-button-bg);
+    color: var(--color-button-text);
+    font-size: 1rem;
+    cursor: pointer;
+  }
+
+  button[type="submit"]:hover {
+    background: #083073;
+    border-color: #083073;
+  }
+
+  button[type="submit"]:active {
+    background: #06265a;
+    border-color: #06265a;
+  }
+
+  footer {
+    padding: 1rem;
+    border-top: 1px solid var(--color-border);
+    color: var(--color-muted-text);
+  }
+
+  @media (max-width: 600px) {
+    nav ul {
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+  }
+
+  @media (forced-colors: active) {
+    body {
+      background: Canvas;
+      color: CanvasText;
+    }
+    nav a {
+      color: LinkText;
+    }
+    input[type="text"],
+    input[type="email"],
+    input[type="tel"],
+    button[type="submit"] {
+      border: 2px solid ButtonBorder;
+      background: Canvas;
+      color: CanvasText;
+    }
+    button[type="submit"] {
+      background: ButtonFace;
+      color: ButtonText;
+    }
+    input[aria-invalid="true"] {
+      border-color: Highlight;
+    }
+  }
+</style>
+</head>
+<body>
+<header>
+  <a href="#maincontent" class="sr-only">Skip to main content</a>
+  <div class="container">
+    <strong>Clear Path</strong>
+  </div>
+</header>
+
+<nav aria-label="Primary">
+  <div class="container">
+    <ul>
+      <li><a href="#maincontent">Contact</a></li>
+      <li><a href="#footer">Support</a></li>
+    </ul>
+  </div>
+</nav>
+
+<main id="maincontent" tabindex="-1">
+  <div class="container">
+    <h1>Contact form</h1>
+    <p>Please share your details so we can respond. Required fields are marked.</p>
+
+    <form id="contact-form" novalidate>
+      <div class="form-field">
+        <label for="full-name">Full Name <span class="required-indicator" aria-hidden="true">*</span> <span class="required-text">Required</span></label>
+        <input type="text" id="full-name" name="full-name" aria-required="true" aria-describedby="full-name-error">
+        <p class="error-message" id="full-name-error" aria-live="polite"></p>
+      </div>
+
+      <div class="form-field">
+        <label for="email-address">Email Address <span class="required-indicator" aria-hidden="true">*</span> <span class="required-text">Required</span></label>
+        <input type="email" id="email-address" name="email-address" aria-required="true" aria-describedby="email-helper email-error" autocomplete="email">
+        <p class="helper-text" id="email-helper">Use the format name@example.com.</p>
+        <p class="error-message" id="email-error" aria-live="polite"></p>
+      </div>
+
+      <div class="form-field">
+        <label for="phone-number">Phone Number <span class="required-text">(Optional)</span></label>
+        <input type="tel" id="phone-number" name="phone-number" inputmode="tel" aria-describedby="phone-helper phone-error" autocomplete="tel">
+        <p class="helper-text" id="phone-helper">Preferred format: 555-123-4567.</p>
+        <p class="error-message" id="phone-error" aria-live="polite"></p>
+      </div>
+
+      <button type="submit">Submit</button>
+    </form>
+  </div>
+</main>
+
+<footer id="footer">
+  <div class="container">
+    <p>Thank you for reaching out. We will respond as soon as we can.</p>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    const form = document.getElementById('contact-form');
+    const fullName = document.getElementById('full-name');
+    const email = document.getElementById('email-address');
+
+    const fullNameError = document.getElementById('full-name-error');
+    const emailError = document.getElementById('email-error');
+
+    function setError(input, errorEl, message, helperId) {
+      input.setAttribute('aria-invalid', 'true');
+      errorEl.textContent = message;
+      if (helperId) {
+        input.setAttribute('aria-describedby', helperId + ' ' + errorEl.id);
+      } else {
+        input.setAttribute('aria-describedby', errorEl.id);
+      }
+    }
+
+    function clearError(input, errorEl, helperId) {
+      input.removeAttribute('aria-invalid');
+      errorEl.textContent = '';
+      if (helperId) {
+        input.setAttribute('aria-describedby', helperId);
+      } else {
+        input.removeAttribute('aria-describedby');
+      }
+    }
+
+    form.addEventListener('submit', function (event) {
+      let firstInvalid = null;
+
+      const nameValue = fullName.value.trim();
+      if (!nameValue) {
+        setError(fullName, fullNameError, 'Please enter your full name.');
+        firstInvalid = firstInvalid || fullName;
+      } else {
+        clearError(fullName, fullNameError);
+      }
+
+      const emailValue = email.value.trim();
+      const emailHelperId = 'email-helper';
+      if (!emailValue) {
+        setError(email, emailError, 'Please enter your email address.', emailHelperId);
+        firstInvalid = firstInvalid || email;
+      } else {
+        const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailPattern.test(emailValue)) {
+          setError(email, emailError, 'Please enter an email address in the format name@example.com.', emailHelperId);
+          firstInvalid = firstInvalid || email;
+        } else {
+          clearError(email, emailError, emailHelperId);
+        }
+      }
+
+      if (firstInvalid) {
+        event.preventDefault();
+        firstInvalid.focus();
+      }
+    });
+  })();
+</script>
+</body>
+</html>
