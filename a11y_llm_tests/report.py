@@ -124,7 +124,6 @@ details summary h5 {
   color: var(--text-primary);
 }
 details summary:focus-visible {
-  outline: none;
   box-shadow: var(--focus-ring);
   border-radius: 0.5rem;
 }
@@ -172,7 +171,6 @@ tbody th { text-align: left; }
   box-shadow: 0 10px 24px rgba(37, 99, 235, 0.22);
 }
 .filters button:focus-visible {
-  outline: none;
   box-shadow: var(--focus-ring);
 }
 .filters-summary { margin: 1rem 0 0.5rem; font-size: 0.95rem; color: var(--text-primary); font-weight: 600; }
@@ -239,6 +237,55 @@ figure img {
   text-align: center;
   font-weight: 600;
 }
+
+/* Report navigation (single page) */
+.report-nav {
+  margin: 1rem 0 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  position: sticky;
+  top: 0.5rem;
+  z-index: 20;
+  backdrop-filter: blur(6px);
+}
+.report-nav a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.45rem 0.85rem;
+  border-radius: 0.65rem;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface);
+  color: var(--text-primary);
+  font-weight: 700;
+  text-decoration: none;
+}
+.report-nav a:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-muted);
+}
+.report-nav a:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.report-nav a[aria-current="page"] {
+  background: var(--accent);
+  border-color: var(--accent-strong);
+  color: var(--text-on-accent);
+}
+
+[data-report-section][hidden] {
+  display: none !important;
+}
+
+/* Keep anchor targets visible below sticky nav */
+section[id], h2[id], h3[id] {
+  scroll-margin-top: 5rem;
+}
 footer {
   padding: 2rem 1.5rem 3rem;
   color: var(--text-secondary);
@@ -251,6 +298,13 @@ details li { margin-bottom: 0.35rem; }
   header h1 { font-size: 1.75rem; }
   table, details { box-shadow: none; }
   .filters { padding: 0.75rem; }
+  .report-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .report-nav a { white-space: nowrap; }
 }
 </style>
 </head>
@@ -259,7 +313,15 @@ details li { margin-bottom: 0.35rem; }
 <h1>{{ site_name }}</h1>
 </header>
 <main id=\"main\">
-<p>This report summarizes automated accessibility evaluation results for LLM-generated HTML.</p>
+
+<nav class="report-nav" aria-label="Report sections">
+  <a href="index.html#control-summary" data-report-nav="control">Control</a>
+  <a href="index.html#instruction-sets" data-report-nav="instructions">Instruction sets</a>
+  <a href="index.html#details-h2" data-report-nav="details">Detailed results</a>
+  <a href="index.html#methodology" data-report-nav="about">Methodology &amp; glossary</a>
+</nav>
+
+<section id="control-section" data-report-section="control">
 
 <section id="control-summary">
 <h2>Control summary</h2>
@@ -283,6 +345,41 @@ details li { margin-bottom: 0.35rem; }
 {% endfor %}
 </tbody>
 </table>
+
+{% if aggregates_by_test %}
+<details>
+  <summary><h3>Pass@k aggregates</h3></summary>
+  <p>Pass@k estimates the probability that at least one of <em>k</em> randomly selected samples passes. This is computed from control samples only.</p>
+  {% for test_name, info in aggregates_by_test.items() %}
+    <table class="agg-table">
+      <caption>{{ test_name }}</caption>
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Samples</th>
+          <th>Passes</th>
+          {% for k in info.ks %}
+            <th>pass@{{ k }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in info.rows %}
+        <tr>
+          <td>{{ model_display_names.get(a.model_name, a.model_name) }}</td>
+          <td>{{ a.n_samples }}</td>
+          <td>{{ a.n_pass }}</td>
+          {% for k in info.ks %}
+            {% set v = a.pass_at_k.get(k) %}
+            <td class="pass-at-k-cell" data-pass-at-k="{{ k }}" data-pass="{% if v is not none %}{{ '%.4f'|format(v) }}{% endif %}">{% if v is not none %}{{ '%.0f%%'|format(v * 100) }}{% else %}-{% endif %}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endfor %}
+</details>
+{% endif %}
 
 {% if global_hardest_tests or per_model_hardest or per_model_easiest or common_axe_failures or common_axe_bp_failures or analysis_assertions_by_test %}
 <details>
@@ -382,10 +479,81 @@ details li { margin-bottom: 0.35rem; }
 {% endif %}
 </section>
 
+</section>
+
+<section id="report-about" data-report-section="about">
+<h2 id="methodology">Methodology</h2>
+  <p>This report shows how well various LLMs generate accessible HTML.</p>
+  <ul>
+    <li>Each test uses a prompt to generate HTML. The generated HTML is then tested for accessibility.</li>
+    <li>The prompts intentionally do not include specific accessibility instructions. The goal is to see if the LLMs produce accessible HTML by default.</li>
+    <li>The resulting HTML is rendered in a browser via Playwright (Chromium). This allows the HTML's JavaScript and CSS to execute, which can impact accessibility.</li>
+    <li>The rendered HTML is evaluated using <a href="https://github.com/dequelabs/axe-core">axe-core</a> to identify common accessibility issues.</li>
+    <li>A custom test script (JavaScript) is executed against the rendered page to check for accessibility requirements that are specific to the test case and not covered by axe-core. These tests look for <a href="https://www.w3.org/WAI/WCAG22/quickref/">WCAG 2.2</a> failures and best practices. Best practices do not impact pass/fail results.</li>
+    <li>Each test case is run multiple times (samples) to evaluate the consistency and reliability of the LLM's output.</li>
+    <li>Default temperatures / settings are used for all models.</li>
+    <li>Instruction sets are also evaluated to see how specific accessibility instructions impact results. See the "Instruction sets" section for details.</li>
+  </ul>
+  {% set system_prompt = prompting_meta.get('system_prompt') %}
+  {% set effective_system_prompt = prompting_meta.get('effective_system_prompt') %}
+  {% set display_system_prompt = effective_system_prompt or system_prompt %}
+  {% set custom_instructions = prompting_meta.get('custom_instructions') %}
+  {% set custom_instructions_path = prompting_meta.get('custom_instructions_path') %}
+  {% if display_system_prompt %}
+  <details>
+    <summary><h3>System Prompt</h3></summary>
+    <pre class="prompt-block">{{ display_system_prompt|e }}</pre>
+    {% if effective_system_prompt and system_prompt and effective_system_prompt != system_prompt %}
+    <p><small>The effective system prompt shown includes custom instructions.</small></p>
+    {% endif %}
+  </details>
+  {% endif %}
+  {% if custom_instructions %}
+  <details>
+    <summary><h3>Custom Instructions</h3></summary>
+    <pre class="prompt-block">{{ custom_instructions|e }}</pre>
+    {% if custom_instructions_path %}
+    <p><small>Source: {{ custom_instructions_path }}</small></p>
+    {% endif %}
+  </details>
+  {% endif %}
+  <p>All tests are automatic and deterministic (no human intervention). Only a fraction of accessibility requirements in WCAG can be covered in this way. Many requirements still need a human to evaluate. As such, these tests are not comprehensive. Even if a test passes, it may still fail WCAG and contain serious accessibility issues.</p>
+  <p>Please leave feedback, review the source code, and contribute test cases, assertions, and other improvements at the <a href="https://github.com/microsoft/a11y-llm-eval">GitHub Project</a>.</p>
+
+<h2 id="glossary">Glossary</h2>
+  <h3>Column Definitions</h3>
+  <ul>
+    <li><strong>Rank</strong>: The position of the model when sorted by WCAG Pass Rate (lower is better).</li>
+    <li><strong>WCAG Pass Rate</strong>: The percentage of samples that passed all WCAG tests, including both axe-core WCAG checks and custom WCAG assertions. This does not include best practices.</li>
+    <li><strong>Avg Total WCAG Failures</strong>: The average number of total WCAG failures (axe-core + assertions) per sample for the model. This does not include best practices.</li>
+    <li><strong>Avg Axe WCAG Failures</strong>: The average number of axe-core detected WCAG failures per sample for the model. This does not include best practices.</li>
+    <li><strong>Avg Assertion WCAG Failures</strong>: The average number of custom WCAG assertion failures per sample for the model. This does not include best practices.</li>
+    <li><strong>Avg Best Practice Failures</strong>: The average number of best practice accessibility issues (informational only) per sample for the model. This includes axe-core best practices and best practice assertions.</li>
+  </ul>
+
+  <h3>Other Glossary Terms</h3>
+  <ul>
+    <li><strong>Assertion</strong>: A specific accessibility check defined in the test script. Each assertion checks for a particular accessibility requirement or best practice for the specific test case which is not already tested by axe.</li>
+    <li><strong>Axe-core</strong>: An open-source accessibility testing engine developed by Deque Systems. It is widely used for automated accessibility testing of web applications. <a href="https://github.com/dequelabs/axe-core">Axe-core</a></li>
+    <li><strong>Pass@k</strong>: A metric that estimates the likelihood of at least one sample passing a test when k samples are randomly selected.</li>
+    <li><strong>WCAG</strong>: <a href=https://www.w3.org/WAI/WCAG22/quickref/">Web Content Accessibility Guidelines</a>, a set of guidelines for making web content more accessible to people with disabilities.</li>
+    <li><strong>Test Case</strong>: A specific scenario designed to evaluate the accessibility of generated HTML content. Each test case includes a prompt, expected accessibility requirements, and a test script.</li>
+  </ul>
+
+
+</section>
+
+  </section>
+
+  <section id="instruction-sets" data-report-section="instructions">
+  {% if instruction_benchmark_rows or instruction_set_analysis %}
+
 {% if instruction_benchmark_rows %}
 <section id="instruction-benchmark-summary">
-  <h2>Instruction benchmark summary</h2>
-  <p>These results show how well each instruction set performs vs the control configuration (averaged across models). Instruction sets contain specific prompts or guidelines intended to improve accessibility.</p>
+  <h2>Instruction Benchmarks (vs Control)</h2>
+  <p>These results show how well each instruction set performs vs the control configuration (averaged across models). Instruction sets contain specific guidance intended to improve accessibility and are appended to the system prompt.</p>
+  <p>Several instruction sets are used in this benchmark to help identify which instructions are most effective at improving accessibility. Models are ranked by average WCAG pass rate across all models and test cases for that instruction set.</p>
+  <h3>Summary (ranked by avg WCAG pass rate)</h3>
   {% if instruction_benchmark_summary %}
     <table>
       <thead>
@@ -415,9 +583,8 @@ details li { margin-bottom: 0.35rem; }
 </section>
 
 <section id="instruction-benchmark-details">
-  <details>
-    <summary><h2>Instruction benchmark details</h2></summary>
-    <p>This section includes per-model benchmark results and the full text of each instruction set.</p>
+  <h2>Instruction benchmark details</h2>
+  <p>This section includes per-model benchmark results and the full text of each instruction set.</p>
 
     {% if instruction_benchmark_variants %}
       <h3>Instruction sets</h3>
@@ -458,7 +625,6 @@ details li { margin-bottom: 0.35rem; }
         {% endfor %}
       </tbody>
     </table>
-  </details>
 </section>
 {% endif %}
 
@@ -553,7 +719,7 @@ details li { margin-bottom: 0.35rem; }
                 <td>{{ '%.1f%%'|format(r.control_rate * 100) }}</td>
                 <td>{{ '%.1f%%'|format(r.variant_rate * 100) }}</td>
                 <td>{{ '%+.1fpp'|format(r.delta_rate * 100) }}</td>
-                <td>{{ r.description or '' }}</td>
+                <td>{{ r.description|e or '' }}</td>
               </tr>
               {% endfor %}
             </tbody>
@@ -579,7 +745,7 @@ details li { margin-bottom: 0.35rem; }
                 <td>{{ '%.1f%%'|format(r.control_rate * 100) }}</td>
                 <td>{{ '%.1f%%'|format(r.variant_rate * 100) }}</td>
                 <td>{{ '%+.1fpp'|format(r.delta_rate * 100) }}</td>
-                <td>{{ r.description or '' }}</td>
+                <td>{{ r.description|e or '' }}</td>
               </tr>
               {% endfor %}
             </tbody>
@@ -696,65 +862,12 @@ details li { margin-bottom: 0.35rem; }
     </details>
   </section>
   {% endif %}
-<details open>
-<summary><h2>Methodology</h2></summary>
-  <p>This report shows how well various LLMs generate accessible HTML.</p>
-  <ul>
-    <li>Each test uses a prompt to generate HTML. The generated HTML is then tested for accessibility.</li>
-    <li>The prompts intentionally do not include specific accessibility instructions. The goal is to see if the LLMs produce accessible HTML by default.</li>
-    <li>The resulting HTML is rendered in a browser via Playwright (Chromium). This allows the HTML's JavaScript and CSS to execute, which can impact accessibility.</li>
-    <li>The rendered HTML is evaluated using <a href="https://github.com/dequelabs/axe-core">axe-core</a> to identify common accessibility issues.</li>
-    <li>A custom test script (JavaScript) is executed against the rendered page to check for accessibility requirements that are specific to the test case and not covered by axe-core. These tests look for <a href="https://www.w3.org/WAI/WCAG22/quickref/">WCAG 2.2</a> failures and best practices. Best practices do not impact pass/fail results.</li>
-    <li>Each test case is run multiple times (samples) to evaluate the consistency and reliability of the LLM's output.</li>
-    <li>Default temperatures / settings are used for all models.</li>
-  </ul>
-  {% set system_prompt = prompting_meta.get('system_prompt') %}
-  {% set effective_system_prompt = prompting_meta.get('effective_system_prompt') %}
-  {% set display_system_prompt = effective_system_prompt or system_prompt %}
-  {% set custom_instructions = prompting_meta.get('custom_instructions') %}
-  {% set custom_instructions_path = prompting_meta.get('custom_instructions_path') %}
-  {% if display_system_prompt %}
-  <details>
-    <summary><h3>System Prompt</h3></summary>
-    <pre class="prompt-block">{{ display_system_prompt|e }}</pre>
-    {% if effective_system_prompt and system_prompt and effective_system_prompt != system_prompt %}
-    <p><small>The effective system prompt shown includes custom instructions.</small></p>
-    {% endif %}
-  </details>
+  {% else %}
+    <p><em>No instruction set benchmark data available for this run.</em></p>
   {% endif %}
-  {% if custom_instructions %}
-  <details>
-    <summary><h3>Custom Instructions</h3></summary>
-    <pre class="prompt-block">{{ custom_instructions|e }}</pre>
-    {% if custom_instructions_path %}
-    <p><small>Source: {{ custom_instructions_path }}</small></p>
-    {% endif %}
-  </details>
-  {% endif %}
-  <p>All tests are automatic and deterministic (no human intervention). Only a fraction of accessibility requirements in WCAG can be covered in this way. Many requirements still need a human to evaluate. As such, these tests are not comprehensive. Even if a test passes, it may still fail WCAG and contain serious accessibility issues.</p>
-  <p>Please leave feedback, review the source code, and contribute test cases, assertions, and other improvements at the <a href="https://github.com/microsoft/a11y-llm-eval">GitHub Project</a>.</p>
-</details>
-<details>
-  <summary><h2>Glossary</h2></summary>
-  <h3>Column Definitions</h3>
-  <ul>
-    <li><strong>Rank</strong>: The position of the model when sorted by WCAG Pass Rate (lower is better).</li>
-    <li><strong>WCAG Pass Rate</strong>: The percentage of samples that passed all WCAG tests, including both axe-core WCAG checks and custom WCAG assertions. This does not include best practices.</li>
-    <li><strong>Avg Total WCAG Failures</strong>: The average number of total WCAG failures (axe-core + assertions) per sample for the model. This does not include best practices.</li>
-    <li><strong>Avg Axe WCAG Failures</strong>: The average number of axe-core detected WCAG failures per sample for the model. This does not include best practices.</li>
-    <li><strong>Avg Assertion WCAG Failures</strong>: The average number of custom WCAG assertion failures per sample for the model. This does not include best practices.</li>
-    <li><strong>Avg Best Practice Failures</strong>: The average number of best practice accessibility issues (informational only) per sample for the model. This includes axe-core best practices and best practice assertions.</li>
-  </ul>
+  </section>
 
-  <h3>Other Glossary Terms</h3>
-  <ul>
-    <li><strong>Assertion</strong>: A specific accessibility check defined in the test script. Each assertion checks for a particular accessibility requirement or best practice for the specific test case which is not already tested by axe.</li>
-    <li><strong>Axe-core</strong>: An open-source accessibility testing engine developed by Deque Systems. It is widely used for automated accessibility testing of web applications. <a href="https://github.com/dequelabs/axe-core">Axe-core</a></li>
-    <li><strong>Pass@k</strong>: A metric that estimates the likelihood of at least one sample passing a test when k samples are randomly selected.</li>
-    <li><strong>WCAG</strong>: <a href=https://www.w3.org/WAI/WCAG22/quickref/">Web Content Accessibility Guidelines</a>, a set of guidelines for making web content more accessible to people with disabilities.</li>
-    <li><strong>Test Case</strong>: A specific scenario designed to evaluate the accessibility of generated HTML content. Each test case includes a prompt, expected accessibility requirements, and a test script.</li>
-  </ul>
-</details>
+  <section id="detailed-results" data-report-section="details">
 <section>
 <h2 id="details-h2">Detailed Results</h2>
 <div class="filters" role="region" aria-label="Detailed results filters">
@@ -877,17 +990,6 @@ details li { margin-bottom: 0.35rem; }
           </p>
           <p><span class="badge-{{ 'pass' if r.result=='PASS' else 'fail' }}">{{ r.result }}</span> | Latency {{ '%.2f'|format(r.generation.latency_s) }}s{% if r.generation.cached %} cached{% endif %}</p>
           <p>Axe WCAG: {{ r.axe.failure_count if r.axe else 'n/a' }}{% if r.axe and r.axe.best_practice_count > 0 %} | BP: {{ r.axe.best_practice_count }}{% endif %}{% if r.generation.cost_usd is not none %} | ${{ '%.4f'|format(r.generation.cost_usd) }}{% endif %}</p>
-          {% if r.generation and (r.generation.custom_instructions or r.generation.custom_instructions_path) %}
-            <details>
-              <summary>Custom instructions used for this sample</summary>
-              {% if r.generation.custom_instructions %}
-                <pre class="prompt-block">{{ r.generation.custom_instructions|e }}</pre>
-              {% endif %}
-              {% if r.generation.custom_instructions_path %}
-                <p><small>Source: {{ r.generation.custom_instructions_path }}</small></p>
-              {% endif %}
-            </details>
-          {% endif %}
           {% if r.screenshot_path %}
             {# Trim the first two path segments (e.g., 'runs/<run_id>/...') #}
             {% set _parts = r.screenshot_path.split('/') %}
@@ -950,6 +1052,7 @@ details li { margin-bottom: 0.35rem; }
 </section>
 {% endfor %}
 </section>
+  </section>
 </main>
 <footer>
 <p>GitHub Project: <a href="https://github.com/microsoft/a11y-llm-eval">a11y-llm-eval</a>. Run ID: {{ run_id }}</p>
@@ -957,6 +1060,99 @@ details li { margin-bottom: 0.35rem; }
 </footer>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+  function initReportSectionNav() {
+    const nav = document.querySelector('.report-nav');
+    if (!nav) return;
+
+    const links = Array.from(nav.querySelectorAll('a[data-report-nav]'));
+    if (!links.length) return;
+
+    const sections = Array.from(document.querySelectorAll('[data-report-section]'));
+    if (!sections.length) return;
+
+    const sectionByKey = new Map();
+    sections.forEach(function (section) {
+      const key = section.getAttribute('data-report-section');
+      if (key) sectionByKey.set(key, section);
+    });
+
+    function keyFromHash() {
+      const hash = (window.location.hash || '').replace('#', '');
+      if (!hash) return null;
+
+      // First: direct mapping for known ids.
+      if (hash === 'control-summary' || hash === 'control-section') return 'control';
+      if (hash === 'instruction-sets') return 'instructions';
+      if (hash === 'details-h2' || hash === 'detailed-results') return 'details';
+      if (hash === 'methodology' || hash === 'glossary' || hash === 'report-about') return 'about';
+
+      // Otherwise: find which major section contains the target.
+      const target = document.getElementById(hash);
+      if (target) {
+        for (const entry of sectionByKey.entries()) {
+          const key = entry[0];
+          const section = entry[1];
+          if (section.contains(target)) return key;
+        }
+      }
+      return null;
+    }
+
+    function setCurrentLink(key) {
+      links.forEach(function (a) {
+        const k = a.getAttribute('data-report-nav');
+        if (k === key) {
+          a.setAttribute('aria-current', 'page');
+        } else {
+          a.removeAttribute('aria-current');
+        }
+      });
+    }
+
+    function showSection(key, opts) {
+      const options = opts || {};
+      const section = sectionByKey.get(key);
+      if (!section) return;
+
+      sections.forEach(function (s) {
+        s.hidden = (s !== section);
+      });
+      setCurrentLink(key);
+
+      // If the current hash points to an element, scroll it into view.
+      if (options.scrollToHash) {
+        const hash = (window.location.hash || '').replace('#', '');
+        if (hash) {
+          const target = document.getElementById(hash);
+          if (target) {
+            target.scrollIntoView({ block: 'start' });
+          }
+        }
+      }
+    }
+
+    // Default selection: control.
+    const initialKey = keyFromHash() || 'control';
+    showSection(initialKey, { scrollToHash: false });
+
+    links.forEach(function (a) {
+      a.addEventListener('click', function (e) {
+        const key = a.getAttribute('data-report-nav');
+        if (!key) return;
+
+        // Switch immediately; allow the browser to handle the anchor navigation.
+        showSection(key, { scrollToHash: false });
+      });
+    });
+
+    window.addEventListener('hashchange', function () {
+      const key = keyFromHash();
+      if (key) showSection(key, { scrollToHash: true });
+    });
+  }
+
+  initReportSectionNav();
+
   const modelFilter = document.getElementById('model-filter');
   const variantFilter = document.getElementById('variant-filter');
   const resultFilter = document.getElementById('result-filter');
