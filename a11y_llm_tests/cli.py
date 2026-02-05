@@ -29,6 +29,9 @@ load_dotenv()
 app = typer.Typer(add_completion=False)
 
 
+DEFAULT_TEMPERATURE = 0.2
+
+
 def _render_progress(prefix: str, done: int, total: int) -> None:
     """Render an in-place progress indicator.
 
@@ -206,6 +209,22 @@ def run(
     config_dir = Path(models_file).resolve().parent
     system_prompt_override = defaults_cfg.get("system_prompt")
 
+    # Temperature precedence:
+    # 1) CLI --temperature
+    # 2) config/models.yaml defaults.temperature
+    # 3) code default
+    config_temperature = defaults_cfg.get("temperature")
+    effective_temperature = temperature
+    if effective_temperature is None:
+        if config_temperature is None:
+            effective_temperature = DEFAULT_TEMPERATURE
+        else:
+            try:
+                effective_temperature = float(config_temperature)
+            except Exception:
+                typer.secho(f"Invalid defaults.temperature in models config: {config_temperature}", err=True)
+                raise typer.Exit(code=1)
+
     # Control behavior:
     # - When benchmarking instruction sets, control must be the base system prompt with no custom instructions.
     # - Otherwise, keep existing behavior (defaults.custom_instructions_markdown applies).
@@ -296,7 +315,7 @@ def run(
                         sample_index,
                         prompt_text,
                         seed,
-                        temperature,
+                        effective_temperature,
                         disable_cache,
                         system_prompt_override,
                         variant.get("custom_instructions_text"),
@@ -411,7 +430,7 @@ def run(
             "sampling": {
                 "samples_per_case": samples,
                 "k_values": [int(x.strip()) for x in k.split(",") if x.strip().isdigit()],  # stored but not yet computed
-                "temperature": temperature,
+                "temperature": effective_temperature,
                 "base_seed": base_seed,
                 "disable_cache": disable_cache,
                 "processes_generation": (processes if processes is not None else min(multiprocessing.cpu_count(), len(gen_tasks))) if gen_tasks else None,

@@ -1,8 +1,7 @@
 defaults:
-  #temperature: 0.2
-  #max_tokens: 1200
   #system_prompt: |
   #  You are generating a single standalone HTML document.
+  temperature: 0.2
   #custom_instructions_markdown: custom-instructions.md
 models:
   - name: azure_ai/gpt-5-mini

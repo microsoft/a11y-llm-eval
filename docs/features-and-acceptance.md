@@ -100,6 +100,9 @@ The effective system prompt is:
 
 - `defaults.system_prompt` (string)
 - `defaults.custom_instructions_markdown` (path to a markdown file)
+- `defaults.temperature` (float)
+
+If `run --temperature` is not provided, the effective temperature defaults to `defaults.temperature` if present, otherwise `0.2`.
 
 ### Acceptance criteria
 
