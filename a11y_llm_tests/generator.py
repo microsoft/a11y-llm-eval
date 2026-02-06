@@ -26,8 +26,26 @@ RETRY_MAX_DELAY = 60.0  # seconds
 # regenerate once before returning.
 TRUNCATION_RETRY_MAX = 1
 
-# Default output budget. Many Anthropic routes default to ~4096 if not explicitly set.
+# Default output budget. Many Anthropic/Claude routes default to ~4096 if not explicitly set.
 DEFAULT_MAX_TOKENS = 16384
+
+
+def _is_anthropic_model(model: str) -> bool:
+    """Heuristic for whether a LiteLLM model routes to Anthropic.
+
+    In this repo, Anthropic models are typically configured as `claude-*` in
+    config/models.yaml, but LiteLLM also supports explicit provider prefixes.
+    """
+
+    m = (model or "").strip().lower()
+    return (
+        m.startswith("anthropic/")
+        or m.startswith("anthropic.")
+        or m.startswith("anthropic:")
+        or m.startswith("claude-")
+        or m == "claude"
+        or m.startswith("claude/")
+    )
 
 
 class OutputTokenLimitHit(RuntimeError):
@@ -231,6 +249,11 @@ def generate_html_with_meta(
     litellm.drop_params = True
     print(f"Generating HTML with model={model}, temp={temperature}, seed={seed}...")
 
+    # Only set a default output token budget for Anthropic/Claude.
+    # Other providers have their own defaults/limits; passing a large max_tokens
+    # everywhere can change behavior unexpectedly.
+    effective_max_tokens: Optional[int] = DEFAULT_MAX_TOKENS if _is_anthropic_model(model) else None
+
     def _extract_finish_and_stop_reason(resp) -> tuple[Optional[str], Optional[str]]:
         """Best-effort extraction of finish/stop reasons across providers."""
         finish_reason = None
@@ -255,16 +278,19 @@ def generate_html_with_meta(
         last_exc: Optional[BaseException] = None
         for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
             try:
-                resp = litellm.completion(
-                    model=model,
-                    messages=[
+                kwargs: Dict[str, Any] = {
+                    "model": model,
+                    "messages": [
                         {"role": "system", "content": effective_system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=temperature,
-                    seed=seed,
-                    max_tokens=DEFAULT_MAX_TOKENS
-                )
+                    "temperature": temperature,
+                    "seed": seed,
+                }
+                if effective_max_tokens is not None:
+                    kwargs["max_tokens"] = effective_max_tokens
+
+                resp = litellm.completion(**kwargs)
                 if resp and getattr(resp, "choices", None) and len(resp.choices) > 0:
                     return resp
                 last_exc = RuntimeError("litellm returned no choices")
@@ -310,13 +336,13 @@ def generate_html_with_meta(
             limit_hit = True
         if isinstance(stop_reason, str) and stop_reason.lower() in {"max_tokens", "length", "token_limit", "tokens"}:
             limit_hit = True
-        if tokens_out is not None and tokens_out >= (DEFAULT_MAX_TOKENS - 1):
+        if effective_max_tokens is not None and tokens_out is not None and tokens_out >= (effective_max_tokens - 1):
             # Heuristic for providers that don't report finish_reason reliably.
             limit_hit = True
         if limit_hit:
             raise OutputTokenLimitHit(
                 model=model,
-                max_tokens=DEFAULT_MAX_TOKENS,
+                max_tokens=effective_max_tokens,
                 finish_reason=finish_reason,
                 stop_reason=stop_reason,
                 tokens_out=tokens_out,
@@ -377,7 +403,7 @@ def generate_html_with_meta(
         "cost_usd": cost_usd,
         "finish_reason": finish_reason,
         "stop_reason": stop_reason,
-        "max_tokens": DEFAULT_MAX_TOKENS,
+        "max_tokens": effective_max_tokens,
         "seed": seed,
         "temperature": temperature,
         "system_prompt": base_system_prompt,

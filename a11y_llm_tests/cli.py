@@ -117,9 +117,24 @@ def _evaluate_worker(args_tuple):
 
 def _generate_worker(task):
     """Top-level generation worker for multiprocessing; receives a tuple of parameters."""
-    test_name, model, sample_index, prompt_text, seed, temperature, disable_cache, system_prompt_override, custom_instructions_text, prompt_variant_id, debug_truncated_cache = task
+    (
+        test_name,
+        model,
+        sample_index,
+        prompt_text,
+        seed,
+        temperature,
+        disable_cache,
+        system_prompt_override,
+        custom_instructions_text,
+        prompt_variant_id,
+        debug_truncated_cache,
+        html_out_path,
+    ) = task
+
     # Configure prompts within this worker process for the specific variant.
     generator.configure_prompts(system_prompt_override, custom_instructions_text)
+
     kwargs = {
         "temperature": temperature,
         "seed": seed,
@@ -127,8 +142,15 @@ def _generate_worker(task):
     }
     if debug_truncated_cache:
         kwargs["debug_truncated_cache"] = True
+
     html, meta = generator.generate_html_with_meta(model, prompt_text, sample_index, **kwargs)
-    return test_name, model, sample_index, prompt_text, meta, html, prompt_variant_id
+
+    out_path = Path(html_out_path)
+    out_path.parent.mkdir(exist_ok=True, parents=True)
+    atomic_write_text(out_path, html, encoding="utf-8")
+
+    # Return only small, picklable data
+    return test_name, model, sample_index, prompt_text, meta, str(out_path), prompt_variant_id
 
 
 def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[dict]:
@@ -309,6 +331,15 @@ def run(
                 n_samples = int(variant.get("n_samples_requested") or samples)
                 for sample_index in range(n_samples):
                     seed = (base_seed + sample_index) if base_seed is not None else None
+                    variant_id = variant.get("id") or "control"
+
+                    if variant_id == "control":
+                        raw_path = out_dir / "raw" / td.name
+                        html_file = raw_path / (f"{model}__s{sample_index}.html" if samples > 1 else f"{model}.html")
+                    else:
+                        raw_path = out_dir / "raw_variants" / variant_id / td.name
+                        html_file = raw_path / f"{model}__s{sample_index}.html"
+
                     tasks_by_model[model].append((
                         td.name,
                         model,
@@ -319,8 +350,9 @@ def run(
                         disable_cache,
                         system_prompt_override,
                         variant.get("custom_instructions_text"),
-                        variant.get("id") or "control",
+                        variant_id,
                         debug_truncated_cache,
+                        str(html_file),
                     ))
 
     # Flatten into a single task list using round-robin across models
@@ -345,29 +377,24 @@ def run(
             total = len(gen_tasks)
             done = 0
             _render_progress("Generating", done, total)
-            for test_name, model, sample_index, prompt_text, meta, html, prompt_variant_id in gen_results_iter:
+            for test_name, model, sample_index, prompt_text, meta, html_path, prompt_variant_id in gen_results_iter:
                 done += 1
                 _render_progress("Generating", done, total)
+
                 if debug_truncated_cache and isinstance(meta, dict):
                     tcf = meta.get("truncated_cache_files")
                     if isinstance(tcf, list):
                         for p in tcf:
                             if isinstance(p, str) and p:
                                 truncated_cache_files.add(p)
+
                 variant_id = prompt_variant_id or "control"
-                if variant_id == "control":
-                    raw_path = out_dir / "raw" / test_name
-                    html_file = raw_path / f"{model}__s{sample_index}.html" if samples > 1 else raw_path / f"{model}.html"
-                else:
-                    raw_path = out_dir / "raw_variants" / variant_id / test_name
-                    html_file = raw_path / f"{model}__s{sample_index}.html"
-                html_file.parent.mkdir(exist_ok=True, parents=True)
-                atomic_write_text(html_file, html, encoding="utf-8")
+
                 rec = ResultRecord(
                     test_name=test_name,
                     model_name=model,
                     timestamp=datetime.utcnow(),
-                    generation_html_path=str(html_file),
+                    generation_html_path=str(html_path),
                     screenshot_path=None,
                     test_function=TestFunctionResult(status="PENDING", assertions=[], error=None, duration_ms=None),
                     axe=None,
