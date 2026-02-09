@@ -104,6 +104,8 @@ The effective system prompt is:
 
 If `run --temperature` is not provided, the effective temperature defaults to `defaults.temperature` if present, otherwise `0.2`.
 
+Note: some Codex-style deployments (e.g., certain `*-codex` models) do not accept sampling parameters like `temperature`. For these models, the harness omits `temperature` from the LiteLLM request to avoid provider errors.
+
 ### Acceptance criteria
 
 - Generated output is a **single standalone HTML document**.

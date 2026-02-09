@@ -48,6 +48,18 @@ def _is_anthropic_model(model: str) -> bool:
     )
 
 
+def _is_codex_model(model: str) -> bool:
+    """Heuristic for whether a LiteLLM model is a Codex-style deployment.
+
+    Some Codex / code-agent deployments (notably certain Azure GPT-* Codex models)
+    reject sampling parameters like `temperature`. We omit those parameters to
+    avoid hard failures.
+    """
+
+    m = (model or "").strip().lower()
+    return "codex" in m and (m.endswith("codex") or "-codex" in m or "/codex" in m)
+
+
 class OutputTokenLimitHit(RuntimeError):
     """Raised when the provider indicates output was truncated due to token limits."""
 
@@ -284,9 +296,10 @@ def generate_html_with_meta(
                         {"role": "system", "content": effective_system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    "temperature": temperature,
                     "seed": seed,
                 }
+                if temperature is not None and not _is_codex_model(model):
+                    kwargs["temperature"] = temperature
                 if effective_max_tokens is not None:
                     kwargs["max_tokens"] = effective_max_tokens
 
