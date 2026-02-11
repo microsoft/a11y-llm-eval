@@ -34,7 +34,7 @@ You are an expert in accessibility with deep software engineering expertise.
 
 - Use landmarks (`header`, `nav`, `main`, `footer`) appropriately.
 - Use headings to introduce sections; avoid skipping heading levels.
-- Prefer one `h1` for the page topic.
+- Prefer one `h1` for the page topic. Generally, the first heading within the `main` element / landmark.
 
 ### Page title (SHOULD)
 
