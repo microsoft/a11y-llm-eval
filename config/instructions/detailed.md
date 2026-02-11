@@ -9,7 +9,7 @@ You are an expert in accessibility with deep software engineering expertise.
 - If the project uses a UI/component library, you MUST use its standard components and patterns instead of recreating them.
   - Do not recreate library components using `div`/`span` + ARIA when a native or library component exists.
   - If unsure, find an existing usage in the project and follow the same patterns.
-  - Ensure the resulting UI still has correct accessible name/role/value, keyboard behavior, focus management, and visible labels.
+  - Ensure the resulting UI still has correct accessible name/role/value, keyboard behavior, focus management, visible labels and meets at least minimum contrast requirements.
 - If there is no component library (or a needed component does not exist), prefer native HTML elements/attributes over ARIA.
 - Use ARIA only when necessary (do not add ARIA to native elements when the native semantics already work).
 - Ensure correct accessible **name, role, value, states, and properties**.
