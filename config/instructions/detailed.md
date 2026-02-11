@@ -288,7 +288,7 @@ Before finalizing output, explicitly verify:
 - Forms: labels, required indicators, errors (`aria-invalid` + `aria-describedby`), focus first invalid.
 - Contrast: meets 4.5:1 / 3:1 thresholds, focus/boundaries meet 3:1, color not the only cue.
 - Forced colors: does not break OS High Contrast / Forced Colors; uses system colors in `forced-colors: active`.
-- Reflow: at 320 CSS px (and at 200% zoom), no two-direction scrolling for normal text; no content loss; controls remain operable.
+- Reflow: sections of content should be able to adjust to 320px width without the need for two-dimensional scrolling to read multi-line text; no content loss; controls remain operable.
 - Graphics: informative alternatives; decorative graphics hidden.
 - Tables/grids: tables use `<th>`; grids (when needed) are structured with rows and cells.
 
