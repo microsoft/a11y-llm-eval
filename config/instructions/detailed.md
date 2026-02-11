@@ -151,6 +151,13 @@ Use `@media (forced-colors: active)` only when system defaults are not sufficien
     border: 2px solid ButtonBorder;
   }
 }
+
+/* if using box-shadow for a focus style, also use a transparent outline
+    so that the outline will render when the high contrast setting is enabled */
+.btn:focus {
+  box-shadow: 0 0 4px 3px rgba(90, 50, 200, .7);
+  outline: 2px solid transparent;
+}
 ```
 
 In Forced Colors mode, avoid relying on:
