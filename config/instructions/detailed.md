@@ -98,7 +98,7 @@ Roving tabindex (SHOULD):
 
 `aria-activedescendant` (SHOULD):
 
-- Container has `tabindex="0"` and `aria-activedescendant="IDREF"`.
+- Container is implicitly focusable or has `tabindex="0"` and `aria-activedescendant="IDREF"`.
 - Arrow keys update `aria-activedescendant`.
 
 ## Low vision and contrast (MUST)
