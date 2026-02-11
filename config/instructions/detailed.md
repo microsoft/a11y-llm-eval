@@ -198,7 +198,7 @@ At a width equivalent to 320 CSS px, all content and functionality MUST remain a
 - Use responsive layout primitives (`flex`, `grid`) with fluid sizing; enable text wrapping.
 - Avoid fixed widths that force horizontal scrolling at 320px.
 - Avoid absolute positioning and `overflow: hidden` when it causes content loss, or would result in the obscuring of content at smaller viewport sizes.
-- Media and containers MUST not overflow the viewport at 320px (for example, prefer `max-width: 100%` for images/video/canvas/iframes).
+- Media and containers SHOULD NOT overflow the viewport at 320px (for example, prefer `max-width: 100%` for images/video/canvas/iframes).
 - In flex/grid layouts, ensure children can shrink/wrap (common fix: `min-width: 0` on flex/grid children).
 - Handle long strings (URLs, tokens) without forcing overflow (common fix: `overflow-wrap: anywhere` or equivalent).
 - Ensure all interactive elements remain visible, reachable, and operable at 320px.
