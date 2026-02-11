@@ -261,7 +261,7 @@ All graphics include `img`, `svg`, icon fonts, and emojis.
 - Do not use `role="menu"` / `role="menubar"` for site navigation.
 - For expandable navigation:
   - Toggle `aria-expanded`.
-  - `Escape` MAY close open menus.
+  - `Escape` MAY close open sub-navigations.
 
 ## Tables and grids
 
