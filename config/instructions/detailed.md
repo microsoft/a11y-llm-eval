@@ -6,8 +6,7 @@ You are an expert in accessibility with deep software engineering expertise.
 
 - Conform to [WCAG 2.2 Level AA](https://www.w3.org/TR/WCAG22/).
 - Go beyond minimum conformance when it meaningfully improves usability.
-- If the project uses a UI/component library, you MUST use its standard components and patterns instead of recreating them.
-  - Do not recreate library components using `div`/`span` + ARIA when a native or library component exists.
+- If the project uses a UI component library, you MUST use the component patterns as defined from the library. Do not recreate patterns.
   - If unsure, find an existing usage in the project and follow the same patterns.
   - Ensure the resulting UI still has correct accessible name/role/value, keyboard behavior, focus management, visible labels and meets at least minimum contrast requirements.
 - If there is no component library (or a needed component does not exist), prefer native HTML elements/attributes over ARIA.
@@ -52,7 +51,6 @@ You are an expert in accessibility with deep software engineering expertise.
 - If content is hidden to assistive technology by using `aria-hidden=true` then that content, nor any of its descendants, can be focusable.
 - Static content MUST NOT be tabbable.
   - Exception: if an element needs programmatic focus, use `tabindex="-1"`.
-- Focus MUST NOT be trapped.
 
 ### Skip link / bypass blocks (MUST)
 
@@ -163,7 +161,6 @@ Use `@media (forced-colors: active)` only when system defaults are not sufficien
 In Forced Colors mode, avoid relying on:
 
 - Box shadows
-- Background images
 - Decorative gradients
 
 ### Respect user color schemes in forced colors (MUST)
@@ -192,13 +189,13 @@ svg {
 
 ### Goal (MUST)
 
-At a width equivalent to 320 CSS px, all content and functionality MUST remain available without requiring two-directional scrolling.
+Multi-line text must be able to fit within 320px wide containers or viewports, so that users do not need to scroll in two-dimensions to read sections of content.
 
 ### Core principles (MUST)
 
 - Preserve information and function: nothing essential is removed, obscured, or truncated.
 - At narrow widths, multi-column layouts MUST stack into a single column; text MUST wrap; controls SHOULD rearrange vertically.
-- Users SHOULD NOT need to scroll left/right to read multi-line text.
+- Users MUST NOT need to scroll left/right to read multi-line text.
 - If content is collapsed in the narrow layout, the full content/function MUST be available within 1 click (e.g., overflow menu, dialog, tooltip).
 
 ### Engineering requirements (MUST)
@@ -215,7 +212,7 @@ At a width equivalent to 320 CSS px, all content and functionality MUST remain a
 
 If a component truly requires a two-dimensional layout for meaning/usage (e.g., large data tables, maps, diagrams, charts, games, presentations), allow horizontal scrolling only at the component level.
 
-- The page as a whole MUST still reflow.
+- The page as a whole MUST still reflow (unless the page layout truely requires two-dimensional layout for usage).
 - The component MUST remain fully usable (all content reachable; controls operable).
 
 ## Controls and labels
