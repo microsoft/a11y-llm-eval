@@ -55,7 +55,31 @@ def test_temperature_omitted_for_codex_models(monkeypatch, tmp_path):
     assert meta["temperature"] == 0.2
 
 
-def test_temperature_sent_for_non_codex_models(monkeypatch, tmp_path):
+def test_temperature_omitted_when_none_for_non_codex_models(monkeypatch, tmp_path):
+    monkeypatch.setattr(generator, "CACHE_DIR", tmp_path / "generations")
+    generator.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    captured = {}
+
+    def _completion(**kwargs):
+        captured.update(kwargs)
+        return _FakeResp("<html><head></head><body>ok</body></html>")
+
+    monkeypatch.setattr(generator.litellm, "completion", _completion)
+
+    generator.generate_html_with_meta(
+        model="azure/gpt-5.2",
+        user_prompt="make a page",
+        iteration=0,
+        temperature=None,
+        seed=None,
+        disable_cache=True,
+    )
+
+    assert "temperature" not in captured
+
+
+def test_temperature_sent_for_non_codex_models_when_set(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "CACHE_DIR", tmp_path / "generations")
     generator.CACHE_DIR.mkdir(parents=True, exist_ok=True)
 

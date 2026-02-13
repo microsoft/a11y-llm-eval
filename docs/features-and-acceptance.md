@@ -102,7 +102,9 @@ The effective system prompt is:
 - `defaults.custom_instructions_markdown` (path to a markdown file)
 - `defaults.temperature` (float)
 
-If `run --temperature` is not provided, the effective temperature defaults to `defaults.temperature` if present, otherwise `0.2`.
+If `run --temperature` is not provided, the effective temperature defaults to `defaults.temperature` if present.
+
+If neither `run --temperature` nor `defaults.temperature` is provided, the harness omits `temperature` from the LiteLLM request so the provider/model default temperature is used.
 
 Note: some Codex-style deployments (e.g., certain `*-codex` models) do not accept sampling parameters like `temperature`. For these models, the harness omits `temperature` from the LiteLLM request to avoid provider errors.
 

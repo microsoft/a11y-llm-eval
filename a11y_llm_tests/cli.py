@@ -29,9 +29,6 @@ load_dotenv()
 app = typer.Typer(add_completion=False)
 
 
-DEFAULT_TEMPERATURE = 0.2
-
-
 def _render_progress(prefix: str, done: int, total: int) -> None:
     """Render an in-place progress indicator.
 
@@ -234,18 +231,15 @@ def run(
     # Temperature precedence:
     # 1) CLI --temperature
     # 2) config/models.yaml defaults.temperature
-    # 3) code default
+    # 3) otherwise omit temperature (provider/model default)
     config_temperature = defaults_cfg.get("temperature")
     effective_temperature = temperature
-    if effective_temperature is None:
-        if config_temperature is None:
-            effective_temperature = DEFAULT_TEMPERATURE
-        else:
-            try:
-                effective_temperature = float(config_temperature)
-            except Exception:
-                typer.secho(f"Invalid defaults.temperature in models config: {config_temperature}", err=True)
-                raise typer.Exit(code=1)
+    if effective_temperature is None and config_temperature is not None:
+        try:
+            effective_temperature = float(config_temperature)
+        except Exception:
+            typer.secho(f"Invalid defaults.temperature in models config: {config_temperature}", err=True)
+            raise typer.Exit(code=1)
 
     # Control behavior:
     # - When benchmarking instruction sets, control must be the base system prompt with no custom instructions.

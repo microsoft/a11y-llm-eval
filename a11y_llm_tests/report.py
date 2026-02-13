@@ -491,7 +491,7 @@ details li { margin-bottom: 0.35rem; }
     <li>The rendered HTML is evaluated using <a href="https://github.com/dequelabs/axe-core">axe-core</a> to identify common accessibility issues.</li>
     <li>A custom test script (JavaScript) is executed against the rendered page to check for accessibility requirements that are specific to the test case and not covered by axe-core. These tests look for <a href="https://www.w3.org/WAI/WCAG22/quickref/">WCAG 2.2</a> failures and best practices. Best practices do not impact pass/fail results.</li>
     <li>Each test case is run multiple times (samples) to evaluate the consistency and reliability of the LLM's output.</li>
-    <li>The temperature is set to 0.2 for models that support temperature. This is done to reflect how most tools set the temperature when generating code (usually between 0.0 and 0.2). Some Codex-style deployments reject sampling parameters like temperature; for those models, the harness does not send a temperature value.</li>
+    <li>By default, the harness does not explicitly set a temperature, so each provider/model uses its own default sampling behavior.</li>
     <li>Instruction sets are also evaluated to see how specific accessibility instructions impact results. See the "Instruction sets" section for details.</li>
   </ul>
   {% set system_prompt = prompting_meta.get('system_prompt') %}
@@ -546,7 +546,6 @@ details li { margin-bottom: 0.35rem; }
     <li><strong>Test Cases</strong>: Added a test case for a simple contact form with assertions for simple form controls. Also fixed some minor bugs in other test cases.</li>
     <li><strong>Instruction Sets</strong>: Added instruction set evaluation.</li>
     <li><strong>Report</strong>: Updated report layout and added new sections for instruction sets and analysis. Also allow filtering by instruction set and specific assertions within test cases.</li>
-    <li><strong>Temperature</strong>: Set temperature to 0.2 for all models to better reflect typical code generation settings (was previously set to the default value of 1.0). Since the results are now more deterministic, this change helps in achieving more consistent outputs, the total number of samples was also lowered.</li>
   </ul>
 </section>
 
