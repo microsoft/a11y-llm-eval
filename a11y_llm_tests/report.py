@@ -543,10 +543,10 @@ details li { margin-bottom: 0.35rem; }
   <h2 id="change-log">Change Log</h2>
   <h3>2/2026 Update</h3>
   <ul>
-    <li>**Test Cases**: Added a test case for a simple contact form with assertions for simple form controls. Also fixed some minor bugs in other test cases.</li>
-    <li>**Instruction Sets**: Added instruction set evaluation.</li>
-    <li>**Report**: Updated report layout and added new sections for instruction sets and analysis. Also allow filtering by instruction set and specific assertions within test cases.</li>
-    <li>**Temperature**: Set temperature to 0.2 for all models to better reflect typical code generation settings (was previously set to the default value of 1.0). Since the results are now more deterministic, this change helps in achieving more consistent outputs, the total number of samples was also lowered.</li>
+    <li><strong>Test Cases</strong>: Added a test case for a simple contact form with assertions for simple form controls. Also fixed some minor bugs in other test cases.</li>
+    <li><strong>Instruction Sets</strong>: Added instruction set evaluation.</li>
+    <li><strong>Report</strong>: Updated report layout and added new sections for instruction sets and analysis. Also allow filtering by instruction set and specific assertions within test cases.</li>
+    <li><strong>Temperature</strong>: Set temperature to 0.2 for all models to better reflect typical code generation settings (was previously set to the default value of 1.0). Since the results are now more deterministic, this change helps in achieving more consistent outputs, the total number of samples was also lowered.</li>
   </ul>
 </section>
 
