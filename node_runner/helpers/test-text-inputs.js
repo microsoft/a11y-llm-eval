@@ -1,4 +1,3 @@
-
 const detailedResults = require('./detailed-results');
 const { getVisualLabel, SOURCE_PLACEHOLDER } = require('./get-visual-label');
 const { getAllFormFieldWrappers } = require('./get-form-field-wrapper');
@@ -298,21 +297,22 @@ testFn.testLabelInName = async (scope, discoveryCache) => {
         return results;
     }
 
-    // Normalize helper: collapse whitespace, lowercase
-    const norm = (s) => (s || '')
+    // Normalize for comparison:
+    // - replace all Unicode punctuation with spaces
+    // - collapse whitespace (including NBSP)
+    // - trim + lowercase
+    const normalizeForCompare = (s) => (s || '')
+        .toString()
+        .replace(/\p{P}+/gu, ' ')
         .replace(/[\s\u00A0]+/g, ' ')
         .trim()
         .toLowerCase();
 
-    // Strip common non-essential indicators from the visible label (e.g., '*', trailing ':', '(required)')
-    const stripLabelNoise = (s) => {
-        if (!s) return '';
-        let t = s.replace(/\(\s*required\s*\)/gi, '');
-        t = t.replace(/\brequired\b/gi, '');
-        t = t.replace(/^\*+|\*+$/g, '');
-        t = t.replace(/[:：]\s*$/g, '');
-        return t;
-    };
+    // Remove common non-essential "required" indicators from visible labels only.
+    const stripRequiredIndicators = (s) => (s || '')
+        .toString()
+        .replace(/\(\s*required\s*\)/gi, '')
+        .replace(/\brequired\b/gi, '');
 
     // Only applies when there is a visible text label (not placeholder-only)
     let applicable = 0;
@@ -323,11 +323,8 @@ testFn.testLabelInName = async (scope, discoveryCache) => {
         }
         applicable++;
 
-        const labelText = stripLabelNoise(vl.text);
-        const nameText = item.name || '';
-
-        const labelNorm = norm(labelText);
-        const nameNorm = norm(nameText);
+        const labelNorm = normalizeForCompare(stripRequiredIndicators(vl.text));
+        const nameNorm = normalizeForCompare(item.name || '');
 
         // Accessible name should contain the visible label text in the same order
         if (labelNorm && nameNorm.includes(labelNorm)) {
@@ -338,7 +335,6 @@ testFn.testLabelInName = async (scope, discoveryCache) => {
     }
 
     if (applicable === 0) {
-        // Nothing to check; treat as pass with context message
         results.addMessage("No inputs with visible text labels applicable to 2.5.3");
         results.forcePass();
     }
