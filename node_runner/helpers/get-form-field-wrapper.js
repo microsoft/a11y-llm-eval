@@ -6,7 +6,7 @@ const FIELD_WRAPPER_SELECTOR = '[class*="field"], [class*="input"], [class*="con
 //
 // Include `contenteditable` because some examples intentionally implement "text inputs" that way;
 // those should still be considered fields for role-related assertions.
-const CONTROL_SELECTOR = 'input, textarea, select, button, [role="textbox"], [role="button"], [contenteditable]:not([contenteditable="false"])';
+const CONTROL_SELECTOR = 'input, textarea, select, button, [role="textbox"], [role="button"], [contenteditable]:not([contenteditable="false"]), *:has(> :is(input:not([type=button],[type=submit],[type=reset]), textarea, select))';
 
 // Get all form field wrapper elements within the given scope as Playwright locators
 const getAllFormFieldWrappers = async (scope) => {
