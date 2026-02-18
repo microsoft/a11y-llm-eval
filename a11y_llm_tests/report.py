@@ -881,8 +881,8 @@ details li { margin-bottom: 0.35rem; }
     Model
     <select id="model-filter">
       <option value="">All models</option>
-      {% for model, name in model_display_names|dictsort(by='value') %}
-        <option value="{{ model }}">{{ name }}</option>
+      {% for opt in model_filter_options %}
+        <option value="{{ opt.value }}">{{ opt.label }}</option>
       {% endfor %}
     </select>
   </label>
@@ -1468,6 +1468,18 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     n = r.get("model_name")
     if n and n not in model_display_names:
       model_display_names[n] = n.split('/')[-1]
+
+  # Model filter options should only include each model once.
+  # model_display_names may include alias keys (e.g. full name and short name)
+  # which can cause duplicate labels in the dropdown.
+  _model_ids_in_results = sorted({r.get("model_name") for r in all_results if r.get("model_name")})
+  model_filter_options = [
+    {"value": mid, "label": model_display_names.get(mid, mid.split('/')[-1])}
+    for mid in sorted(
+      _model_ids_in_results,
+      key=lambda m: (model_display_names.get(m, m).casefold(), m.casefold()),
+    )
+  ]
   
   per_model = defaultdict(lambda: {
     "axe_failures": [],
@@ -2239,6 +2251,7 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     run_id=data.get("run_id", "unknown"),
     models=data.get("models", []),
     model_display_names=model_display_names,
+    model_filter_options=model_filter_options,
     tests=data.get("tests", []),
     summary=summary,
     results=results,
