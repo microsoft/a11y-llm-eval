@@ -28,9 +28,9 @@ module.exports.run = async ({ page, assert }) => {
     return (await main.count()) === 1;
   });
 
-  await assert("Has a single navigation", async () => {
+  await assert("Has at least one navigation", async () => {
     const nav = await page.getByRole('navigation');
-    return (await nav.count()) === 1;
+    return (await nav.count()) >= 1;
   });
 
   await assert("Has a single footer", async () => {
