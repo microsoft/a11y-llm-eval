@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Invalid Required Group Role</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each radio has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Helper text is programmatically associated": "pass",
+      "Required fields are indicated (visually and programmatically)": "fail",
+      "Each radio group has an accessible label": "pass",
+      "Each radio group is keyboard reachable": "pass",
+      "Arrow keys change the selected radio within each group": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+  <style>
+    [role="radio"] {
+      border: 1px solid #333;
+      display: inline-block;
+      margin-right: 0.5rem;
+      padding: 0.5rem 0.75rem;
+    }
+    [role="radio"][aria-checked="true"] {
+      background: #d8eef8;
+      border-width: 2px;
+    }
+  </style>
+</head>
+<body>
+  <form>
+    <h1 id="required-group-role-heading">Preferred Contact Method (required)</h1>
+    <div role="group" aria-labelledby="required-group-role-heading" aria-required="true">
+      <div class="form-field"><div role="radio" tabindex="0" aria-checked="true">Email</div></div>
+      <div class="form-field"><div role="radio" tabindex="-1" aria-checked="false">Phone</div></div>
+      <div class="form-field"><div role="radio" tabindex="-1" aria-checked="false">Text Message</div></div>
+    </div>
+    <button type="submit">Continue</button>
+  </form>
+  <script>
+    const radios = Array.from(document.querySelectorAll('[role="radio"]'));
+
+    const updateSelection = (nextIndex) => {
+      radios.forEach((radio, index) => {
+        const isSelected = index === nextIndex;
+        radio.setAttribute('aria-checked', isSelected ? 'true' : 'false');
+        radio.tabIndex = isSelected ? 0 : -1;
+      });
+      radios[nextIndex].focus();
+    };
+
+    radios.forEach((radio, index) => {
+      radio.addEventListener('click', () => updateSelection(index));
+      radio.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowRight' && event.key !== 'ArrowDown') {
+          return;
+        }
+        event.preventDefault();
+        updateSelection((index + 1) % radios.length);
+      });
+    });
+  </script>
+</body>
+</html>

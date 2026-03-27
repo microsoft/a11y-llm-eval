@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Radio Label Helper Required Failures</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each radio has an accessible name": "pass",
+      "Visible label is included in accessible name": "fail",
+      "Helper text is programmatically associated": "fail",
+      "Required fields are indicated (visually and programmatically)": "fail",
+      "Each radio group has an accessible label": "pass",
+      "Each radio group is keyboard reachable": "pass",
+      "Arrow keys change the selected radio within each group": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <fieldset>
+      <legend>Preferred Contact Method</legend>
+      <div class="form-field">
+        <input id="label-helper-email" type="radio" name="contact-method" value="email" aria-label="Electronic Mail" checked />
+        <label for="label-helper-email">Email*</label>
+        <span>Choose one required option.</span>
+      </div>
+      <div class="form-field">
+        <input id="label-helper-phone" type="radio" name="contact-method" value="phone" />
+        <label for="label-helper-phone">Phone</label>
+      </div>
+      <div class="form-field">
+        <input id="label-helper-text" type="radio" name="contact-method" value="text" />
+        <label for="label-helper-text">Text Message</label>
+      </div>
+    </fieldset>
+    <button type="submit">Continue</button>
+  </form>
+</body>
+</html>

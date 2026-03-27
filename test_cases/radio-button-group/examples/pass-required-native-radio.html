@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Required Native Radio Group</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each radio has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Helper text is programmatically associated": "pass",
+      "Required fields are indicated (visually and programmatically)": "pass",
+      "Each radio group has an accessible label": "pass",
+      "Each radio group is keyboard reachable": "pass",
+      "Arrow keys change the selected radio within each group": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <fieldset>
+      <legend>Preferred Contact Method (required)</legend>
+      <div class="form-field">
+        <input id="required-native-email" type="radio" name="contact-method" value="email" required checked />
+        <label for="required-native-email">Email</label>
+      </div>
+      <div class="form-field">
+        <input id="required-native-phone" type="radio" name="contact-method" value="phone" />
+        <label for="required-native-phone">Phone</label>
+      </div>
+      <div class="form-field">
+        <input id="required-native-text" type="radio" name="contact-method" value="text" />
+        <label for="required-native-text">Text Message</label>
+      </div>
+      <button type="submit">Continue</button>
+    </fieldset>
+  </form>
+</body>
+</html>

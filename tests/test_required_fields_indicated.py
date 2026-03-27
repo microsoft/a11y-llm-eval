@@ -4,7 +4,7 @@ import pytest
 
 from a11y_llm_tests import node_bridge
 
-REQUIRED_HELPER_PATH = str((Path(__file__).resolve().parents[1] / 'node_runner' / 'helpers' / 'test-text-inputs.js').resolve())
+REQUIRED_HELPER_PATH = str((Path(__file__).resolve().parents[1] / 'node_runner' / 'helpers' / 'test-form-controls.js').resolve())
 
 CASES = [
     (
@@ -59,9 +59,9 @@ def test_required_fields_indicated(name, html_snippet, expected_pass, tmp_path):
 
     # JS test invokes the helper's test function and asserts the overall pass/fail
     test_js = f"""
-const testTextInputs = require({helper_path_js});
+const testFormControls = require({helper_path_js});
 module.exports.run = async ({{page, assert}}) => {{
-    const results = await testTextInputs.testRequiredFieldsIndicated(page);
+    const results = await testFormControls.testRequiredFieldsIndicated(page);
     await assert('required-indicated', () => {{
         const pass = !!(results && typeof results.passed === 'function' ? results.passed() : false);
         const message = results && typeof results.getMessage === 'function' ? results.getMessage() : '';

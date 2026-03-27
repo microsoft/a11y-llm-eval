@@ -3,22 +3,22 @@
  * Tests WCAG 4.1.2, 2.1.1, 2.4.7, 1.3.1, 3.3.2
  */
 
-// Using shared discovery cache from utils.testTextInputs to avoid repeated scans
+// Using shared discovery cache from utils.testFormControls to avoid repeated scans
 
 module.exports.run = async ({ page, assert, utils }) => {
 
     // Prime a single-pass discovery to share across checks
-    const discovery = await utils.testTextInputs.discover(page);
+    const discovery = await utils.testFormControls.discoverTextInputs(page);
 
     // Assertion 1: Each text input has an accessible name (R - WCAG 4.1.2, 1.3.1, 3.3.2)
     await assert("Each text input has an accessible name", async () => {
-        const results = await utils.testTextInputs.testEachInputHasName(page, discovery);
+        const results = await utils.testFormControls.testEachInputHasName(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
     // Assertion 2: Visible label text is included in accessible name (R - WCAG 2.5.3)
     await assert("Visible label is included in accessible name", async () => {
-        const results = await utils.testTextInputs.testLabelInName(page, discovery);
+        const results = await utils.testFormControls.testLabelInName(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
@@ -55,37 +55,37 @@ module.exports.run = async ({ page, assert, utils }) => {
 
     // Assertion 4: Helper text is programmatically associated (R - WCAG 1.3.1)
     await assert("Helper text is programmatically associated", async () => {
-        const results = await utils.testTextInputs.testHelperTextAssociated(page, discovery);
+        const results = await utils.testFormControls.testHelperTextAssociated(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
     // Assertion 5: Text inputs are keyboard focusable (R - WCAG 2.1.1)
     await assert("Text inputs are keyboard focusable", async () => {
-        const results = await utils.testTextInputs.testEachInputFocusable(page, discovery);
+        const results = await utils.testFormControls.testEachInputFocusable(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
     // Assertion 6: tests that Visual labels are defined and persistent (R - WCAG 3.3.2)
     await assert("Visual labels are defined and persistent", async () => {
-        const results = await utils.testTextInputs.testEachInputHasPersistentVisualLabel(page, discovery);
+        const results = await utils.testFormControls.testEachInputHasPersistentVisualLabel(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
     // Assertion 7: Required fields are indicated (visually and programmatically) (R - WCAG 3.3.2, 4.1.2)
     await assert("Required fields are indicated (visually and programmatically)", async () => {
-        const results = await utils.testTextInputs.testRequiredFieldsIndicated(page, discovery);
+        const results = await utils.testFormControls.testRequiredFieldsIndicated(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
     // Assertion 8: Inputs use appropriate autocomplete for purpose (R - WCAG 1.3.5)
     await assert("Inputs use appropriate autocomplete for purpose", async () => {
-        const results = await utils.testTextInputs.testIdentifyInputPurposeAutocomplete(page, discovery);
+        const results = await utils.testFormControls.testIdentifyInputPurposeAutocomplete(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 
     // Assertion 9: Placeholder text is programmatically defined as a property (R - WCAG 4.1.2)
     await assert("Placeholder text is programmatically defined as a property", async () => {
-        const results = await utils.testTextInputs.testPlaceholderTextDefined(page, discovery);
+        const results = await utils.testFormControls.testPlaceholderTextDefined(page, discovery);
         return { pass: results.passed(), message: results.getMessage() };
     });
 

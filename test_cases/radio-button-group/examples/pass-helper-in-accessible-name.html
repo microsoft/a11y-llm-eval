@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Radio Button Component Example</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each radio has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Helper text is programmatically associated": "pass",
+      "Required fields are indicated (visually and programmatically)": "pass",
+      "Each radio group has an accessible label": "pass",
+      "Each radio group is keyboard reachable": "pass",
+      "Arrow keys change the selected radio within each group": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --card: #121a33;
+      --text: #e8ecff;
+      --muted: #aab3d6;
+      --border: rgba(255,255,255,0.14);
+      --focus: #7aa2ff;
+      --accent: #5b7cfa;
+      --accent-2: #3dd6a6;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+      background: radial-gradient(1200px 800px at 15% 10%, rgba(122,162,255,0.25), transparent 55%),
+                  radial-gradient(1000px 700px at 85% 15%, rgba(61,214,166,0.18), transparent 60%),
+                  var(--bg);
+      color: var(--text);
+      line-height: 1.35;
+      padding: 40px 16px;
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    header {
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      margin: 0 0 8px;
+      letter-spacing: 0.2px;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .card {
+      margin-top: 18px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 18px 50px rgba(0,0,0,0.35);
+      backdrop-filter: blur(10px);
+    }
+
+    form {
+      display: grid;
+      gap: 16px;
+    }
+
+    .form-field {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      background: rgba(0,0,0,0.18);
+    }
+
+    .label-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .field-label {
+      font-weight: 650;
+      letter-spacing: 0.2px;
+    }
+
+    .help {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    fieldset {
+      border: 0;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 10px;
+    }
+
+    .radio {
+      display: grid;
+      grid-template-columns: 22px 1fr;
+      align-items: start;
+      gap: 10px;
+      padding: 10px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(255,255,255,0.03);
+      cursor: pointer;
+      transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+      user-select: none;
+    }
+
+    .radio:hover {
+      border-color: rgba(122,162,255,0.55);
+      background: rgba(122,162,255,0.10);
+    }
+
+    .radio:active {
+      transform: translateY(1px);
+    }
+
+    .radio input[type="radio"] {
+      margin: 2px 0 0;
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .radio strong {
+      display: block;
+      font-weight: 650;
+    }
+
+    .radio span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 0.93rem;
+    }
+
+    .radio input[type="radio"]:focus-visible {
+      outline: 3px solid rgba(122,162,255,0.35);
+      outline-offset: 3px;
+      border-radius: 999px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: flex-start;
+    }
+
+    button[type="submit"] {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: linear-gradient(180deg, rgba(91,124,250,0.95), rgba(70,102,240,0.92));
+      color: white;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-weight: 650;
+      cursor: pointer;
+      box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+      transition: transform 140ms ease, filter 140ms ease, border-color 140ms ease;
+    }
+
+    button[type="submit"]:hover {
+      filter: brightness(1.05);
+      border-color: rgba(122,162,255,0.8);
+    }
+
+    button[type="submit"]:active {
+      transform: translateY(1px);
+    }
+
+    .result {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .result code {
+      color: var(--text);
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 2px 6px;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Example: Radio Button Component</h1>
+      <p>Select one option and submit to see the chosen value.</p>
+    </header>
+
+    <div class="card">
+      <form id="demoForm" action="#" method="post">
+        <div class="form-field">
+          <div class="label-row">
+            <div class="field-label" id="planLabel">Plan</div>
+            <div class="help" id="planHelp">Choose exactly one.</div>
+          </div>
+
+          <fieldset aria-labelledby="planLabel" aria-describedby="planHelp">
+            <label class="radio">
+              <input type="radio" name="plan" value="basic" checked />
+              <div>
+                <strong>Basic</strong>
+                <span>Good for personal projects and quick tests.</span>
+              </div>
+            </label>
+
+            <label class="radio">
+              <input type="radio" name="plan" value="pro" />
+              <div>
+                <strong>Pro</strong>
+                <span>For ongoing work with extra features.</span>
+              </div>
+            </label>
+
+            <label class="radio">
+              <input type="radio" name="plan" value="team" />
+              <div>
+                <strong>Team</strong>
+                <span>Shared access and collaboration tools.</span>
+              </div>
+            </label>
+          </fieldset>
+        </div>
+
+        <div class="actions">
+          <button type="submit">Submit</button>
+        </div>
+
+        <div class="result" id="result" aria-live="polite"></div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const form = document.getElementById('demoForm');
+      const result = document.getElementById('result');
+
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        const data = new FormData(form);
+        const plan = data.get('plan');
+        result.innerHTML = plan
+          ? 'Submitted value: <code>' + String(plan) + '</code>'
+          : 'No option selected.';
+      });
+    })();
+  </script>
+</body>
+</html>

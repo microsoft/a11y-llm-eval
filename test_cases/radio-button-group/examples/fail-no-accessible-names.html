@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Unlabeled Radios</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each radio has an accessible name": "fail",
+      "Visible label is included in accessible name": "pass",
+      "Helper text is programmatically associated": "pass",
+      "Required fields are indicated (visually and programmatically)": "pass",
+      "Each radio group has an accessible label": "pass",
+      "Each radio group is keyboard reachable": "pass",
+      "Arrow keys change the selected radio within each group": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <fieldset>
+      <legend>Preferred Contact Method</legend>
+      <div>
+        <input type="radio" name="contact-method" checked />
+      </div>
+      <div>
+        <input type="radio" name="contact-method" />
+      </div>
+      <div>
+        <input type="radio" name="contact-method" />
+      </div>
+    </fieldset>
+  </form>
+</body>
+</html>
