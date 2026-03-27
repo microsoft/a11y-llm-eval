@@ -424,7 +424,9 @@ testFn.discoverRadios = async (scope) => {
             getVisualLabel(locator),
             getHelperText(locator),
             locator.isVisible(),
-            locator.evaluate((radio, idx) => {
+            locator.evaluate((radio, args) => {
+        const { idx } = args;
+        const isVisible = (node) => window.axe.commons.dom.isVisible(node, false, true);
         const normalizeText = (value) => (value || '').toString().replace(/\s+/g, ' ').trim();
 
         const getAccessibleName = (element) => {
@@ -433,14 +435,6 @@ testFn.discoverRadios = async (scope) => {
             } catch {
                 return '';
             }
-        };
-
-        const isVisible = (element) => {
-            const style = window.getComputedStyle(element);
-            if (style.visibility === 'hidden' || style.display === 'none') {
-                return false;
-            }
-            return element.getClientRects().length > 0;
         };
 
         const getNodePath = (element) => {
@@ -542,7 +536,7 @@ testFn.discoverRadios = async (scope) => {
             groupProgrammaticallyRequired,
             controlText,
         };
-            }, index),
+            }, { idx: index }),
         ]);
 
         const helperText = Array.isArray(rawHelperText)

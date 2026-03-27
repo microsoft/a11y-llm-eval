@@ -23,9 +23,7 @@ const getVisualLabel = async (el, opts = {}) => {
             SOURCE_NONE
         } = args;
 
-        function isVisible(node) {
-            return window.axe.commons.dom.isVisible(node, false, true);
-        }
+        const isVisible = (node) => window.axe.commons.dom.isVisible(node, false, true);
 
         function textOf(node) {
             if (!node) return '';
