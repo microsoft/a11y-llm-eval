@@ -27,6 +27,11 @@ module.exports.run = async ({ page, assert, utils }) => {
         return { status: results.status(), message: results.getMessage() };
     });
 
+    await assert("Visual labels are defined and persistent", async () => {
+        const results = await utils.testFormControls.testEachInputHasPersistentVisualLabel(page, discovery);
+        return { status: results.status(), message: results.getMessage() };
+    });
+
     await assert("Helper text is programmatically associated", async () => {
         const results = await utils.testFormControls.testHelperTextAssociated(page, discovery);
         return { status: results.status(), message: results.getMessage() };
