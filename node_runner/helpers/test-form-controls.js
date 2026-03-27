@@ -212,8 +212,163 @@ testFn.testEachInputHasPersistentVisualLabel = async (scope, discoveryCache) => 
 }
 
 
-// Check if any inputs appear to be required (by visual indicators in label/help)
-// and verify they have proper programmatic indication
+const hasAsteriskRequiredIndicator = (labelObj) => {
+    if (!labelObj || !labelObj.text) return false;
+    const text = labelObj.text.trim();
+    return text.startsWith('*') || text.endsWith('*');
+};
+
+const hasTextualRequiredIndicator = (rawText) => {
+    if (!rawText) return false;
+    const t = String(rawText).toLowerCase().trim();
+
+    if (/\(\s*required\s*\)/.test(t)) return true;
+    if (/\bmandatory\b/.test(t)) return true;
+    if (/\bis required\b/.test(t)) return true;
+    if (/\brequired field\b/.test(t)) return true;
+    if (/(^|\s)required[\s\.!?)]*$/.test(t)) return true;
+
+    if (/\brequired\s+(length|format|characters?|fields?|value|values|minimum|password|pattern|items?)\b/.test(t)) {
+        return false;
+    }
+
+    return false;
+};
+
+const indicatesRequiredVisually = (labelObj, options = {}) => {
+    if (!labelObj) {
+        return false;
+    }
+    if (options.excludePlaceholder && labelObj.source === SOURCE_PLACEHOLDER) {
+        return false;
+    }
+    return hasAsteriskRequiredIndicator(labelObj) || hasTextualRequiredIndicator(labelObj.text);
+};
+
+const hasRequiredHelperIndicator = (helpers) => {
+    for (const helper of helpers) {
+        if (!helper) continue;
+        if (hasAsteriskRequiredIndicator(helper) || hasTextualRequiredIndicator(helper.text)) {
+            return true;
+        }
+    }
+    return false;
+};
+
+const collectRequiredIndicatorEntries = (discovery) => {
+    const entries = [];
+    const isRadioDiscovery = Array.isArray(discovery.groups) && discovery.groups.length > 0 && discovery.inputs.every((item) => Object.prototype.hasOwnProperty.call(item, 'groupKey'));
+
+    if (isRadioDiscovery) {
+        for (const group of discovery.groups) {
+            const groupLabelIndicatesRequired = hasAsteriskRequiredIndicator({ text: group.groupLabel }) || hasTextualRequiredIndicator(group.groupLabel);
+
+            let radioLevelVisualIndicator = false;
+            for (const radio of group.radios) {
+                if (indicatesRequiredVisually(radio.visualLabel) || hasRequiredHelperIndicator(Array.isArray(radio.helperText) ? radio.helperText : (radio.helperText ? [radio.helperText] : []))) {
+                    radioLevelVisualIndicator = true;
+                    break;
+                }
+            }
+
+            entries.push({
+                locator: group.radios[0]?.locator,
+                hasVisualIndicator: groupLabelIndicatesRequired || radioLevelVisualIndicator,
+                hasProgrammaticIndicator: !!group.programmaticallyRequired || group.radios.some((radio) => radio.programmaticallyRequired),
+                visualMissingMessage: "Radio group is programmatically required but has no visual required indicator",
+                programmaticMissingMessage: "Radio group appears visually required but has no programmatic required indicator",
+            });
+        }
+
+        return entries;
+    }
+
+    for (const item of discovery.inputs) {
+        const helpers = Array.isArray(item.helperText)
+            ? item.helperText
+            : (item.helperText ? [item.helperText] : []);
+
+        entries.push({
+            locator: item.locator,
+            hasVisualIndicator: indicatesRequiredVisually(item.visualLabel, { excludePlaceholder: true }) || hasRequiredHelperIndicator(helpers),
+            hasProgrammaticIndicator: !!item.programmaticallyRequired,
+            visualMissingMessage: "Input is programmatically required but has no visual required indicator",
+            programmaticMissingMessage: "Input appears visually required but has no programmatic required indicator",
+        });
+    }
+
+    return entries;
+};
+
+testFn.testRequiredFieldsIndicatedVisually = async (scope, discoveryCache) => {
+    let results = new detailedResults();
+    const d = discoveryCache || await discover(scope);
+    const count = d.inputs.length;
+
+    if (count === 0) {
+        results.addMessage("No text inputs found in scope");
+        return results;
+    }
+
+    const entries = collectRequiredIndicatorEntries(d);
+    let applicable = 0;
+
+    for (const entry of entries) {
+        if (!entry.hasProgrammaticIndicator && !entry.hasVisualIndicator) {
+            continue;
+        }
+        applicable++;
+        if (entry.hasVisualIndicator) {
+            results.addPass(entry.locator);
+        } else {
+            results.addFail(entry.locator);
+            results.addMessage(entry.visualMissingMessage);
+        }
+    }
+
+    if (applicable === 0) {
+        results.addMessage("No programmatically required fields found");
+        results.forceNotApplicable();
+    }
+
+    return results;
+};
+
+testFn.testRequiredFieldsIndicatedProgrammatically = async (scope, discoveryCache) => {
+    let results = new detailedResults();
+    const d = discoveryCache || await discover(scope);
+    const count = d.inputs.length;
+
+    if (count === 0) {
+        results.addMessage("No text inputs found in scope");
+        return results;
+    }
+
+    const entries = collectRequiredIndicatorEntries(d);
+    let applicable = 0;
+
+    for (const entry of entries) {
+        if (!entry.hasVisualIndicator && !entry.hasProgrammaticIndicator) {
+            continue;
+        }
+        applicable++;
+        if (entry.hasProgrammaticIndicator) {
+            results.addPass(entry.locator);
+        } else {
+            results.addFail(entry.locator);
+            results.addMessage(entry.programmaticMissingMessage);
+        }
+    }
+
+    if (applicable === 0) {
+        results.addMessage("No visually required fields found");
+        results.forceNotApplicable();
+    }
+
+    return results;
+};
+
+// Backward-compatible combined helper retained for callers that still want the previous single assertion.
 testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
     let results = new detailedResults();
     const d = discoveryCache || await discover(scope);
@@ -224,135 +379,26 @@ testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
         return results;
     }
 
-    // Helper to detect an asterisk at start or end of a label
-    const hasAsteriskRequiredIndicator = (labelObj) => {
-        if (!labelObj || !labelObj.text) return false;
-        const text = labelObj.text.trim();
-        // Allow optional punctuation/colon around the asterisk
-        return text.startsWith('*') || text.endsWith('*');
-    };
+    const entries = collectRequiredIndicatorEntries(d);
+    let applicable = 0;
 
-    // Helper to detect textual indicators for required while avoiding content descriptions
-    const hasTextualRequiredIndicator = (rawText) => {
-        if (!rawText) return false;
-        const t = String(rawText).toLowerCase().trim();
-
-        // Strong signals first
-        if (/\(\s*required\s*\)/.test(t)) return true; // '(required)'
-        if (/\bmandatory\b/.test(t)) return true;        // 'mandatory'
-
-        // Phrases that indicate the field itself is required
-        if (/\bis required\b/.test(t)) return true;      // 'is required'
-        if (/\brequired field\b/.test(t)) return true;   // 'required field'
-
-        // Trailing 'required' at the end of the string (optionally with punctuation)
-        if (/(^|\s)required[\s\.!?)]*$/.test(t)) return true;
-
-        // Avoid cases like 'required length', 'required format', etc., where 'required'
-        // describes the content rather than the field requirement.
-        if (/\brequired\s+(length|format|characters?|fields?|value|values|minimum|password|pattern|items?)\b/.test(t)) {
-            return false;
+    for (const entry of entries) {
+        if (!entry.hasVisualIndicator && !entry.hasProgrammaticIndicator) {
+            continue;
         }
-
-        return false;
-    };
-
-    let visuallyRequiredCount = 0;
-    let programmaticallyRequiredCount = 0;
-
-    const isRadioDiscovery = Array.isArray(d.groups) && d.groups.length > 0 && d.inputs.every((item) => Object.prototype.hasOwnProperty.call(item, 'groupKey'));
-
-    if (isRadioDiscovery) {
-        for (const group of d.groups) {
-            const groupLabelIndicatesRequired = hasAsteriskRequiredIndicator({ text: group.groupLabel }) || hasTextualRequiredIndicator(group.groupLabel);
-
-            let radioLevelVisualIndicator = false;
-            for (const radio of group.radios) {
-                if (hasAsteriskRequiredIndicator(radio.visualLabel) || hasTextualRequiredIndicator(radio.visualLabel?.text)) {
-                    radioLevelVisualIndicator = true;
-                    break;
-                }
-
-                const helpers = Array.isArray(radio.helperText)
-                    ? radio.helperText
-                    : (radio.helperText ? [radio.helperText] : []);
-
-                for (const helper of helpers) {
-                    if (hasAsteriskRequiredIndicator(helper) || hasTextualRequiredIndicator(helper?.text)) {
-                        radioLevelVisualIndicator = true;
-                        break;
-                    }
-                }
-
-                if (radioLevelVisualIndicator) {
-                    break;
-                }
+        applicable++;
+        if (entry.hasVisualIndicator && entry.hasProgrammaticIndicator) {
+            results.addPass(entry.locator);
+        } else {
+            results.addFail(entry.locator);
+            if (entry.hasProgrammaticIndicator && !entry.hasVisualIndicator) {
+                results.addMessage(entry.visualMissingMessage);
             }
-
-            const hasVisualIndicator = groupLabelIndicatesRequired || radioLevelVisualIndicator;
-            const hasProgrammaticIndicator = !!group.programmaticallyRequired || group.radios.some((radio) => radio.programmaticallyRequired);
-
-            if (hasVisualIndicator) {
-                visuallyRequiredCount++;
-                if (hasProgrammaticIndicator) {
-                    results.addPass(group.radios[0]?.locator);
-                } else {
-                    results.addFail(group.radios[0]?.locator);
-                }
-            } else if (hasProgrammaticIndicator) {
-                programmaticallyRequiredCount++;
-                results.addFail(group.radios[0]?.locator);
-                results.addMessage("Radio group is programmatically required but has no visual required indicator");
-            }
-        }
-
-        if (visuallyRequiredCount === 0 && programmaticallyRequiredCount === 0) {
-            results.addMessage("No visually required fields found");
-            results.forceNotApplicable();
-        }
-
-        return results;
-    }
-
-    for (const item of d.inputs) {
-        const isProgrammaticallyRequired = item.programmaticallyRequired;
-        const label = item.visualLabel;
-        const helpers = Array.isArray(item.helperText)
-            ? item.helperText
-            : (item.helperText ? [item.helperText] : []);
-
-        // Determine if this field looks required based on the label/help text
-        const labelIndicatesRequired = hasAsteriskRequiredIndicator(label) || hasTextualRequiredIndicator(label?.text);
-
-        let helpTextIndicatesRequired = false;
-        for (const h of helpers) {
-            if (!h) continue;
-            if (hasAsteriskRequiredIndicator(h) || hasTextualRequiredIndicator(h.text)) {
-                helpTextIndicatesRequired = true;
-                break;
-            }
-        }
-        const hasVisualIndicator = labelIndicatesRequired || helpTextIndicatesRequired;
-
-        if (hasVisualIndicator) {
-            visuallyRequiredCount++;
-            if (isProgrammaticallyRequired) {
-                results.addPass(item.locator);
-            } else {
-                results.addFail(item.locator);
-            }
-        } else if (isProgrammaticallyRequired) {
-            programmaticallyRequiredCount++;
-            // Programmatically required but no visual indicator
-            results.addFail(item.locator);
-            results.addMessage("Input is programmatically required but has no visual required indicator");
         }
     }
 
-    // If fields appear required visually, they should be programmatically indicated
-    // If no visually required fields, we pass (nothing to check)
-    if (visuallyRequiredCount === 0 && programmaticallyRequiredCount === 0) {
-        results.addMessage("No visually required fields found");
+    if (applicable === 0) {
+        results.addMessage("No required fields found");
         results.forceNotApplicable();
     }
 

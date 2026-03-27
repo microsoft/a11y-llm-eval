@@ -37,8 +37,13 @@ module.exports.run = async ({ page, assert, utils }) => {
         return { status: results.status(), message: results.getMessage() };
     });
 
-    await assert("Required fields are indicated (visually and programmatically)", async () => {
-        const results = await utils.testFormControls.testRequiredFieldsIndicated(page, discovery);
+    await assert("Required fields are indicated visually", async () => {
+        const results = await utils.testFormControls.testRequiredFieldsIndicatedVisually(page, discovery);
+        return { status: results.status(), message: results.getMessage() };
+    });
+
+    await assert("Required fields are indicated programmatically", async () => {
+        const results = await utils.testFormControls.testRequiredFieldsIndicatedProgrammatically(page, discovery);
         return { status: results.status(), message: results.getMessage() };
     });
 

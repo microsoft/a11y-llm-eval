@@ -71,19 +71,25 @@ module.exports.run = async ({ page, assert, utils }) => {
         return { pass: results.passed(), message: results.getMessage() };
     });
 
-    // Assertion 7: Required fields are indicated (visually and programmatically) (R - WCAG 3.3.2, 4.1.2)
-    await assert("Required fields are indicated (visually and programmatically)", async () => {
-        const results = await utils.testFormControls.testRequiredFieldsIndicated(page, discovery);
+    // Assertion 7: Programmatically required fields are indicated visually (R - WCAG 3.3.2)
+    await assert("Required fields are indicated visually", async () => {
+        const results = await utils.testFormControls.testRequiredFieldsIndicatedVisually(page, discovery);
         return { status: results.status(), message: results.getMessage() };
     });
 
-    // Assertion 8: Inputs use appropriate autocomplete for purpose (R - WCAG 1.3.5)
+    // Assertion 8: Visually required fields are indicated programmatically (R - WCAG 4.1.2)
+    await assert("Required fields are indicated programmatically", async () => {
+        const results = await utils.testFormControls.testRequiredFieldsIndicatedProgrammatically(page, discovery);
+        return { status: results.status(), message: results.getMessage() };
+    });
+
+    // Assertion 9: Inputs use appropriate autocomplete for purpose (R - WCAG 1.3.5)
     await assert("Inputs use appropriate autocomplete for purpose", async () => {
         const results = await utils.testFormControls.testIdentifyInputPurposeAutocomplete(page, discovery);
         return { status: results.status(), message: results.getMessage() };
     });
 
-    // Assertion 9: Placeholder text is programmatically defined as a property (R - WCAG 4.1.2)
+    // Assertion 10: Placeholder text is programmatically defined as a property (R - WCAG 4.1.2)
     await assert("Placeholder text is programmatically defined as a property", async () => {
         const results = await utils.testFormControls.testPlaceholderTextDefined(page, discovery);
         return { status: results.status(), message: results.getMessage() };

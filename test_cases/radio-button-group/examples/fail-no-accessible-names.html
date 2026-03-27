@@ -10,7 +10,8 @@
       "Visible label is included in accessible name": "na",
       "Visual labels are defined and persistent": "fail",
       "Helper text is programmatically associated": "na",
-      "Required fields are indicated (visually and programmatically)": "na",
+      "Required fields are indicated visually": "fail",
+      "Required fields are indicated programmatically": "pass",
       "Each radio group has an accessible label": "pass",
       "Each radio group is keyboard reachable": "pass",
       "Arrow keys change the selected radio within each group": "pass",
@@ -23,7 +24,7 @@
     <fieldset>
       <legend>Preferred Contact Method</legend>
       <div>
-        <input type="radio" name="contact-method" checked />
+        <input type="radio" name="contact-method" checked required />
       </div>
       <div>
         <input type="radio" name="contact-method" />
