@@ -89,7 +89,7 @@ tbody td, tbody th {
 }
 tbody tr:last-child td, tbody tr:last-child th { border-bottom: none; }
 tbody tr:nth-child(even) { background: rgba(15, 23, 42, 0.04); }
-.badge-pass, .badge-fail {
+.badge-pass, .badge-fail, .badge-na {
   display: inline-flex;
   align-items: center;
   font-weight: 600;
@@ -100,6 +100,7 @@ tbody tr:nth-child(even) { background: rgba(15, 23, 42, 0.04); }
 }
 .badge-pass { background: var(--pass); color: var(--text-on-accent); }
 .badge-fail { background: var(--fail); color: var(--text-on-accent); }
+.badge-na { background: var(--warn); color: #1f2937; }
 code { font-size: 0.85rem; background: var(--surface-muted); padding: 0.1rem 0.35rem; border-radius: 0.35rem; }
 details {
   border: 1px solid var(--border-subtle);
@@ -457,7 +458,8 @@ details li { margin-bottom: 0.35rem; }
             <th>Assertion</th>
             <th>Type</th>
             <th>Failure rate</th>
-            <th>Failures / total</th>
+            <th>Failures / applicable</th>
+            <th>Not applicable</th>
           </tr>
         </thead>
         <tbody>
@@ -465,8 +467,9 @@ details li { margin-bottom: 0.35rem; }
           <tr>
             <th>{{ a.name }}</th>
             <td>{{ a.type }}</td>
-            <td>{{ "%.0f%%"|format(a.fail_rate * 100) }}</td>
-            <td>{{ a.fail_count }} / {{ a.total }}</td>
+            <td>{% if a.fail_rate is not none %}{{ "%.0f%%"|format(a.fail_rate * 100) }}{% else %}-{% endif %}</td>
+            <td>{{ a.fail_count }} / {{ a.applicable_total }}</td>
+            <td>{{ a.na_count }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -525,6 +528,7 @@ details li { margin-bottom: 0.35rem; }
   <ul>
     <li><strong>Rank</strong>: The position of the model when sorted by WCAG Pass Rate (lower is better).</li>
     <li><strong>WCAG Pass Rate</strong>: The percentage of samples that passed all WCAG tests, including both axe-core WCAG checks and custom WCAG assertions. This does not include best practices.</li>
+    <li><strong>Not applicable assertion</strong>: An assertion result that indicates a check did not apply to that sample. It is tracked at the assertion level and does not change the sample-level pass-rate denominator.</li>
     <li><strong>Avg Total WCAG Failures</strong>: The average number of total WCAG failures (axe-core + assertions) per sample for the model. This does not include best practices.</li>
     <li><strong>Avg Axe WCAG Failures</strong>: The average number of axe-core detected WCAG failures per sample for the model. This does not include best practices.</li>
     <li><strong>Avg Assertion WCAG Failures</strong>: The average number of custom WCAG assertion failures per sample for the model. This does not include best practices.</li>
@@ -932,6 +936,7 @@ details li { margin-bottom: 0.35rem; }
           <option value="">All results</option>
           <option value="pass">Pass</option>
           <option value="fail">Fail</option>
+          <option value="na">Not applicable</option>
         </select>
       </label>
       <button type="button" class="assertion-reset-filters">Reset</button>
@@ -965,7 +970,7 @@ details li { margin-bottom: 0.35rem; }
               <table>
                 <thead><tr>{% for k,v in agg.pass_at_k.items() %}<th>pass@{{ k }}</th>{% endfor %}</tr></thead>
                 <tbody><tr>{% for k,v in agg.pass_at_k.items() %}
-                  <td class="pass-at-k-cell" data-pass-at-k="{{ k }}" data-pass="{{ '%.4f'|format(v) }}">{{ '%.0f%%'|format(v * 100) }}</td>
+                  <td class="pass-at-k-cell" data-pass-at-k="{{ k }}" data-pass="{% if agg.n_samples %}{{ '%.4f'|format(v) }}{% endif %}">{% if agg.n_samples %}{{ '%.0f%%'|format(v * 100) }}{% else %}-{% endif %}</td>
                 {% endfor %}</tr></tbody>
               </table>
               {% set _percent = (100.0 * (agg.n_pass / agg.n_samples)) if agg.n_samples else 0 %}
@@ -1009,6 +1014,8 @@ details li { margin-bottom: 0.35rem; }
               Assertions
               {% if r.test_function.status == "fail" %}
                 <span role="img" aria-label="Fail">❌</span>
+              {% elif r.test_function.status == "na" %}
+                <span role="img" aria-label="Not applicable">➖</span>
               {% elif r.test_function.status == "pass" %}
                 <span role="img" aria-label="Pass">✅</span>
               {% endif %}
@@ -1018,6 +1025,8 @@ details li { margin-bottom: 0.35rem; }
               <li data-assertion-name="{{ a.name|e }}" data-assertion-status="{{ a.status|e }}">
                 {% if a.status == "fail" %}
                   <span role="img" aria-label="Fail">❌</span>:
+                {% elif a.status == "na" %}
+                  <span role="img" aria-label="Not applicable">➖</span>:
                 {% elif a.status == "pass" %}
                   <span role="img" aria-label="Pass">✅</span>:
                 {% endif %}
@@ -1547,7 +1556,8 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
 
   assertion_stats_by_test = defaultdict(lambda: defaultdict(lambda: {
     "fail": 0,
-    "total": 0,
+    "applicable_total": 0,
+    "na": 0,
     "type": "R",
   }))
 
@@ -1581,7 +1591,10 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         continue
       atype = (a.get("type") or "R").upper()
       a_stats = assertion_stats_by_test[test_name][name]
-      a_stats["total"] += 1
+      if a.get("status") == "na":
+        a_stats["na"] += 1
+      else:
+        a_stats["applicable_total"] += 1
       if a.get("status") == "fail":
         a_stats["fail"] += 1
       a_stats["type"] = atype
@@ -1633,6 +1646,7 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
       "pass_rate": s["total_passes"] / s["total"] if s["total"] else 0,
       "total_cost": total_cost,
       "avg_cost": avg_cost,
+      "n_generated": s["total"],
       "total_assertion_failures": total_assertion_failures,
       "total_assertion_bp_failures": total_assertion_bp_failures,
       "avg_assertion_failures": avg_assertion_failures,
@@ -1800,7 +1814,7 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
       return {"total": total, "rules": out}
 
     def _compute_assertion_stats(sub_results):
-      by_test = defaultdict(lambda: defaultdict(lambda: {"total": 0, "fail": 0, "type": "R"}))
+      by_test = defaultdict(lambda: defaultdict(lambda: {"applicable_total": 0, "fail": 0, "na": 0, "type": "R"}))
       for rr in (sub_results or []):
         test_name = rr.get("test_name")
         if not test_name:
@@ -1812,11 +1826,14 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
             continue
           typ = (a.get("type") or "R").upper()
           status = a.get("status")
-          if status not in ("pass", "fail"):
+          if status not in ("pass", "fail", "na"):
             continue
           s = by_test[test_name][name]
           s["type"] = typ
-          s["total"] += 1
+          if status == "na":
+            s["na"] += 1
+          else:
+            s["applicable_total"] += 1
           if status == "fail":
             s["fail"] += 1
       return by_test
@@ -1947,12 +1964,14 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         assertion_names = sorted(set(c_map.keys()) | set(v_map.keys()))
         rows = []
         for assertion_name in assertion_names:
-          c = c_map.get(assertion_name) or {"total": 0, "fail": 0, "type": "R"}
-          v = v_map.get(assertion_name) or {"total": 0, "fail": 0, "type": c.get("type") or "R"}
-          c_total = int(c.get("total") or 0)
-          v_total = int(v.get("total") or 0)
+          c = c_map.get(assertion_name) or {"applicable_total": 0, "fail": 0, "na": 0, "type": "R"}
+          v = v_map.get(assertion_name) or {"applicable_total": 0, "fail": 0, "na": 0, "type": c.get("type") or "R"}
+          c_total = int(c.get("applicable_total") or 0)
+          v_total = int(v.get("applicable_total") or 0)
           c_fail = int(c.get("fail") or 0)
           v_fail = int(v.get("fail") or 0)
+          c_na = int(c.get("na") or 0)
+          v_na = int(v.get("na") or 0)
           c_fail_rate = (c_fail / c_total) if c_total else None
           v_fail_rate = (v_fail / v_total) if v_total else None
           delta_fail_rate = (v_fail_rate - c_fail_rate) if (c_fail_rate is not None and v_fail_rate is not None) else None
@@ -1962,9 +1981,11 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
             "type": (v.get("type") or c.get("type") or "R"),
             "control_total": c_total,
             "control_fail_count": c_fail,
+            "control_na_count": c_na,
             "control_fail_rate": c_fail_rate,
             "variant_total": v_total,
             "variant_fail_count": v_fail,
+            "variant_na_count": v_na,
             "variant_fail_rate": v_fail_rate,
             "delta_fail_rate": delta_fail_rate,
           }
@@ -2234,17 +2255,18 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
   for test_name, assertions in assertion_stats_by_test.items():
     rows = []
     for name, s in assertions.items():
-      if not s["total"]:
+      if not s["applicable_total"] and not s["na"]:
         continue
-      fail_rate = s["fail"] / s["total"]
+      fail_rate = (s["fail"] / s["applicable_total"]) if s["applicable_total"] else None
       rows.append({
         "name": name,
         "type": s.get("type") or "R",
         "fail_rate": fail_rate,
         "fail_count": s["fail"],
-        "total": s["total"],
+        "applicable_total": s["applicable_total"],
+        "na_count": s["na"],
       })
-    rows.sort(key=lambda x: (-x["fail_rate"], -x["fail_count"], x["name"]))
+    rows.sort(key=lambda x: (-(x["fail_rate"] if x["fail_rate"] is not None else -1.0), -x["fail_count"], -x["na_count"], x["name"]))
     analysis_assertions_by_test[test_name] = rows[:5]
 
   html = Template(TEMPLATE).render(

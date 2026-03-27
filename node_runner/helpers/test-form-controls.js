@@ -45,6 +45,7 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
     let results = new detailedResults();
     const d = discoveryCache || await discover(scope);
     const count = d.inputs.length;
+    let applicable = 0;
 
     if (count === 0) {
         results.addMessage("No text inputs found in scope");
@@ -77,6 +78,8 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
             continue; // no meaningful helper text to check
         }
 
+        applicable++;
+
         const hasProgrammaticAssociation = meaningfulHelpers.some(h =>
             h && (h.source === SOURCE_ARIA_DESCRIBEDBY || h.source === SOURCE_TITLE)
         );
@@ -90,6 +93,11 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
             results.addFail(item.locator);
             results.addMessage("Found `" + combinedHelperText + "`");
         }
+    }
+
+    if (applicable === 0) {
+        results.addMessage("No meaningful helper text found");
+        results.forceNotApplicable();
     }
 
     return results;
@@ -173,7 +181,7 @@ testFn.testPlaceholderTextDefined = async (scope, discoveryCache) => {
 
     if (applicable === 0) {
         results.addMessage("No placeholder text present on text inputs");
-        results.forcePass();
+        results.forceNotApplicable();
     }
 
     return results;
@@ -300,7 +308,7 @@ testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
 
         if (visuallyRequiredCount === 0 && programmaticallyRequiredCount === 0) {
             results.addMessage("No visually required fields found");
-            results.forcePass();
+            results.forceNotApplicable();
         }
 
         return results;
@@ -345,7 +353,7 @@ testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
     // If no visually required fields, we pass (nothing to check)
     if (visuallyRequiredCount === 0 && programmaticallyRequiredCount === 0) {
         results.addMessage("No visually required fields found");
-        results.forcePass();
+        results.forceNotApplicable();
     }
 
     return results;
@@ -401,7 +409,7 @@ testFn.testLabelInName = async (scope, discoveryCache) => {
 
     if (applicable === 0) {
         results.addMessage("No inputs with visible text labels applicable to 2.5.3");
-        results.forcePass();
+        results.forceNotApplicable();
     }
 
     return results;
@@ -762,7 +770,7 @@ testFn.testIdentifyInputPurposeAutocomplete = async (scope, discoveryCache) => {
 
     if (applicable === 0) {
         results.addMessage("No inputs with recognizable purpose to check 1.3.5");
-        results.forcePass();
+        results.forceNotApplicable();
     }
 
     return results;

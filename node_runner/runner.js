@@ -73,14 +73,23 @@ async function main() {
         if (!['R','BP'].includes(normalizedType)) normalizedType = 'R';
         try {
           const r = await fn();
-          // Allow boolean or object { pass, message }
-          let passVal = r;
+          // Allow boolean, object { pass, message }, or object { status, message }
+          let status;
           let message;
-          if (r && typeof r === 'object' && 'pass' in r) {
-            passVal = r.pass;
+          if (r && typeof r === 'object' && 'status' in r) {
+            status = String(r.status || '').toLowerCase();
             message = r.message;
+          } else if (r && typeof r === 'object' && 'pass' in r) {
+            status = r.pass ? 'pass' : 'fail';
+            message = r.message;
+          } else {
+            status = r ? 'pass' : 'fail';
           }
-          collected.push({ name, status: passVal ? 'pass' : 'fail', message, type: normalizedType });
+
+          if (!['pass', 'fail', 'na'].includes(status)) {
+            status = 'fail';
+          }
+          collected.push({ name, status, message, type: normalizedType });
         } catch (e) {
           collected.push({ name, status: 'fail', message: e.message, type: normalizedType });
         }
@@ -98,12 +107,16 @@ async function main() {
       const hasAssertionFailure = collected.some(a => a.type === 'R' && a.status === 'fail');
       const totalAssertionFailures = collected.filter(a => a.type === 'R' && a.status === 'fail').length;
       const totalAssertionBpFailures = collected.filter(a => a.type === 'BP' && a.status === 'fail').length;
+      const totalAssertionNA = collected.filter(a => a.type === 'R' && a.status === 'na').length;
+      const totalAssertionBpNA = collected.filter(a => a.type === 'BP' && a.status === 'na').length;
       testFunctionResult = {
         status: hasAssertionFailure ? 'fail' : 'pass',
         assertions: collected,
         duration_ms,
         total_assertion_failures: totalAssertionFailures,
-        total_assertion_bp_failures: totalAssertionBpFailures
+        total_assertion_bp_failures: totalAssertionBpFailures,
+        total_assertion_na: totalAssertionNA,
+        total_assertion_bp_na: totalAssertionBpNA
       };
     }
 

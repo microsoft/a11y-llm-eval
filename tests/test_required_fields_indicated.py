@@ -10,48 +10,48 @@ CASES = [
     (
         'asterisk_end_pass',
         '<label for="i">Name*</label><input id="i" type="text" aria-required="true">',
-        True,
+        'pass',
     ),
     (
         'asterisk_start_pass',
         '<label for="i">* Email</label><input id="i" type="text" required>',
-        True,
+        'pass',
     ),
     (
         'help_required_phrase_pass',
         '<div class="form-field"><label for="i">Phone</label><input id="i" type="text" required><span class="hint">This field is required.</span></div>',
-        True,
+        'pass',
     ),
     (
         'content_required_ignored',
         '<div class="form-field"><label for="i">Expiration</label><input id="i" type="text"><span class="hint">Required format: MM/YYYY</span></div>',
-        True,  # no visual required indicator should be detected; passes with forcePass
+        'na',
     ),
     (
         'asterisk_but_no_attr_fail',
         '<label for="i">Name*</label><input id="i" type="text">',
-        False,
+        'fail',
     ),
     (
         'label_required_word_fail',
         '<label for="i">Phone (required)</label><input id="i" type="text">',
-        False,
+        'fail',
     ),
     (
         'no_visual_indicators_pass',
         '<label for="i">Full Name</label><input id="i" type="text">',
-        True,
+        'na',
     ),
     (
         'in_placeholder_fail',
         '<label for="i">Full Name</label><input id="i" type="text" placeholder="Required">',
-        False,
+        'fail',
     ),
 ]
 
 
-@pytest.mark.parametrize('name,html_snippet,expected_pass', CASES, ids=[c[0] for c in CASES])
-def test_required_fields_indicated(name, html_snippet, expected_pass, tmp_path):
+@pytest.mark.parametrize('name,html_snippet,expected_status', CASES, ids=[c[0] for c in CASES])
+def test_required_fields_indicated(name, html_snippet, expected_status, tmp_path):
     # Build a minimal HTML document containing the snippet
     html = f'<!doctype html><html><head><meta charset="utf-8"></head><body>{html_snippet}</body></html>'
 
@@ -63,9 +63,9 @@ const testFormControls = require({helper_path_js});
 module.exports.run = async ({{page, assert}}) => {{
     const results = await testFormControls.testRequiredFieldsIndicated(page);
     await assert('required-indicated', () => {{
-        const pass = !!(results && typeof results.passed === 'function' ? results.passed() : false);
+        const status = results && typeof results.status === 'function' ? results.status() : (results && typeof results.passed === 'function' && results.passed() ? 'pass' : 'fail');
         const message = results && typeof results.getMessage === 'function' ? results.getMessage() : '';
-        return {{ pass, message }};
+        return {{ status, message }};
     }});
 }};
 """
@@ -90,9 +90,7 @@ module.exports.run = async ({{page, assert}}) => {{
             break
 
     assert found is not None, f"No 'required-indicated' assertion in runner output: {result}"
-    if expected_pass and found.get('status') != 'pass':
+    if found.get('status') != expected_status:
         actual = (found.get('message') or '').strip().lower()
-        pytest.fail(f"Case {name!r} expected to pass, but failed. Message: '{actual}'")
-    if not expected_pass and found.get('status') != 'fail':
-        pytest.fail(f"Case {name!r} expected to fail, but passed.")
+        pytest.fail(f"Case {name!r} expected status {expected_status!r}, but got {found.get('status')!r}. Message: '{actual}'")
  

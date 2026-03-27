@@ -24,17 +24,17 @@ module.exports.run = async ({ page, assert, utils }) => {
 
     await assert("Visible label is included in accessible name", async () => {
         const results = await utils.testFormControls.testLabelInName(page, discovery);
-        return { pass: results.passed(), message: results.getMessage() };
+        return { status: results.status(), message: results.getMessage() };
     });
 
     await assert("Helper text is programmatically associated", async () => {
         const results = await utils.testFormControls.testHelperTextAssociated(page, discovery);
-        return { pass: results.passed(), message: results.getMessage() };
+        return { status: results.status(), message: results.getMessage() };
     });
 
     await assert("Required fields are indicated (visually and programmatically)", async () => {
         const results = await utils.testFormControls.testRequiredFieldsIndicated(page, discovery);
-        return { pass: results.passed(), message: results.getMessage() };
+        return { status: results.status(), message: results.getMessage() };
     });
 
     await assert("Each radio group has an accessible label", async () => {

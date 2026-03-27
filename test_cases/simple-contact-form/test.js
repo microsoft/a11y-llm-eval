@@ -19,7 +19,7 @@ module.exports.run = async ({ page, assert, utils }) => {
     // Assertion 2: Visible label text is included in accessible name (R - WCAG 2.5.3)
     await assert("Visible label is included in accessible name", async () => {
         const results = await utils.testFormControls.testLabelInName(page, discovery);
-        return { pass: results.passed(), message: results.getMessage() };
+        return { status: results.status(), message: results.getMessage() };
     });
 
     // Assertion 3: Each text input has textbox role (R - WCAG 4.1.2)
@@ -56,7 +56,7 @@ module.exports.run = async ({ page, assert, utils }) => {
     // Assertion 4: Helper text is programmatically associated (R - WCAG 1.3.1)
     await assert("Helper text is programmatically associated", async () => {
         const results = await utils.testFormControls.testHelperTextAssociated(page, discovery);
-        return { pass: results.passed(), message: results.getMessage() };
+        return { status: results.status(), message: results.getMessage() };
     });
 
     // Assertion 5: Text inputs are keyboard focusable (R - WCAG 2.1.1)
@@ -74,19 +74,19 @@ module.exports.run = async ({ page, assert, utils }) => {
     // Assertion 7: Required fields are indicated (visually and programmatically) (R - WCAG 3.3.2, 4.1.2)
     await assert("Required fields are indicated (visually and programmatically)", async () => {
         const results = await utils.testFormControls.testRequiredFieldsIndicated(page, discovery);
-        return { pass: results.passed(), message: results.getMessage() };
+        return { status: results.status(), message: results.getMessage() };
     });
 
     // Assertion 8: Inputs use appropriate autocomplete for purpose (R - WCAG 1.3.5)
     await assert("Inputs use appropriate autocomplete for purpose", async () => {
         const results = await utils.testFormControls.testIdentifyInputPurposeAutocomplete(page, discovery);
-        return { pass: results.passed(), message: results.getMessage() };
+        return { status: results.status(), message: results.getMessage() };
     });
 
     // Assertion 9: Placeholder text is programmatically defined as a property (R - WCAG 4.1.2)
     await assert("Placeholder text is programmatically defined as a property", async () => {
         const results = await utils.testFormControls.testPlaceholderTextDefined(page, discovery);
-        return { pass: results.passed(), message: results.getMessage() };
+        return { status: results.status(), message: results.getMessage() };
     });
 
     return {}; // assertions collected via injected assert

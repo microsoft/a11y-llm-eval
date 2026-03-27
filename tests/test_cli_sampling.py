@@ -222,3 +222,87 @@ def test_bp_failure_not_affect_requirement_pass(monkeypatch, tmp_path):
     assert eval_result.exit_code == 0, eval_result.output
     data = json.loads((latest / "results.json").read_text(encoding="utf-8"))
     assert data["results"][0]["result"] == "PASS"
+
+
+def test_requirement_na_does_not_change_sample_or_aggregate_pass_semantics(monkeypatch, tmp_path):
+    def gen_html(model, prompt, iteration, temperature=None, seed=None, disable_cache=False):
+        status_comment = f"<!-- seed:{seed} -->" if seed is not None else ""
+        return f"<html><body>{status_comment}</body></html>", {
+            "cached": False,
+            "latency_s": 0.01,
+            "prompt_hash": "hash",
+            "cost_usd": 0.0001,
+            "seed": seed,
+            "temperature": temperature,
+        }
+
+    def run(html, test_js_path, screenshot_path):
+        import re
+        m = re.search(r"seed:(\d+)", html)
+        seed = int(m.group(1)) if m else 0
+        if seed in {200, 201}:
+            return {
+                "testFunctionResult": {
+                    "status": "pass",
+                    "assertions": [{"name": "req", "status": "na", "type": "R"}],
+                    "duration_ms": 1,
+                    "total_assertion_na": 1,
+                },
+                "axeResult": {"failure_count": 0, "failures": []},
+            }
+        status = "pass" if seed == 202 else "fail"
+        return {
+            "testFunctionResult": {
+                "status": status,
+                "assertions": [{"name": "req", "status": status, "type": "R"}],
+                "duration_ms": 1,
+            },
+            "axeResult": {"failure_count": 0, "failures": []},
+        }
+
+    monkeypatch.setattr("a11y_llm_tests.generator.generate_html_with_meta", gen_html)
+    monkeypatch.setattr("a11y_llm_tests.node_bridge.run", run)
+
+    tc_dir = tmp_path / "test_cases" / "na-case"
+    tc_dir.mkdir(parents=True)
+    (tc_dir / "prompt.md").write_text("Prompt", encoding="utf-8")
+    (tc_dir / "test.js").write_text("module.exports=()=>{}", encoding="utf-8")
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir(exist_ok=True)
+    (config_dir / "models.yaml").write_text("""models:\n  - name: model-na\n""", encoding="utf-8")
+
+    runner_cli = CliRunner()
+    gen_result = runner_cli.invoke(app, [
+        "run",
+        "--models-file", str(config_dir / "models.yaml"),
+        "--out", str(tmp_path / "runs"),
+        "--test-cases-dir", str(tmp_path / "test_cases"),
+        "--samples", "4",
+        "--k", "1,2",
+        "--base-seed", "200",
+        "--processes", "1",
+    ])
+    assert gen_result.exit_code == 0, gen_result.output
+    latest = sorted((tmp_path / "runs").iterdir())[-1]
+    eval_result = runner_cli.invoke(app, [
+        "evaluate",
+        str(latest),
+        "--test-cases-dir", str(tmp_path / "test_cases"),
+        "--k", "1,2",
+        "--processes", "1",
+        "--no-generate-report",
+        "--processes", "1",
+    ])
+    assert eval_result.exit_code == 0, eval_result.output
+    data = json.loads((latest / "results.json").read_text(encoding="utf-8"))
+    agg = data["aggregates"][0]
+    assert agg["n_samples"] == 4
+    assert agg["n_applicable"] == 4
+    assert agg["n_not_applicable"] == 0
+    assert agg["n_pass"] == 3
+    assert agg["pass_at_k"]["1"] == 0.75
+    assert agg["pass_at_k"]["2"] == 1.0
+    na_results = [r for r in data["results"] if r["test_function"].get("total_assertion_na") == 1]
+    assert len(na_results) == 2
+    assert all(r["result"] == "PASS" for r in na_results)

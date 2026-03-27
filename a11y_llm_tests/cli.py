@@ -59,19 +59,32 @@ def _evaluate_worker(args_tuple):
         atype = (a.get("type") or "R").upper()
         if atype not in {"R", "BP"}:
             atype = "R"
+        status = str(a.get("status", "fail") or "fail").lower()
+        if status in {"n/a", "not_applicable", "not-applicable", "not applicable"}:
+            status = "na"
+        if status not in {"pass", "fail", "na"}:
+            status = "fail"
         norm_assertions.append({
             "name": a.get("name", "unknown"),
-            "status": a.get("status", "fail"),
+            "status": status,
             "message": a.get("message"),
             "type": atype,
         })
+    total_assertion_na = tf.get("total_assertion_na")
+    if total_assertion_na is None:
+        total_assertion_na = sum(1 for a in norm_assertions if a["type"] == "R" and a["status"] == "na")
+    total_assertion_bp_na = tf.get("total_assertion_bp_na")
+    if total_assertion_bp_na is None:
+        total_assertion_bp_na = sum(1 for a in norm_assertions if a["type"] == "BP" and a["status"] == "na")
     test_result = TestFunctionResult(
         status=tf.get("status", "error"),
         assertions=norm_assertions,
         error=tf.get("error"),
         duration_ms=tf.get("duration_ms"),
         total_assertion_failures=tf.get("total_assertion_failures", 0),
-        total_assertion_bp_failures=tf.get("total_assertion_bp_failures", 0)
+        total_assertion_bp_failures=tf.get("total_assertion_bp_failures", 0),
+        total_assertion_na=total_assertion_na,
+        total_assertion_bp_na=total_assertion_bp_na,
     )
     axe_data = node_res.get("axeResult") or node_res.get("axe_result") or node_res.get("axe")
     axe_obj = None
@@ -109,7 +122,9 @@ def _evaluate_worker(args_tuple):
         sample_index=sample_index,
         prompt_variant_id=prompt_variant_id,
     )
-    return json.loads(rec.model_dump_json()), test_name, model, prompt_variant_id, result_pass
+    return json.loads(rec.model_dump_json()), test_name, model, prompt_variant_id, {
+        "pass": result_pass,
+    }
 
 
 def _generate_worker(task):
@@ -606,9 +621,9 @@ def evaluate(
             done = 0
             _render_progress("Evaluating", done, total)
             for t in tasks:
-                res, test_name, model, prompt_variant_id, passed = _evaluate_worker(t)
+                res, test_name, model, prompt_variant_id, sample_outcome = _evaluate_worker(t)
                 all_results.append(res)
-                pass_map.setdefault((test_name, model, prompt_variant_id or "control"), []).append(passed)
+                pass_map.setdefault((test_name, model, prompt_variant_id or "control"), []).append(sample_outcome)
                 done += 1
                 _render_progress("Evaluating", done, total)
         else:
@@ -617,22 +632,24 @@ def evaluate(
                 total = len(tasks)
                 done = 0
                 _render_progress("Evaluating", done, total)
-                for res, test_name, model, prompt_variant_id, passed in pool.imap(_evaluate_worker, tasks):
+                for res, test_name, model, prompt_variant_id, sample_outcome in pool.imap(_evaluate_worker, tasks):
                     all_results.append(res)
-                    pass_map.setdefault((test_name, model, prompt_variant_id or "control"), []).append(passed)
+                    pass_map.setdefault((test_name, model, prompt_variant_id or "control"), []).append(sample_outcome)
                     done += 1
                     _render_progress("Evaluating", done, total)
 
     aggregates: List[dict] = []
     for (test_name, model, variant_id), statuses in pass_map.items():
-        c = sum(1 for x in statuses if x)
         n = len(statuses)
+        c = sum(1 for status in statuses if status.get("pass"))
         pass_at = compute_pass_at_k(c, n, k_values)
         agg = AggregateRecord(
             test_name=test_name,
             model_name=model,
             prompt_variant_id=variant_id or "control",
             n_samples=n,
+            n_applicable=n,
+            n_not_applicable=0,
             n_pass=c,
             pass_at_k=format_pass_at_k(pass_at),
             k_values=k_values,
