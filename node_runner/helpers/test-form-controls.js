@@ -274,9 +274,11 @@ const collectRequiredIndicatorEntries = (discovery) => {
             entries.push({
                 locator: group.radios[0]?.locator,
                 hasVisualIndicator: groupLabelIndicatesRequired || radioLevelVisualIndicator,
-                hasProgrammaticIndicator: !!group.programmaticallyRequired || group.radios.some((radio) => radio.programmaticallyRequired),
+                hasProgrammaticIndicator: !group.requiredStateMismatch && (!!group.programmaticallyRequired || group.radios.some((radio) => radio.programmaticallyRequired)),
                 visualMissingMessage: "Radio group is programmatically required but has no visual required indicator",
-                programmaticMissingMessage: "Radio group appears visually required but has no programmatic required indicator",
+                programmaticMissingMessage: group.requiredStateMismatch
+                    ? "Radio group has conflicting native and ARIA required states"
+                    : "Radio group appears visually required but has no programmatic required indicator",
             });
         }
 
@@ -482,6 +484,15 @@ testFn.discoverRadios = async (scope) => {
         const { idx } = args;
         const isVisible = (node) => window.axe.commons.dom.isVisible(node, false, true);
         const normalizeText = (value) => (value || '').toString().replace(/\s+/g, ' ').trim();
+        const parseAriaBoolean = (value) => {
+            if (value === 'true') {
+                return true;
+            }
+            if (value === 'false') {
+                return false;
+            }
+            return null;
+        };
 
         const getAccessibleName = (element) => {
             try {
@@ -540,16 +551,39 @@ testFn.discoverRadios = async (scope) => {
         const ariaGroup = radio.closest('[role="radiogroup"], [role="group"]');
         const isNativeRadio = radio.matches('input[type="radio"]');
         const ariaGroupRole = ariaGroup ? ariaGroup.getAttribute('role') : '';
-        const disabled = isNativeRadio
-            ? radio.disabled
-            : radio.getAttribute('aria-disabled') === 'true' || radio.hasAttribute('disabled');
-        const checked = isNativeRadio
-            ? radio.checked
-            : radio.getAttribute('aria-checked') === 'true';
         const requiredAttr = radio.getAttribute('required');
         const ariaRequired = radio.getAttribute('aria-required');
+        const ariaDisabled = radio.getAttribute('aria-disabled');
+        const ariaChecked = radio.getAttribute('aria-checked');
+        const nativeDisabled = isNativeRadio ? radio.disabled : radio.hasAttribute('disabled');
+        const nativeChecked = isNativeRadio ? radio.checked : radio.hasAttribute('checked');
+        const nativeRequired = requiredAttr !== null;
+        const ariaDisabledState = parseAriaBoolean(ariaDisabled);
+        const ariaCheckedState = parseAriaBoolean(ariaChecked);
+        const ariaRequiredState = parseAriaBoolean(ariaRequired);
+        const disabled = isNativeRadio
+            ? nativeDisabled
+            : ariaDisabledState === true || nativeDisabled;
+        const checked = isNativeRadio
+            ? nativeChecked
+            : ariaCheckedState === true || nativeChecked;
         const controlText = normalizeText(radio.innerText || radio.textContent || '');
         const groupProgrammaticallyRequired = ariaGroupRole === 'radiogroup' && ariaGroup && ariaGroup.getAttribute('aria-required') === 'true';
+        const checkedStateDefined = isNativeRadio || ariaCheckedState !== null;
+        const checkedStateMismatch = isNativeRadio && ariaCheckedState !== null && ariaCheckedState !== nativeChecked;
+        const disabledStateMismatch = isNativeRadio && ariaDisabledState !== null && ariaDisabledState !== nativeDisabled;
+        const requiredStateMismatch = isNativeRadio && ariaRequiredState !== null && ariaRequiredState !== nativeRequired;
+
+        const stateConsistencyIssues = [];
+        if (checkedStateMismatch) {
+            stateConsistencyIssues.push('checked');
+        }
+        if (disabledStateMismatch) {
+            stateConsistencyIssues.push('disabled');
+        }
+        if (requiredStateMismatch) {
+            stateConsistencyIssues.push('required');
+        }
 
         let groupKey;
         let groupKind;
@@ -584,9 +618,15 @@ testFn.discoverRadios = async (scope) => {
             groupLabel,
             disabled,
             checked,
-            checkedStateDefined: isNativeRadio || radio.getAttribute('aria-checked') === 'true' || radio.getAttribute('aria-checked') === 'false',
+            checkedStateDefined,
+            checkedStateMismatch,
+            disabledStateMismatch,
+            requiredStateMismatch,
+            hasNativeAriaStateMismatch: stateConsistencyIssues.length > 0,
+            nativeAriaStateMismatchCount: stateConsistencyIssues.length,
+            nativeAriaStateMismatchDetails: stateConsistencyIssues,
             tabIndex: radio.tabIndex,
-            programmaticallyRequired: requiredAttr !== null || ariaRequired === 'true',
+            programmaticallyRequired: nativeRequired || ariaRequiredState === true,
             groupProgrammaticallyRequired,
             controlText,
         };
@@ -613,6 +653,12 @@ testFn.discoverRadios = async (scope) => {
             tabIndex: meta.tabIndex,
             checked: meta.checked,
             checkedStateDefined: meta.checkedStateDefined,
+            checkedStateMismatch: meta.checkedStateMismatch,
+            disabledStateMismatch: meta.disabledStateMismatch,
+            requiredStateMismatch: meta.requiredStateMismatch,
+            hasNativeAriaStateMismatch: meta.hasNativeAriaStateMismatch,
+            nativeAriaStateMismatchCount: meta.nativeAriaStateMismatchCount,
+            nativeAriaStateMismatchDetails: meta.nativeAriaStateMismatchDetails,
             programmaticallyRequired: meta.programmaticallyRequired,
             groupKey: meta.groupKey,
             groupKind: meta.groupKind,
@@ -627,11 +673,24 @@ testFn.discoverRadios = async (scope) => {
                 groupKind: meta.groupKind,
                 groupLabel: meta.groupLabel,
                 programmaticallyRequired: meta.groupProgrammaticallyRequired,
+                hasNativeAriaStateMismatch: false,
+                nativeAriaStateMismatchCount: 0,
+                nativeAriaStateMismatchDetails: [],
+                requiredStateMismatch: false,
                 radios: [],
             });
         }
 
-        groupsByKey.get(meta.groupKey).radios.push(item);
+        const group = groupsByKey.get(meta.groupKey);
+        group.radios.push(item);
+        if (meta.hasNativeAriaStateMismatch) {
+            group.hasNativeAriaStateMismatch = true;
+            group.nativeAriaStateMismatchCount += meta.nativeAriaStateMismatchCount;
+            group.nativeAriaStateMismatchDetails = group.nativeAriaStateMismatchDetails.concat(meta.nativeAriaStateMismatchDetails);
+        }
+        if (meta.requiredStateMismatch) {
+            group.requiredStateMismatch = true;
+        }
     }
 
     const normalizeText = (value) => (value || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();

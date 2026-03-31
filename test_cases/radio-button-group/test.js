@@ -141,6 +141,26 @@ module.exports.run = async ({ page, assert, utils }) => {
         return { pass: false, message: `${applicableGroups - passingGroups} radio group(s) did not update selection on arrow keys` };
     });
 
+    await assert("ARIA attributes match native radio attributes if used", async () => {
+        const groups = await utils.testFormControls.discoverRadioGroups(page, discovery);
+        const radios = groups.flatMap((group) => group.radios);
+
+        if (radios.length === 0) {
+            return { pass: false, message: 'No radios found in scope' };
+        }
+
+        const invalidRadios = radios.filter((radio) => radio.hasNativeAriaStateMismatch);
+        if (invalidRadios.length === 0) {
+            return { pass: true, message: 'ARIA state is consistent with native radio state' };
+        }
+
+        const mismatchCount = invalidRadios.reduce((total, radio) => total + (radio.nativeAriaStateMismatchCount || 0), 0);
+        return {
+            pass: false,
+            message: `${invalidRadios.length} radio option(s) have ${mismatchCount} conflicting native and ARIA state value(s)`,
+        };
+    });
+
     await assert("Checked state is programmatically exposed", async () => {
         const groups = await utils.testFormControls.discoverRadioGroups(page, discovery);
         const radios = groups.flatMap((group) => group.radios);
@@ -149,12 +169,12 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: false, message: 'No radios found in scope' };
         }
 
-        const invalidCount = radios.filter((radio) => !radio.checkedStateDefined).length;
+        const invalidCount = radios.filter((radio) => !radio.checkedStateDefined || radio.checkedStateMismatch).length;
         if (invalidCount === 0) {
             return { pass: true, message: 'All radios expose checked state programmatically' };
         }
 
-        return { pass: false, message: `${invalidCount} radio option(s) do not expose checked state programmatically` };
+        return { pass: false, message: `${invalidCount} radio option(s) do not expose checked state programmatically without contradiction` };
     });
 
     return {};
