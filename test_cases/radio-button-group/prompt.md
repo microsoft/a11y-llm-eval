@@ -1,1 +1,1 @@
-Create a page to showcase an example radio button component. Wrap the example in a div with class `form-field`. Include a submit button.
+Create a page that showcases radio button examples as multiple choice questions. Include examples with and without helper text. Each example should be a single question with its answer choices. Wrap each example in a div with class "form-field". Include a submit button.
