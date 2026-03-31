@@ -239,6 +239,7 @@ $$\text{PASS} \iff (\text{test\_function.status} = \text{"pass"}) \land (\text{a
   - `status` accepts `"pass"`, `"fail"`, and `"na"`; legacy aliases normalize to those values.
   - Only `"R"` and `"BP"` are valid types; others become `"R"`.
 - Assertion helpers may return `"na"` when a check has no applicable target on the page, for example when no visible labels, helper text, placeholder text, or recognizable autocomplete purpose exist for that assertion.
+- Required-field assertions may treat a shared visible note such as `All questions are required.` or `All fields are required.` as a valid visual indicator for the relevant required controls or radio groups.
 - Best practice assertions (`BP`) do not affect overall pass/fail.
 - Requirement assertions marked `na` are tracked at the assertion level and do not change sample-level pass/fail or aggregate denominators.
 - Axe data handling is permissive:

@@ -255,7 +255,29 @@ const hasRequiredHelperIndicator = (helpers) => {
     return false;
 };
 
-const collectRequiredIndicatorEntries = (discovery) => {
+const hasSharedRequiredContextIndicator = async (locator) => {
+    return locator.evaluate((element) => {
+        const normalizeText = (value) => (value || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
+        const container = element.closest('form, [role="form"], main, body') || document.body;
+        const text = normalizeText(container ? container.innerText : '');
+
+        if (!text) {
+            return false;
+        }
+
+        if (/\ball\s+(questions?|fields?|options?|choices?)\s+(are|marked)\s+required\b/.test(text)) {
+            return true;
+        }
+
+        if (/\ball\s+required\s+(questions?|fields?|options?|choices?)\b/.test(text)) {
+            return true;
+        }
+
+        return false;
+    });
+};
+
+const collectRequiredIndicatorEntries = async (discovery) => {
     const entries = [];
     const isRadioDiscovery = Array.isArray(discovery.groups) && discovery.groups.length > 0 && discovery.inputs.every((item) => Object.prototype.hasOwnProperty.call(item, 'groupKey'));
 
@@ -271,9 +293,13 @@ const collectRequiredIndicatorEntries = (discovery) => {
                 }
             }
 
+            const sharedContextVisualIndicator = !groupLabelIndicatesRequired && !radioLevelVisualIndicator && group.radios[0]?.locator
+                ? await hasSharedRequiredContextIndicator(group.radios[0].locator)
+                : false;
+
             entries.push({
                 locator: group.radios[0]?.locator,
-                hasVisualIndicator: groupLabelIndicatesRequired || radioLevelVisualIndicator,
+                hasVisualIndicator: groupLabelIndicatesRequired || radioLevelVisualIndicator || sharedContextVisualIndicator,
                 hasProgrammaticIndicator: !group.requiredStateMismatch && (!!group.programmaticallyRequired || group.radios.some((radio) => radio.programmaticallyRequired)),
                 visualMissingMessage: "Radio group is programmatically required but has no visual required indicator",
                 programmaticMissingMessage: group.requiredStateMismatch
@@ -312,7 +338,7 @@ testFn.testRequiredFieldsIndicatedVisually = async (scope, discoveryCache) => {
         return results;
     }
 
-    const entries = collectRequiredIndicatorEntries(d);
+    const entries = await collectRequiredIndicatorEntries(d);
     let applicable = 0;
 
     for (const entry of entries) {
@@ -346,7 +372,7 @@ testFn.testRequiredFieldsIndicatedProgrammatically = async (scope, discoveryCach
         return results;
     }
 
-    const entries = collectRequiredIndicatorEntries(d);
+    const entries = await collectRequiredIndicatorEntries(d);
     let applicable = 0;
 
     for (const entry of entries) {
@@ -381,7 +407,7 @@ testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
         return results;
     }
 
-    const entries = collectRequiredIndicatorEntries(d);
+    const entries = await collectRequiredIndicatorEntries(d);
     let applicable = 0;
 
     for (const entry of entries) {
