@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Missing Group Label</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each radio has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Visual labels are defined and persistent": "pass",
+      "Helper text is programmatically associated": "na",
+      "Required fields are indicated visually": "na",
+      "Required fields are indicated programmatically": "na",
+      "Each radio group has an accessible label": "fail",
+      "Each radio group is keyboard reachable": "pass",
+      "Arrow keys change the selected radio within each group": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <div>
+      <div>
+        <input id="missing-label-email" type="radio" name="contact-method" value="email" checked />
+        <label for="missing-label-email">Email</label>
+      </div>
+      <div>
+        <input id="missing-label-phone" type="radio" name="contact-method" value="phone" />
+        <label for="missing-label-phone">Phone</label>
+      </div>
+      <div>
+        <input id="missing-label-text" type="radio" name="contact-method" value="text" />
+        <label for="missing-label-text">Text Message</label>
+      </div>
+    </div>
+  </form>
+</body>
+</html>

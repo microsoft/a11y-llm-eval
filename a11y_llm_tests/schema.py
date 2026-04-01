@@ -5,7 +5,7 @@ from datetime import datetime
 
 class AssertionResult(BaseModel):
     name: str
-    status: str  # pass|fail
+    status: str  # pass|fail|na
     message: Optional[str] = None
     type: str = "R"  # R = Requirement (default), BP = Best Practice
 
@@ -24,6 +24,8 @@ class TestFunctionResult(BaseModel):
     duration_ms: Optional[int] = None
     total_assertion_failures: int = 0
     total_assertion_bp_failures: int = 0
+    total_assertion_na: int = 0
+    total_assertion_bp_na: int = 0
 
 
 class AxeNode(BaseModel):
@@ -112,6 +114,8 @@ class AggregateRecord(BaseModel):
     # Prompt variant identifier. None or "control" for baseline runs.
     prompt_variant_id: Optional[str] = None
     n_samples: int
+    n_applicable: Optional[int] = None
+    n_not_applicable: int = 0
     n_pass: int
     pass_at_k: Dict[str, float]  # JSON-friendly string keys
     k_values: List[int]

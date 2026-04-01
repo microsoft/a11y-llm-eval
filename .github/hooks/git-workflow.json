@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "python3 scripts/validate_copilot_git_command.py",
+        "windows": "py scripts/validate_copilot_git_command.py",
+        "timeout": 10
+      }
+    ]
+  }
+}

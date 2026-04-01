@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Radio Button Multiple Choice Examples</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each radio has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Visual labels are defined and persistent": "pass",
+      "Helper text is programmatically associated": "pass",
+      "Required fields are indicated visually": "pass",
+      "Required fields are indicated programmatically": "pass",
+      "Each radio group has an accessible label": "pass",
+      "Each radio group is keyboard reachable": "pass",
+      "Arrow keys change the selected radio within each group": "pass",
+      "ARIA attributes match native radio attributes if used": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --card: #121a2b;
+      --text: #e7ecf5;
+      --muted: #a8b3c7;
+      --border: rgba(255, 255, 255, 0.12);
+      --focus: #79b8ff;
+      --accent: #5eead4;
+      --danger: #fb7185;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      color: var(--text);
+      background: radial-gradient(1200px 800px at 20% 0%, #162042 0%, var(--bg) 60%);
+      line-height: 1.4;
+    }
+
+    main {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 32px 16px 56px;
+    }
+
+    header {
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      font-size: 1.6rem;
+      margin: 0 0 8px;
+      letter-spacing: 0.2px;
+    }
+
+    p.lead {
+      margin: 0;
+      color: var(--muted);
+      max-width: 70ch;
+    }
+
+    form {
+      margin-top: 22px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .form-field {
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 16px 14px;
+    }
+
+    fieldset {
+      border: 0;
+      margin: 0;
+      padding: 0;
+      min-inline-size: 0;
+    }
+
+    legend {
+      font-weight: 650;
+      font-size: 1rem;
+      margin-bottom: 6px;
+      padding: 0;
+    }
+
+    .helper {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .choices {
+      display: grid;
+      gap: 8px;
+    }
+
+    label.choice {
+      display: grid;
+      grid-template-columns: 20px 1fr;
+      gap: 10px;
+      align-items: start;
+      padding: 10px 10px;
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 12px;
+      background: rgba(0,0,0,0.15);
+      cursor: pointer;
+    }
+
+    input[type="radio"] {
+      margin-top: 2px;
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent);
+    }
+
+    .choice-title {
+      display: block;
+      font-weight: 550;
+    }
+
+    .choice-desc {
+      display: block;
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-top: 2px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-top: 6px;
+    }
+
+    button[type="submit"] {
+      border: 1px solid rgba(255,255,255,0.16);
+      background: linear-gradient(180deg, rgba(94,234,212,0.22), rgba(94,234,212,0.10));
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Radio Button Examples (Multiple Choice Questions)</h1>
+      <p class="lead">Each example below is a single question with radio button answer choices. Some include helper text, and some do not.</p>
+    </header>
+
+    <form id="quiz" action="#" method="post" novalidate>
+      <div class="form-field">
+        <fieldset>
+          <legend>1) Which season do you prefer?</legend>
+          <div class="choices">
+            <label class="choice">
+              <input type="radio" name="season" value="Spring" required checked />
+              <span>
+                <span class="choice-title">Spring</span>
+              </span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="season" value="Summer" />
+              <span>
+                <span class="choice-title">Summer</span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+      </div>
+
+      <div class="form-field">
+        <fieldset>
+          <legend>2) What is your preferred contact method?</legend>
+          <p id="contact-helper" class="helper">We will use this to send important updates. You can change it later in settings.</p>
+          <div class="choices">
+            <label class="choice">
+              <input type="radio" name="contact" value="Email" required checked aria-describedby="contact-helper" />
+              <span>
+                <span class="choice-title">Email</span>
+                <span class="choice-desc">Best for receipts, confirmations, and long-form updates.</span>
+              </span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="contact" value="SMS" aria-describedby="contact-helper" />
+              <span>
+                <span class="choice-title">SMS</span>
+                <span class="choice-desc">Short alerts and time-sensitive notifications.</span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+      </div>
+
+      <div class="form-field">
+        <fieldset>
+          <legend>3) Choose a difficulty level</legend>
+          <div class="choices">
+            <label class="choice">
+              <input type="radio" name="difficulty" value="Easy" required checked />
+              <span>
+                <span class="choice-title">Easy</span>
+              </span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="difficulty" value="Medium" />
+              <span>
+                <span class="choice-title">Medium</span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+      </div>
+
+      <div class="form-field">
+        <fieldset>
+          <legend>4) Which plan would you like?</legend>
+          <p id="plan-helper" class="helper">Pick the option that best fits your needs. You can upgrade or downgrade anytime.</p>
+          <div class="choices">
+            <label class="choice">
+              <input type="radio" name="plan" value="Starter" required checked aria-describedby="plan-helper" />
+              <span>
+                <span class="choice-title">Starter</span>
+                <span class="choice-desc">Basic features for personal projects.</span>
+              </span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="plan" value="Pro" aria-describedby="plan-helper" />
+              <span>
+                <span class="choice-title">Pro</span>
+                <span class="choice-desc">Advanced tools for growing teams.</span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+      </div>
+
+      <div class="actions">
+        <button type="submit">Submit</button>
+        <p class="note">All questions are required.</p>
+      </div>
+    </form>
+  </main>
+</body>
+</html>

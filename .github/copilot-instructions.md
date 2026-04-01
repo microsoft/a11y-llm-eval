@@ -45,3 +45,13 @@ Treat it as the project’s contract for:
 - Keep the acceptance criteria concrete and testable.
 - Add new features to `docs/features-and-acceptance.md` when introduced.
 - If a behavior is deprecated, document it explicitly with the planned removal version/date.
+
+## Git workflow
+
+- Do not create commits unless the user explicitly asks for a commit or asks to finalize changes in git.
+- Before staging or committing, inspect `git status` and the relevant diffs.
+- Stage only files directly related to the requested change.
+- If unrelated local changes are present, ask before including them in a commit.
+- Use non-interactive git commands only.
+- Use commit subjects in conventional format: `feat: ...`, `fix: ...`, or `chore: ...`.
+- Do not amend, rebase, or push unless the user explicitly asks.

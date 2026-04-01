@@ -32,6 +32,7 @@ It does **not** attempt to specify the internal HTML report layout pixel-perfect
 - **Sample**: one independent generation for a (test case, model). Samples are indexed 0-based.
 - **Requirement assertion** (`type: "R"`): affects pass/fail.
 - **Best Practice assertion** (`type: "BP"`): tracked, but does not affect pass/fail.
+- **Not applicable assertion** (`status: "na"`): an assertion that does not apply to that sample. Requirement N/A assertions exclude the sample from denominator-based pass metrics.
 - **WCAG failures**: the subset of axe violations that are *not* tagged `best-practice`.
 
 ---
@@ -235,8 +236,12 @@ $$\text{PASS} \iff (\text{test\_function.status} = \text{"pass"}) \land (\text{a
 - Assertions are normalized in Python:
   - Only dict-shaped assertions are considered.
   - `type` is normalized to uppercase and defaults to `"R"` if missing/invalid.
+  - `status` accepts `"pass"`, `"fail"`, and `"na"`; legacy aliases normalize to those values.
   - Only `"R"` and `"BP"` are valid types; others become `"R"`.
+- Assertion helpers may return `"na"` when a check has no applicable target on the page, for example when no visible labels, helper text, placeholder text, or recognizable autocomplete purpose exist for that assertion.
+- Required-field assertions may treat a shared visible note such as `All questions are required.` or `All fields are required.` as a valid visual indicator for the relevant required controls or radio groups.
 - Best practice assertions (`BP`) do not affect overall pass/fail.
+- Requirement assertions marked `na` are tracked at the assertion level and do not change sample-level pass/fail or aggregate denominators.
 - Axe data handling is permissive:
   - The Python evaluator accepts `axeResult`, `axe_result`, or `axe` keys from Node output.
   - If `axe.failure_count` is missing, it is treated as `0`.
@@ -252,12 +257,16 @@ The CLI supports multiple samples per (test, model) via `--samples` and computes
 For each (test_name, model_name) pair, `aggregates[]` contains:
 
 - `n_samples`
+- `n_applicable`
+- `n_not_applicable`
 - `n_pass`
 - `pass_at_k` for requested k values
 
-Pass@k uses:
+Pass@k uses the full sample set:
 
 $$\text{pass@k} = 1 - \frac{\binom{n-c}{k}}{\binom{n}{k}}$$
+
+where $n = n_{samples}$ and $c = n_{pass}$.
 
 with edge cases:
 
@@ -270,6 +279,7 @@ with edge cases:
 - `--base-seed` (when provided) yields `seed = base_seed + sample_index`.
 - `sample_index` values in `results.json` are 0-based and cover the full range `[0, samples-1]` for multi-sample runs.
 - `pass_at_k` is stored with **string keys** (e.g. `"1"`, `"5"`) for JSON stability.
+- Assertion-level `na` results do not exclude samples from `pass_rate` or `pass@k` denominators. Compatibility fields `n_applicable` and `n_not_applicable` remain available in `aggregates[]`.
 - When prompt variants are present, aggregates are computed per (test, model, variant) and stored with `prompt_variant_id`.
 
 ---
@@ -302,6 +312,7 @@ When prompt variants exist:
   1. `meta.models_info` in `results.json`
   2. the provided models config
   3. fall back to the last path segment of the model name
+- Assertion-level `na` results remain visible in detailed report sections and assertion analysis, but report pass-rate and pass@k denominators use all samples.
 
 ---
 
@@ -326,9 +337,11 @@ The runner:
   - `opts.type` of `"R"` or `"BP"` (defaults to `"R"`).
   - `fn` returning either:
     - boolean, or
-    - `{ pass: boolean, message?: string }`.
+    - `{ pass: boolean, message?: string }`, or
+    - `{ status: "pass" | "fail" | "na", message?: string }`.
 - Runner output JSON contains (at minimum):
   - `testFunctionResult` with `status` and `assertions`.
+    - `status` is determined by requirement assertion failures only.
   - `axeResult` with WCAG failures split from best-practice failures:
     - `failure_count`, `failures`, `best_practice_count`, `best_practice_failures`.
 

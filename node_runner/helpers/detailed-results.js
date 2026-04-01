@@ -1,6 +1,7 @@
 class detailedResults {
     explicitPass = false;
     explicitFail = false;
+    explicitNotApplicable = false;
 
     constructor() {
         this.passedElements = [];
@@ -14,6 +15,10 @@ class detailedResults {
 
     forceFail() {
         this.explicitFail = true;
+    }
+
+    forceNotApplicable() {
+        this.explicitNotApplicable = true;
     }
 
     addPass(element) {
@@ -32,14 +37,21 @@ class detailedResults {
         return this.messages.join(' ');
     }
 
-    passed() {
+    status() {
+        if (this.explicitNotApplicable) {
+            return 'na';
+        }
         if (this.explicitPass) {
-            return true;
+            return 'pass';
         }
         if (this.explicitFail) {
-            return false;
+            return 'fail';
         }
-        return this.failedElements.length === 0;
+        return this.failedElements.length === 0 ? 'pass' : 'fail';
+    }
+
+    passed() {
+        return this.status() === 'pass';
     }
 }
 module.exports = detailedResults;

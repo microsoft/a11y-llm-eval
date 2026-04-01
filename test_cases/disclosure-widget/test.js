@@ -22,11 +22,15 @@ module.exports.run = async ({ page, assert }) => {
   });
 
   await assert("Collapsed content is hidden from assistive technology", async () => {
+    let applicableExamples = 0;
+
     for (const example of examples) {
       if (!await example.$("button[aria-expanded=false], [role='button'][aria-expanded=false]")) {
         // Only check button implementations
         continue;
       }
+
+      applicableExamples += 1;
       
       let isHidden = await example.$eval(".details", el => {
         // Use axe-core's isVisible util to determine if hidden from sighted users but available to AT
@@ -39,6 +43,11 @@ module.exports.run = async ({ page, assert }) => {
         return false;
       }
     }
+
+    if (applicableExamples === 0) {
+      return { status: 'na', message: 'No button-based disclosure widgets found' };
+    }
+
     return true;
   });
 };
