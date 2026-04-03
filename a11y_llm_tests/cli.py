@@ -142,6 +142,7 @@ def _generate_worker(task):
         prompt_variant_id,
         debug_truncated_cache,
         html_out_path,
+        model_display_name,
     ) = task
 
     # Configure prompts within this worker process for the specific variant.
@@ -151,6 +152,7 @@ def _generate_worker(task):
         "temperature": temperature,
         "seed": seed,
         "disable_cache": disable_cache,
+        "model_display_name": model_display_name,
     }
     if debug_truncated_cache:
         kwargs["debug_truncated_cache"] = True
@@ -282,10 +284,12 @@ def run(
     base_prompting_effective_system_prompt = generator.get_effective_system_prompt()
     base_prompting_custom_instructions = generator.get_custom_instructions()
     model_names = [m["name"] for m in models_cfg.get("models", [])]
+    model_display_lookup = {}
     models_info = []
     for m in models_cfg.get("models", []):
         name = m.get("name")
         display_name = m.get("display_name") or (name.split('/')[-1] if isinstance(name, str) else name)
+        model_display_lookup[name] = display_name
         models_info.append({"name": name, "display_name": display_name})
     tcd = Path(test_cases_dir)
     test_dirs = [p for p in tcd.iterdir() if p.is_dir() and (p / "prompt.md").exists()]
@@ -362,6 +366,7 @@ def run(
                         variant_id,
                         debug_truncated_cache,
                         str(html_file),
+                        model_display_lookup.get(model),
                     ))
 
     # Flatten into a single task list using round-robin across models
