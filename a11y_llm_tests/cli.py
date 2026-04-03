@@ -1,4 +1,5 @@
 """Typer CLI for running evaluations and generating reports."""
+import inspect
 import json
 import multiprocessing
 from datetime import datetime
@@ -152,8 +153,14 @@ def _generate_worker(task):
         "temperature": temperature,
         "seed": seed,
         "disable_cache": disable_cache,
-        "model_display_name": model_display_name,
     }
+    try:
+        generate_signature = inspect.signature(generator.generate_html_with_meta)
+        if "model_display_name" in generate_signature.parameters:
+            kwargs["model_display_name"] = model_display_name
+    except (TypeError, ValueError):
+        pass
+
     if debug_truncated_cache:
         kwargs["debug_truncated_cache"] = True
 
