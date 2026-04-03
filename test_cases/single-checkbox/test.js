@@ -1,0 +1,136 @@
+/**
+ * Single checkbox accessibility test assertions.
+ * Supports native checkboxes and custom ARIA checkboxes.
+ */
+
+module.exports.run = async ({ page, assert, utils }) => {
+    const discovery = await utils.testFormControls.discoverCheckboxes(page);
+
+    await assert("Each checkbox has an accessible name", async () => {
+        const checkboxes = discovery.inputs;
+
+        if (checkboxes.length === 0) {
+            return { pass: false, message: 'No checkboxes found in scope' };
+        }
+
+        const unnamedCount = checkboxes.filter((checkbox) => !checkbox.name).length;
+        if (unnamedCount === 0) {
+            return { pass: true, message: 'All checkboxes have accessible names' };
+        }
+
+        return { pass: false, message: `${unnamedCount} checkbox option(s) are missing accessible names` };
+    });
+
+    await assert("Visible label is included in accessible name", async () => {
+        const results = await utils.testFormControls.testLabelInName(page, discovery);
+        return { status: results.status(), message: results.getMessage() };
+    });
+
+    await assert("Visual labels are defined and persistent", async () => {
+        const results = await utils.testFormControls.testEachInputHasPersistentVisualLabel(page, discovery);
+        return { status: results.status(), message: results.getMessage() };
+    });
+
+    await assert("Helper text is programmatically associated", async () => {
+        const results = await utils.testFormControls.testHelperTextAssociated(page, discovery);
+        return { status: results.status(), message: results.getMessage() };
+    });
+
+    await assert("Required fields are indicated visually", async () => {
+        const results = await utils.testFormControls.testRequiredFieldsIndicatedVisually(page, discovery);
+        return { status: results.status(), message: results.getMessage() };
+    });
+
+    await assert("Required fields are indicated programmatically", async () => {
+        const results = await utils.testFormControls.testRequiredFieldsIndicatedProgrammatically(page, discovery);
+        return { status: results.status(), message: results.getMessage() };
+    });
+
+    await assert("Each checkbox is keyboard reachable", async () => {
+        const results = await utils.testFormControls.testEachInputFocusable(page, discovery);
+        return { status: results.status(), message: results.getMessage() };
+    });
+
+    await assert("Space toggles checkbox state", async () => {
+        await utils.reload();
+        let currentDiscovery = await utils.testFormControls.discoverCheckboxes(page);
+
+        if (currentDiscovery.inputs.length === 0) {
+            return { pass: false, message: 'No checkboxes found in scope' };
+        }
+
+        let applicableCheckboxes = 0;
+        let passingCheckboxes = 0;
+
+        for (let checkboxIndex = 0; checkboxIndex < currentDiscovery.inputs.length; checkboxIndex += 1) {
+            await utils.reload();
+            currentDiscovery = await utils.testFormControls.discoverCheckboxes(page);
+            const checkbox = currentDiscovery.inputs[checkboxIndex];
+            if (!checkbox || !checkbox.visible || checkbox.disabled) {
+                continue;
+            }
+
+            applicableCheckboxes += 1;
+
+            const locator = page.locator('input[type="checkbox"], [role="checkbox"]').nth(checkbox.domIndex);
+            await locator.focus();
+            const before = checkbox.checked;
+
+            await locator.press(' ');
+            await page.waitForTimeout(30);
+
+            const updatedDiscovery = await utils.testFormControls.discoverCheckboxes(page);
+            const after = updatedDiscovery.inputs[checkboxIndex] ? updatedDiscovery.inputs[checkboxIndex].checked : before;
+
+            if (after !== before) {
+                passingCheckboxes += 1;
+            }
+        }
+
+        if (applicableCheckboxes === 0) {
+            return { pass: false, message: 'No interactive checkboxes were available for Space-key testing' };
+        }
+
+        if (passingCheckboxes === applicableCheckboxes) {
+            return { pass: true, message: 'Space toggles each checkbox state' };
+        }
+
+        return { pass: false, message: `${applicableCheckboxes - passingCheckboxes} checkbox option(s) did not toggle state on Space` };
+    });
+
+    await assert("ARIA attributes match native checkbox attributes if used", async () => {
+        const checkboxes = discovery.inputs;
+
+        if (checkboxes.length === 0) {
+            return { pass: false, message: 'No checkboxes found in scope' };
+        }
+
+        const invalidCheckboxes = checkboxes.filter((checkbox) => checkbox.hasNativeAriaStateMismatch);
+        if (invalidCheckboxes.length === 0) {
+            return { pass: true, message: 'ARIA state is consistent with native checkbox state' };
+        }
+
+        const mismatchCount = invalidCheckboxes.reduce((total, checkbox) => total + (checkbox.nativeAriaStateMismatchCount || 0), 0);
+        return {
+            pass: false,
+            message: `${invalidCheckboxes.length} checkbox option(s) have ${mismatchCount} conflicting native and ARIA state value(s)`,
+        };
+    });
+
+    await assert("Checked state is programmatically exposed", async () => {
+        const checkboxes = discovery.inputs;
+
+        if (checkboxes.length === 0) {
+            return { pass: false, message: 'No checkboxes found in scope' };
+        }
+
+        const invalidCount = checkboxes.filter((checkbox) => !checkbox.checkedStateDefined || checkbox.checkedStateMismatch).length;
+        if (invalidCount === 0) {
+            return { pass: true, message: 'All checkboxes expose checked state programmatically' };
+        }
+
+        return { pass: false, message: `${invalidCount} checkbox option(s) do not expose checked state programmatically without contradiction` };
+    });
+
+    return {};
+};

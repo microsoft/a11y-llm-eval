@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checkbox Group With Question Label But No Group Semantics</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Visual labels are defined and persistent": "pass",
+      "Helper text is programmatically associated": "na",
+      "Required fields are indicated visually": "na",
+      "Required fields are indicated programmatically": "na",
+      "Each checkbox group has an accessible label": "fail",
+      "Each checkbox is in the tab order": "pass",
+      "Space toggles checkbox state of each checkbox": "pass",
+      "ARIA attributes match native checkbox attributes if used": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <div class="form-field">
+      <legend>Which of the following are programming languages?</legend>
+      <div class="checkbox-group">
+        <div class="checkbox-option">
+          <input type="checkbox" id="q1-a" name="q1" value="Python" />
+          <label for="q1-a">Python</label>
+        </div>
+        <div class="checkbox-option">
+          <input type="checkbox" id="q1-b" name="q1" value="HTML" />
+          <label for="q1-b">HTML</label>
+        </div>
+        <div class="checkbox-option">
+          <input type="checkbox" id="q1-c" name="q1" value="CSS" />
+          <label for="q1-c">CSS</label>
+        </div>
+        <div class="checkbox-option">
+          <input type="checkbox" id="q1-d" name="q1" value="JavaScript" />
+          <label for="q1-d">JavaScript</label>
+        </div>
+      </div>
+    </div>
+    <button type="submit">Submit Answers</button>
+  </form>
+</body>
+</html>

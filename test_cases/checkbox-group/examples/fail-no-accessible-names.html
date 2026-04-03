@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checkboxes Missing Accessible Names</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has an accessible name": "fail",
+      "Visible label is included in accessible name": "na",
+      "Visual labels are defined and persistent": "fail",
+      "Each checkbox group has an accessible label": "pass",
+      "Each checkbox is in the tab order": "pass",
+      "Space toggles checkbox state of each checkbox": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <fieldset>
+      <legend>Select Communication Channels</legend>
+      <div class="form-field"><input type="checkbox" checked /></div>
+      <div class="form-field"><input type="checkbox" /></div>
+    </fieldset>
+  </form>
+</body>
+</html>

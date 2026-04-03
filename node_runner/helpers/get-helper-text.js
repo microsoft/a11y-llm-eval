@@ -1,4 +1,9 @@
-const { FIELD_WRAPPER_SELECTOR } = require('./get-form-field-wrapper');
+const {
+    FIELD_WRAPPER_SELECTOR,
+    PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+    SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+    FALLBACK_FIELD_WRAPPER_SELECTOR,
+} = require('./get-form-field-wrapper');
 const { getVisualLabel, SOURCE_PLACEHOLDER } = require('./get-visual-label');
 
 const SOURCE_HELPER_NEARBY = "HELPER_NEARBY";
@@ -30,6 +35,9 @@ const getHelperText = async (el, opts = {}) => {
     const helper = await el.evaluate((el, args) => {
         const {
             FIELD_WRAPPER_SELECTOR,
+            PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+            SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+            FALLBACK_FIELD_WRAPPER_SELECTOR,
             visualLabelText,
             SOURCE_HELPER_NEARBY,
             SOURCE_ARIA_DESCRIBEDBY,
@@ -202,7 +210,12 @@ const getHelperText = async (el, opts = {}) => {
         }
 
         // --- 4. Visual helper text nearby via TreeWalker ---
-        const wrapper = el.closest(FIELD_WRAPPER_SELECTOR) || document.body;
+        const wrapper =
+            el.closest(PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR)
+            || el.closest(SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR)
+            || el.closest(FALLBACK_FIELD_WRAPPER_SELECTOR)
+            || el.closest(FIELD_WRAPPER_SELECTOR)
+            || document.body;
 
         const walker = document.createTreeWalker(
             wrapper,
@@ -231,7 +244,7 @@ const getHelperText = async (el, opts = {}) => {
                     }
 
                     // Skip obvious labels (fallback)
-                    if (parentTag === 'LABEL') {
+                    if (parentTag === 'LABEL' || parentTag === 'LEGEND' || (parent.closest && parent.closest('label'))) {
                         return NodeFilter.FILTER_REJECT;
                     }
 
@@ -284,6 +297,9 @@ const getHelperText = async (el, opts = {}) => {
         return ordered.map(({ _node, ...rest }) => rest);
     }, {
         FIELD_WRAPPER_SELECTOR,
+        PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+        SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+        FALLBACK_FIELD_WRAPPER_SELECTOR,
         visualLabelText,
         SOURCE_HELPER_NEARBY,
         SOURCE_ARIA_DESCRIBEDBY,

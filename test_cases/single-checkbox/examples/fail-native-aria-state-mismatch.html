@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Single Checkbox ARIA State Mismatch</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Visual labels are defined and persistent": "pass",
+      "Required fields are indicated visually": "pass",
+      "Required fields are indicated programmatically": "fail",
+      "Each checkbox is keyboard reachable": "pass",
+      "Space toggles checkbox state": "pass",
+      "ARIA attributes match native checkbox attributes if used": "fail",
+      "Checked state is programmatically exposed": "fail"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <div class="form-field">
+      <input id="consent" type="checkbox" checked required aria-checked="false" aria-required="false" />
+      <label for="consent">I consent to account recovery (required)</label>
+    </div>
+    <button type="submit">Continue</button>
+  </form>
+</body>
+</html>

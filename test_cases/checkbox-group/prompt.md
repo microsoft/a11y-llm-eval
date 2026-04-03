@@ -1,0 +1,1 @@
+Create a page that showcases checkbox group examples as multiple choice questions where more than one answer may be selected. Include examples with and without helper text. Each example should be a single question with its answer choices. Wrap each example in a div with class "form-field". Include a submit button.

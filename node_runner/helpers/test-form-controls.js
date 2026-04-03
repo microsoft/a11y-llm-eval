@@ -2,7 +2,7 @@ const detailedResults = require('./detailed-results');
 const getName = require('./get-name');
 const { getVisualLabel, SOURCE_PLACEHOLDER } = require('./get-visual-label');
 const { getAllFormFieldWrappers } = require('./get-form-field-wrapper');
-const { combineHelperTexts, getHelperText, SOURCE_ARIA_DESCRIBEDBY, SOURCE_TITLE, SOURCE_CSS_PLACEHOLDER } = require('./get-helper-text');
+const { combineHelperTexts, getHelperText, SOURCE_ARIA_DESCRIBEDBY, SOURCE_ARIA_DESCRIPTION, SOURCE_TITLE, SOURCE_CSS_PLACEHOLDER } = require('./get-helper-text');
 const { discover } = require('./discovery');
 
 let testFn = {};
@@ -46,6 +46,7 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
     const d = discoveryCache || await discover(scope);
     const count = d.inputs.length;
     let applicable = 0;
+    const reportedHelperFailures = new Set();
 
     if (count === 0) {
         results.addMessage("No text inputs found in scope");
@@ -67,32 +68,127 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
         .trim()
         .toLowerCase();
 
-    for (const item of d.inputs) {
-        const helpers = Array.isArray(item.helperText)
-            ? item.helperText
-            : (item.helperText ? [item.helperText] : []);
+    const normalizeHelpers = (helpers) => {
+        const entries = Array.isArray(helpers)
+            ? helpers
+            : (helpers ? [helpers] : []);
 
-        const meaningfulHelpers = helpers.filter(h => !isTrivialHelperText(h && h.text));
+        const unique = new Map();
+        for (const helper of entries) {
+            const text = helper && helper.text ? String(helper.text).trim() : '';
+            if (isTrivialHelperText(text)) {
+                continue;
+            }
+            const source = helper && helper.source ? helper.source : '';
+            const key = `${source}:${normalizeForCompare(text)}`;
+            if (!unique.has(key)) {
+                unique.set(key, { text, source });
+            }
+        }
+
+        return Array.from(unique.values());
+    };
+
+    const hasProgrammaticHelperAssociation = (helpers, options = {}) => {
+        if (options.groupHasProgrammaticDescription) {
+            return true;
+        }
+
+        return helpers.some((helper) => helper && (
+            helper.source === SOURCE_ARIA_DESCRIBEDBY
+            || helper.source === SOURCE_ARIA_DESCRIPTION
+            || helper.source === SOURCE_TITLE
+        ));
+    };
+
+    const evaluateHelperTarget = (locator, helperEntries, accessibleNames, options = {}) => {
+        if (helperEntries.length === 0) {
+            return false;
+        }
+
+        applicable++;
+
+        const combinedHelperText = combineHelperTexts(helperEntries);
+        const helperIncludedInAccessibleName = !!combinedHelperText && accessibleNames.some((name) => {
+            const normalizedName = normalizeForCompare(name);
+            const normalizedHelper = normalizeForCompare(combinedHelperText);
+            return !!normalizedName && !!normalizedHelper && normalizedName.includes(normalizedHelper);
+        });
+
+        if (hasProgrammaticHelperAssociation(helperEntries, options) || helperIncludedInAccessibleName) {
+            results.addPass(locator);
+            return true;
+        }
+
+        results.addFail(locator);
+        const failureKey = normalizeForCompare(combinedHelperText);
+        if (!reportedHelperFailures.has(failureKey)) {
+            reportedHelperFailures.add(failureKey);
+            results.addMessage("Found `" + combinedHelperText + "`");
+        }
+        return true;
+    };
+
+    const groupedControlType = d && (d.controlType === 'radio' || d.controlType === 'checkbox')
+        ? d.controlType
+        : null;
+
+    if (groupedControlType && Array.isArray(d.groups) && d.groups.length > 0) {
+        const groupedIndexes = new Set();
+
+        for (const group of d.groups) {
+            const groupedItems = groupedControlType === 'radio' ? group.radios : group.checkboxes;
+            for (const item of groupedItems) {
+                groupedIndexes.add(item.domIndex);
+            }
+
+            const helperEntries = normalizeHelpers(
+                groupedItems.flatMap((item) => Array.isArray(item.helperText)
+                    ? item.helperText
+                    : (item.helperText ? [item.helperText] : []))
+            );
+
+            if (helperEntries.length === 0) {
+                continue;
+            }
+
+            evaluateHelperTarget(
+                groupedItems[0].locator,
+                helperEntries,
+                [group.groupLabel, ...groupedItems.map((item) => item.name)],
+                { groupHasProgrammaticDescription: !!group.groupHasProgrammaticDescription },
+            );
+        }
+
+        for (const item of d.inputs) {
+            if (groupedIndexes.has(item.domIndex)) {
+                continue;
+            }
+
+            const helperEntries = normalizeHelpers(item.helperText);
+            if (helperEntries.length === 0) {
+                continue;
+            }
+
+            evaluateHelperTarget(item.locator, helperEntries, [item.name]);
+        }
+
+        if (applicable === 0) {
+            results.addMessage("No meaningful helper text found");
+            results.forceNotApplicable();
+        }
+
+        return results;
+    }
+
+    for (const item of d.inputs) {
+        const meaningfulHelpers = normalizeHelpers(item.helperText);
 
         if (meaningfulHelpers.length === 0) {
             continue; // no meaningful helper text to check
         }
 
-        applicable++;
-
-        const hasProgrammaticAssociation = meaningfulHelpers.some(h =>
-            h && (h.source === SOURCE_ARIA_DESCRIBEDBY || h.source === SOURCE_TITLE)
-        );
-
-        const combinedHelperText = combineHelperTexts(meaningfulHelpers);
-        const helperIncludedInAccessibleName = !!combinedHelperText && normalizeForCompare(item.name || '').includes(normalizeForCompare(combinedHelperText));
-
-        if (hasProgrammaticAssociation || helperIncludedInAccessibleName) {
-            results.addPass(item.locator);
-        } else {
-            results.addFail(item.locator);
-            results.addMessage("Found `" + combinedHelperText + "`");
-        }
+        evaluateHelperTarget(item.locator, meaningfulHelpers, [item.name]);
     }
 
     if (applicable === 0) {
@@ -279,32 +375,37 @@ const hasSharedRequiredContextIndicator = async (locator) => {
 
 const collectRequiredIndicatorEntries = async (discovery) => {
     const entries = [];
-    const isRadioDiscovery = Array.isArray(discovery.groups) && discovery.groups.length > 0 && discovery.inputs.every((item) => Object.prototype.hasOwnProperty.call(item, 'groupKey'));
+    const groupedControlType = discovery && (discovery.controlType === 'radio' || discovery.controlType === 'checkbox')
+        ? discovery.controlType
+        : null;
+    const isGroupedDiscovery = groupedControlType !== null && Array.isArray(discovery.groups) && discovery.groups.length > 0;
 
-    if (isRadioDiscovery) {
+    if (isGroupedDiscovery) {
         for (const group of discovery.groups) {
+            const groupedItems = groupedControlType === 'radio' ? group.radios : group.checkboxes;
+            const controlLabel = groupedControlType === 'radio' ? 'Radio group' : 'Checkbox group';
             const groupLabelIndicatesRequired = hasAsteriskRequiredIndicator({ text: group.groupLabel }) || hasTextualRequiredIndicator(group.groupLabel);
 
-            let radioLevelVisualIndicator = false;
-            for (const radio of group.radios) {
-                if (indicatesRequiredVisually(radio.visualLabel) || hasRequiredHelperIndicator(Array.isArray(radio.helperText) ? radio.helperText : (radio.helperText ? [radio.helperText] : []))) {
-                    radioLevelVisualIndicator = true;
+            let itemLevelVisualIndicator = false;
+            for (const item of groupedItems) {
+                if (indicatesRequiredVisually(item.visualLabel) || hasRequiredHelperIndicator(Array.isArray(item.helperText) ? item.helperText : (item.helperText ? [item.helperText] : []))) {
+                    itemLevelVisualIndicator = true;
                     break;
                 }
             }
 
-            const sharedContextVisualIndicator = !groupLabelIndicatesRequired && !radioLevelVisualIndicator && group.radios[0]?.locator
-                ? await hasSharedRequiredContextIndicator(group.radios[0].locator)
+            const sharedContextVisualIndicator = !groupLabelIndicatesRequired && !itemLevelVisualIndicator && groupedItems[0]?.locator
+                ? await hasSharedRequiredContextIndicator(groupedItems[0].locator)
                 : false;
 
             entries.push({
-                locator: group.radios[0]?.locator,
-                hasVisualIndicator: groupLabelIndicatesRequired || radioLevelVisualIndicator || sharedContextVisualIndicator,
-                hasProgrammaticIndicator: !group.requiredStateMismatch && (!!group.programmaticallyRequired || group.radios.some((radio) => radio.programmaticallyRequired)),
-                visualMissingMessage: "Radio group is programmatically required but has no visual required indicator",
+                locator: groupedItems[0]?.locator,
+                hasVisualIndicator: groupLabelIndicatesRequired || itemLevelVisualIndicator || sharedContextVisualIndicator,
+                hasProgrammaticIndicator: !group.requiredStateMismatch && (!!group.programmaticallyRequired || groupedItems.some((item) => item.programmaticallyRequired)),
+                visualMissingMessage: `${controlLabel} is programmatically required but has no visual required indicator`,
                 programmaticMissingMessage: group.requiredStateMismatch
-                    ? "Radio group has conflicting native and ARIA required states"
-                    : "Radio group appears visually required but has no programmatic required indicator",
+                    ? `${controlLabel} has conflicting native and ARIA required states`
+                    : `${controlLabel} appears visually required but has no programmatic required indicator`,
             });
         }
 
@@ -315,13 +416,19 @@ const collectRequiredIndicatorEntries = async (discovery) => {
         const helpers = Array.isArray(item.helperText)
             ? item.helperText
             : (item.helperText ? [item.helperText] : []);
+        const localVisualIndicator = indicatesRequiredVisually(item.visualLabel, { excludePlaceholder: true }) || hasRequiredHelperIndicator(helpers);
+        const sharedContextVisualIndicator = !localVisualIndicator && item.locator
+            ? await hasSharedRequiredContextIndicator(item.locator)
+            : false;
 
         entries.push({
             locator: item.locator,
-            hasVisualIndicator: indicatesRequiredVisually(item.visualLabel, { excludePlaceholder: true }) || hasRequiredHelperIndicator(helpers),
-            hasProgrammaticIndicator: !!item.programmaticallyRequired,
+            hasVisualIndicator: localVisualIndicator || sharedContextVisualIndicator,
+            hasProgrammaticIndicator: !item.requiredStateMismatch && !!item.programmaticallyRequired,
             visualMissingMessage: "Input is programmatically required but has no visual required indicator",
-            programmaticMissingMessage: "Input appears visually required but has no programmatic required indicator",
+            programmaticMissingMessage: item.requiredStateMismatch
+                ? "Input has conflicting native and ARIA required states"
+                : "Input appears visually required but has no programmatic required indicator",
         });
     }
 
@@ -614,17 +721,28 @@ testFn.discoverRadios = async (scope) => {
         let groupKey;
         let groupKind;
         let groupLabel = '';
+                let groupHasProgrammaticDescription = false;
 
         if (ariaGroup) {
             const groupIndex = ariaGroups.indexOf(ariaGroup);
             groupKey = `aria:${groupIndex}:${getNodePath(ariaGroup)}`;
             groupKind = 'aria';
             groupLabel = getAccessibleName(ariaGroup);
+                    groupHasProgrammaticDescription = !!(
+                        ariaGroup.getAttribute('aria-describedby')
+                        || ariaGroup.getAttribute('aria-description')
+                        || ariaGroup.getAttribute('title')
+                    );
         } else if (nativeFieldset) {
             const fieldsetIndex = fieldsets.indexOf(nativeFieldset);
             groupKey = `fieldset:${fieldsetIndex}:${getNodePath(nativeFieldset)}`;
             groupKind = 'fieldset';
             groupLabel = getLegendText(nativeFieldset) || getAccessibleName(nativeFieldset);
+                    groupHasProgrammaticDescription = !!(
+                        nativeFieldset.getAttribute('aria-describedby')
+                        || nativeFieldset.getAttribute('aria-description')
+                        || nativeFieldset.getAttribute('title')
+                    );
         } else if (isNativeRadio) {
             const form = radio.closest('form');
             const formIndex = form ? forms.indexOf(form) : -1;
@@ -642,6 +760,7 @@ testFn.discoverRadios = async (scope) => {
             groupKey,
             groupKind,
             groupLabel,
+            groupHasProgrammaticDescription,
             disabled,
             checked,
             checkedStateDefined,
@@ -689,6 +808,7 @@ testFn.discoverRadios = async (scope) => {
             groupKey: meta.groupKey,
             groupKind: meta.groupKind,
             groupLabel: meta.groupLabel,
+            groupHasProgrammaticDescription: meta.groupHasProgrammaticDescription,
         };
 
         inputs.push(item);
@@ -699,6 +819,7 @@ testFn.discoverRadios = async (scope) => {
                 groupKind: meta.groupKind,
                 groupLabel: meta.groupLabel,
                 programmaticallyRequired: meta.groupProgrammaticallyRequired,
+                groupHasProgrammaticDescription: !!meta.groupHasProgrammaticDescription,
                 hasNativeAriaStateMismatch: false,
                 nativeAriaStateMismatchCount: 0,
                 nativeAriaStateMismatchDetails: [],
@@ -750,7 +871,7 @@ testFn.discoverRadios = async (scope) => {
         }
     }
 
-    return { inputs, groups };
+    return { inputs, groups, controlType: 'radio' };
 };
 
 testFn.discoverRadioGroups = async (scope, discoveryCache) => {
@@ -760,6 +881,280 @@ testFn.discoverRadioGroups = async (scope, discoveryCache) => {
 
 testFn.getCheckedRadioIndexes = (group) => {
     return group.radios.filter((radio) => radio.checked).map((radio) => radio.domIndex);
+};
+
+testFn.discoverCheckboxes = async (scope) => {
+    const checkboxLocator = scope.locator('input[type="checkbox"], [role="checkbox"]');
+    const count = await checkboxLocator.count();
+    const inputs = [];
+    const groupsByKey = new Map();
+
+    for (let index = 0; index < count; index++) {
+        const locator = checkboxLocator.nth(index);
+        const [name, rawVisualLabel, rawHelperText, visible, meta] = await Promise.all([
+            getName(locator),
+            getVisualLabel(locator),
+            getHelperText(locator),
+            locator.isVisible(),
+            locator.evaluate((checkbox, args) => {
+                const { idx } = args;
+                const normalizeText = (value) => (value || '').toString().replace(/\s+/g, ' ').trim();
+                const parseAriaBoolean = (value) => {
+                    if (value === 'true') {
+                        return true;
+                    }
+                    if (value === 'false') {
+                        return false;
+                    }
+                    return null;
+                };
+
+                const getAccessibleName = (element) => {
+                    try {
+                        return normalizeText(window.axe.commons.text.accessibleText(element));
+                    } catch {
+                        return '';
+                    }
+                };
+
+                const getNodePath = (element) => {
+                    if (!element) {
+                        return '';
+                    }
+
+                    const segments = [];
+                    let current = element;
+
+                    while (current && current.nodeType === Node.ELEMENT_NODE) {
+                        let segment = current.tagName.toLowerCase();
+
+                        if (current.id) {
+                            segment += `#${current.id}`;
+                            segments.unshift(segment);
+                            break;
+                        }
+
+                        let siblingIndex = 1;
+                        let sibling = current;
+                        while ((sibling = sibling.previousElementSibling) !== null) {
+                            if (sibling.tagName === current.tagName) {
+                                siblingIndex += 1;
+                            }
+                        }
+
+                        segment += `:nth-of-type(${siblingIndex})`;
+                        segments.unshift(segment);
+                        current = current.parentElement;
+                    }
+
+                    return segments.join(' > ');
+                };
+
+                const getLegendText = (fieldset) => {
+                    if (!fieldset) {
+                        return '';
+                    }
+
+                    const legend = Array.from(fieldset.children).find((child) => child.tagName === 'LEGEND');
+                    return normalizeText(legend ? legend.textContent : '');
+                };
+
+                const groupContainers = Array.from(document.querySelectorAll('fieldset, [role="group"]'));
+                const fieldsets = Array.from(document.querySelectorAll('fieldset'));
+                const isNativeCheckbox = checkbox.matches('input[type="checkbox"]');
+                const groupContainer = checkbox.closest('fieldset, [role="group"]');
+                const requiredAttr = checkbox.getAttribute('required');
+                const ariaRequired = checkbox.getAttribute('aria-required');
+                const ariaDisabled = checkbox.getAttribute('aria-disabled');
+                const ariaChecked = checkbox.getAttribute('aria-checked');
+                const nativeDisabled = isNativeCheckbox ? checkbox.disabled : checkbox.hasAttribute('disabled');
+                const nativeChecked = isNativeCheckbox ? checkbox.checked : checkbox.hasAttribute('checked');
+                const nativeRequired = requiredAttr !== null;
+                const ariaDisabledState = parseAriaBoolean(ariaDisabled);
+                const ariaCheckedState = parseAriaBoolean(ariaChecked);
+                const ariaRequiredState = parseAriaBoolean(ariaRequired);
+                const disabled = isNativeCheckbox
+                    ? nativeDisabled
+                    : ariaDisabledState === true || nativeDisabled;
+                const checked = isNativeCheckbox
+                    ? nativeChecked
+                    : ariaCheckedState === true || nativeChecked;
+                const controlText = normalizeText(checkbox.innerText || checkbox.textContent || '');
+                const checkedStateDefined = isNativeCheckbox || ariaCheckedState !== null;
+                const checkedStateMismatch = isNativeCheckbox && ariaCheckedState !== null && ariaCheckedState !== nativeChecked;
+                const disabledStateMismatch = isNativeCheckbox && ariaDisabledState !== null && ariaDisabledState !== nativeDisabled;
+                const requiredStateMismatch = isNativeCheckbox && ariaRequiredState !== null && ariaRequiredState !== nativeRequired;
+
+                const stateConsistencyIssues = [];
+                if (checkedStateMismatch) {
+                    stateConsistencyIssues.push('checked');
+                }
+                if (disabledStateMismatch) {
+                    stateConsistencyIssues.push('disabled');
+                }
+                if (requiredStateMismatch) {
+                    stateConsistencyIssues.push('required');
+                }
+
+                let groupKey = null;
+                let groupKind = '';
+                let groupLabel = '';
+                let groupProgrammaticallyRequired = false;
+                let groupHasProgrammaticDescription = false;
+
+                if (groupContainer) {
+                    if (groupContainer.tagName === 'FIELDSET') {
+                        groupKey = `fieldset:${fieldsets.indexOf(groupContainer)}:${getNodePath(groupContainer)}`;
+                        groupKind = 'fieldset';
+                        groupLabel = getLegendText(groupContainer) || getAccessibleName(groupContainer);
+                        groupHasProgrammaticDescription = !!(
+                            groupContainer.getAttribute('aria-describedby')
+                            || groupContainer.getAttribute('aria-description')
+                            || groupContainer.getAttribute('title')
+                        );
+                    } else {
+                        groupKey = `group:${groupContainers.indexOf(groupContainer)}:${getNodePath(groupContainer)}`;
+                        groupKind = 'group';
+                        groupLabel = getAccessibleName(groupContainer);
+                        if (groupContainer.getAttribute('aria-required') === 'true') {
+                            groupProgrammaticallyRequired = true;
+                        }
+                        groupHasProgrammaticDescription = !!(
+                            groupContainer.getAttribute('aria-describedby')
+                            || groupContainer.getAttribute('aria-description')
+                            || groupContainer.getAttribute('title')
+                        );
+                    }
+                }
+
+                return {
+                    domIndex: idx,
+                    groupKey,
+                    groupKind,
+                    groupLabel,
+                    groupProgrammaticallyRequired,
+                    groupHasProgrammaticDescription,
+                    disabled,
+                    checked,
+                    checkedStateDefined,
+                    checkedStateMismatch,
+                    disabledStateMismatch,
+                    requiredStateMismatch,
+                    hasNativeAriaStateMismatch: stateConsistencyIssues.length > 0,
+                    nativeAriaStateMismatchCount: stateConsistencyIssues.length,
+                    nativeAriaStateMismatchDetails: stateConsistencyIssues,
+                    tabIndex: checkbox.tabIndex,
+                    programmaticallyRequired: nativeRequired || ariaRequiredState === true,
+                    controlText,
+                };
+            }, { idx: index }),
+        ]);
+
+        const helperText = Array.isArray(rawHelperText)
+            ? rawHelperText
+            : (rawHelperText ? [rawHelperText] : []);
+        let visualLabel = rawVisualLabel;
+
+        if ((!visualLabel || !visualLabel.text || !visualLabel.text.trim()) && meta.controlText) {
+            visualLabel = { text: meta.controlText, source: 'CONTROL_TEXT' };
+        }
+
+        const item = {
+            locator,
+            domIndex: meta.domIndex,
+            name,
+            visualLabel,
+            helperText,
+            visible,
+            disabled: meta.disabled,
+            tabIndex: meta.tabIndex,
+            checked: meta.checked,
+            checkedStateDefined: meta.checkedStateDefined,
+            checkedStateMismatch: meta.checkedStateMismatch,
+            disabledStateMismatch: meta.disabledStateMismatch,
+            requiredStateMismatch: meta.requiredStateMismatch,
+            hasNativeAriaStateMismatch: meta.hasNativeAriaStateMismatch,
+            nativeAriaStateMismatchCount: meta.nativeAriaStateMismatchCount,
+            nativeAriaStateMismatchDetails: meta.nativeAriaStateMismatchDetails,
+            programmaticallyRequired: meta.programmaticallyRequired,
+            groupKey: meta.groupKey,
+            groupKind: meta.groupKind,
+            groupLabel: meta.groupLabel,
+            groupHasProgrammaticDescription: meta.groupHasProgrammaticDescription,
+        };
+
+        inputs.push(item);
+
+        if (meta.groupKey) {
+            if (!groupsByKey.has(meta.groupKey)) {
+                groupsByKey.set(meta.groupKey, {
+                    groupKey: meta.groupKey,
+                    groupKind: meta.groupKind,
+                    groupLabel: meta.groupLabel,
+                    programmaticallyRequired: meta.groupProgrammaticallyRequired,
+                    groupHasProgrammaticDescription: !!meta.groupHasProgrammaticDescription,
+                    hasNativeAriaStateMismatch: false,
+                    nativeAriaStateMismatchCount: 0,
+                    nativeAriaStateMismatchDetails: [],
+                    requiredStateMismatch: false,
+                    checkboxes: [],
+                });
+            }
+
+            const group = groupsByKey.get(meta.groupKey);
+            group.checkboxes.push(item);
+            if (meta.hasNativeAriaStateMismatch) {
+                group.hasNativeAriaStateMismatch = true;
+                group.nativeAriaStateMismatchCount += meta.nativeAriaStateMismatchCount;
+                group.nativeAriaStateMismatchDetails = group.nativeAriaStateMismatchDetails.concat(meta.nativeAriaStateMismatchDetails);
+            }
+            if (meta.requiredStateMismatch) {
+                group.requiredStateMismatch = true;
+            }
+        }
+    }
+
+    const normalizeText = (value) => (value || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
+    const groups = Array.from(groupsByKey.values());
+
+    for (const group of groups) {
+        const groupLabel = normalizeText(group.groupLabel);
+        const checkboxLabels = new Set(
+            group.checkboxes
+                .map((checkbox) => normalizeText((checkbox.visualLabel && checkbox.visualLabel.text) || checkbox.name))
+                .filter(Boolean)
+        );
+
+        for (const checkbox of group.checkboxes) {
+            checkbox.helperText = checkbox.helperText.filter((helper) => {
+                const text = normalizeText(helper && helper.text);
+                if (!text) {
+                    return false;
+                }
+                if (text === groupLabel) {
+                    return false;
+                }
+                if (checkboxLabels.has(text)) {
+                    return false;
+                }
+                if (text === 'continue' || text === 'submit') {
+                    return false;
+                }
+                return true;
+            });
+        }
+    }
+
+    return { inputs, groups, controlType: 'checkbox' };
+};
+
+testFn.discoverCheckboxGroups = async (scope, discoveryCache) => {
+    const discoveryCacheObj = discoveryCache && discoveryCache.groups ? discoveryCache : await testFn.discoverCheckboxes(scope);
+    return discoveryCacheObj.groups;
+};
+
+testFn.getCheckedCheckboxIndexes = (group) => {
+    return group.checkboxes.filter((checkbox) => checkbox.checked).map((checkbox) => checkbox.domIndex);
 };
 
 // Check that inputs use appropriate autocomplete values for their inferred purpose (R - WCAG 1.3.5)

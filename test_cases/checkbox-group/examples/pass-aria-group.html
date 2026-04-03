@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ARIA Checkbox Group</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Visual labels are defined and persistent": "pass",
+      "Helper text is programmatically associated": "pass",
+      "Required fields are indicated visually": "pass",
+      "Required fields are indicated programmatically": "pass",
+      "Each checkbox group has an accessible label": "pass",
+      "Each checkbox is in the tab order": "pass",
+      "Space toggles checkbox state of each checkbox": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+  <style>
+    [role="checkbox"] {
+      border: 1px solid #333;
+      display: inline-block;
+      margin-right: 0.5rem;
+      padding: 0.5rem 0.75rem;
+    }
+    [role="checkbox"][aria-checked="true"] {
+      background: #d8eef8;
+      border-width: 2px;
+    }
+  </style>
+</head>
+<body>
+  <form>
+    <h1 id="updates-heading">Select Update Channels (required)</h1>
+    <p id="updates-help">Choose every way you want to hear from us.</p>
+    <div role="group" aria-labelledby="updates-heading" aria-describedby="updates-help" aria-required="true">
+      <div class="form-field"><div role="checkbox" tabindex="0" aria-checked="true" aria-describedby="updates-help">Email</div></div>
+      <div class="form-field"><div role="checkbox" tabindex="0" aria-checked="false" aria-describedby="updates-help">SMS</div></div>
+      <div class="form-field"><div role="checkbox" tabindex="0" aria-checked="false" aria-describedby="updates-help">Phone Calls</div></div>
+    </div>
+    <button type="submit">Continue</button>
+  </form>
+  <script>
+    const checkboxes = Array.from(document.querySelectorAll('[role="checkbox"]'));
+
+    const toggleCheckbox = (checkbox) => {
+      checkbox.setAttribute('aria-checked', checkbox.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+    };
+
+    checkboxes.forEach((checkbox) => {
+      checkbox.addEventListener('click', () => toggleCheckbox(checkbox));
+      checkbox.addEventListener('keydown', (event) => {
+        if (event.key !== ' ' && event.key !== 'Spacebar') {
+          return;
+        }
+        event.preventDefault();
+        toggleCheckbox(checkbox);
+      });
+    });
+  </script>
+</body>
+</html>
