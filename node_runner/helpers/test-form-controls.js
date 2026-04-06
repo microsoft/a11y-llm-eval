@@ -870,9 +870,6 @@ testFn.discoverRadios = async (scope) => {
                 if (radioLabels.has(text)) {
                     return false;
                 }
-                if (text === 'continue' || text === 'submit') {
-                    return false;
-                }
                 return true;
             });
         }
