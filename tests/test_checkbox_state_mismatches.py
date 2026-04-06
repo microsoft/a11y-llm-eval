@@ -80,6 +80,42 @@ CASES = [
             'ARIA attributes match native checkbox attributes if used': 'pass',
         },
     ),
+    (
+        'native_indeterminate_mixed',
+        '''<!doctype html>
+<html><body>
+  <form>
+    <div class="form-field">
+      <input id="select-all" type="checkbox" aria-checked="mixed">
+      <label for="select-all">Select all notifications</label>
+    </div>
+    <script>
+      document.getElementById('select-all').indeterminate = true;
+    </script>
+  </form>
+</body></html>''',
+        {
+            'ARIA attributes match native checkbox attributes if used': 'pass',
+            'Checked state is programmatically exposed': 'pass',
+            'Space toggles checkbox state': 'pass',
+        },
+    ),
+    (
+        'aria_mixed_custom_checkbox',
+        '''<!doctype html>
+<html><body>
+  <form>
+    <div class="form-field">
+      <div id="bulk" role="checkbox" aria-checked="mixed" tabindex="0" aria-label="Select all notifications"></div>
+    </div>
+  </form>
+</body></html>''',
+        {
+            'ARIA attributes match native checkbox attributes if used': 'pass',
+            'Checked state is programmatically exposed': 'pass',
+            'Each checkbox is keyboard reachable': 'pass',
+        },
+    ),
 ]
 
 

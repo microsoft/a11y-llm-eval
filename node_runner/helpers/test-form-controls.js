@@ -912,6 +912,18 @@ testFn.discoverCheckboxes = async (scope) => {
                     }
                     return null;
                 };
+                const parseAriaCheckedState = (value) => {
+                    if (value === 'true' || value === true) {
+                        return 'true';
+                    }
+                    if (value === 'false' || value === false) {
+                        return 'false';
+                    }
+                    if (value === 'mixed') {
+                        return 'mixed';
+                    }
+                    return null;
+                };
 
                 const getNodePath = (element) => {
                     if (!element) {
@@ -965,19 +977,21 @@ testFn.discoverCheckboxes = async (scope) => {
                 const ariaChecked = checkbox.getAttribute('aria-checked');
                 const nativeDisabled = isNativeCheckbox ? checkbox.disabled : checkbox.hasAttribute('disabled');
                 const nativeChecked = isNativeCheckbox ? checkbox.checked : checkbox.hasAttribute('checked');
+                const nativeIndeterminate = isNativeCheckbox ? checkbox.indeterminate === true : false;
                 const nativeRequired = requiredAttr !== null;
                 const ariaDisabledState = parseAriaBoolean(ariaDisabled);
-                const ariaCheckedState = parseAriaBoolean(ariaChecked);
+                const ariaCheckedState = parseAriaCheckedState(ariaChecked);
                 const ariaRequiredState = parseAriaBoolean(ariaRequired);
                 const disabled = isNativeCheckbox
                     ? nativeDisabled
                     : ariaDisabledState === true || nativeDisabled;
                 const checked = isNativeCheckbox
                     ? nativeChecked
-                    : ariaCheckedState === true || nativeChecked;
+                    : ariaCheckedState === 'true' || nativeChecked;
                 const controlText = normalizeText(checkbox.innerText || checkbox.textContent || '');
+                const nativeCheckedState = nativeIndeterminate ? 'mixed' : (nativeChecked ? 'true' : 'false');
                 const checkedStateDefined = isNativeCheckbox || ariaCheckedState !== null;
-                const checkedStateMismatch = isNativeCheckbox && ariaCheckedState !== null && ariaCheckedState !== nativeChecked;
+                const checkedStateMismatch = isNativeCheckbox && ariaCheckedState !== null && ariaCheckedState !== nativeCheckedState;
                 const disabledStateMismatch = isNativeCheckbox && ariaDisabledState !== null && ariaDisabledState !== nativeDisabled;
                 const requiredStateMismatch = isNativeCheckbox && ariaRequiredState !== null && ariaRequiredState !== nativeRequired;
 
