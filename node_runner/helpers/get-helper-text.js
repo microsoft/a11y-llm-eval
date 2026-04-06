@@ -4,6 +4,7 @@ const {
     SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
     FALLBACK_FIELD_WRAPPER_SELECTOR,
 } = require('./get-form-field-wrapper');
+const { getAccessibleDescription: getAccessibilityTreeDescription } = require('./get-accessibility-tree');
 const { getVisualLabel, SOURCE_PLACEHOLDER } = require('./get-visual-label');
 
 const SOURCE_HELPER_NEARBY = "HELPER_NEARBY";
@@ -177,7 +178,6 @@ const getHelperText = async (el, opts = {}) => {
             const ariaText = normText(ariaParts.join(' '));
             if (ariaText) {
                 addHelper(ariaText, SOURCE_ARIA_DESCRIBEDBY, firstNode || el);
-                hasAriaHelper = true;
             }
         }
 
@@ -331,32 +331,9 @@ const combineHelperTexts = (helper) => {
 
 
 
-// Compute the accessible description text from helper entries.
-// Accepts the result of getHelperText (single object or array) and
-// returns the first matching text in this priority order:
-// 1) ARIA_DESCRIBEDBY
-// 2) ARIA_DESCRIPTION
-// 3) TITLE
-// Other sources are ignored.
-const getAccessibleDescription = (helper) => {
-    const helpers = Array.isArray(helper)
-        ? helper
-        : (helper ? [helper] : []);
-
-    const priorities = [
-        SOURCE_ARIA_DESCRIBEDBY,
-        SOURCE_ARIA_DESCRIPTION,
-        SOURCE_TITLE,
-    ];
-
-    for (const source of priorities) {
-        const match = helpers.find(h => h && h.source === source && h.text && String(h.text).trim());
-        if (match) {
-            return String(match.text).trim();
-        }
-    }
-
-    return '';
+// Return the Chromium accessibility-tree description for the given node.
+const getAccessibleDescription = async (el) => {
+    return getAccessibilityTreeDescription(el);
 };
 
 module.exports.getHelperText = getHelperText;

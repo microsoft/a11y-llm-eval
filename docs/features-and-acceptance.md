@@ -330,6 +330,7 @@ The runner:
 - Loads the HTML into a real browser page.
 - Injects axe-core and runs `axe.run()`.
 - Executes `test.js` assertions via an injected `assert(name, fn, opts)` helper.
+- Custom form-control assertions derive accessible names and descriptions from the corresponding Chromium accessibility tree nodes for the DOM elements under test.
 
 ### Acceptance criteria
 

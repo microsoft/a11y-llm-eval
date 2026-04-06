@@ -1,5 +1,6 @@
 const detailedResults = require('./detailed-results');
 const getName = require('./get-name');
+const { getAccessibilityNodeInfo } = require('./get-accessibility-tree');
 const { getVisualLabel, SOURCE_PLACEHOLDER } = require('./get-visual-label');
 const { getAllFormFieldWrappers } = require('./get-form-field-wrapper');
 const { combineHelperTexts, getHelperText, SOURCE_ARIA_DESCRIBEDBY, SOURCE_ARIA_DESCRIPTION, SOURCE_TITLE, SOURCE_CSS_PLACEHOLDER } = require('./get-helper-text');
@@ -15,6 +16,22 @@ const getTextInputs = async (scope) => {
 // Get all form field wrappers
 const getFormFields = async (scope) => {
     return await getAllFormFieldWrappers(scope);
+};
+
+const getGroupDescriptionLocator = (locator, groupKind) => {
+    if (groupKind === 'fieldset') {
+        return locator.locator('xpath=ancestor::fieldset[1]').first();
+    }
+
+    if (groupKind === 'aria') {
+        return locator.locator('xpath=ancestor::*[@role="radiogroup" or @role="group"][1]').first();
+    }
+
+    if (groupKind === 'group') {
+        return locator.locator('xpath=ancestor::*[@role="group"][1]').first();
+    }
+
+    return null;
 };
 
 // Check that each text input has an accessible name (R - WCAG 4.1.2)
@@ -627,14 +644,6 @@ testFn.discoverRadios = async (scope) => {
             return null;
         };
 
-        const getAccessibleName = (element) => {
-            try {
-                return normalizeText(window.axe.commons.text.accessibleText(element));
-            } catch {
-                return '';
-            }
-        };
-
         const getNodePath = (element) => {
             if (!element) {
                 return '';
@@ -727,22 +736,11 @@ testFn.discoverRadios = async (scope) => {
             const groupIndex = ariaGroups.indexOf(ariaGroup);
             groupKey = `aria:${groupIndex}:${getNodePath(ariaGroup)}`;
             groupKind = 'aria';
-            groupLabel = getAccessibleName(ariaGroup);
-                    groupHasProgrammaticDescription = !!(
-                        ariaGroup.getAttribute('aria-describedby')
-                        || ariaGroup.getAttribute('aria-description')
-                        || ariaGroup.getAttribute('title')
-                    );
         } else if (nativeFieldset) {
             const fieldsetIndex = fieldsets.indexOf(nativeFieldset);
             groupKey = `fieldset:${fieldsetIndex}:${getNodePath(nativeFieldset)}`;
             groupKind = 'fieldset';
-            groupLabel = getLegendText(nativeFieldset) || getAccessibleName(nativeFieldset);
-                    groupHasProgrammaticDescription = !!(
-                        nativeFieldset.getAttribute('aria-describedby')
-                        || nativeFieldset.getAttribute('aria-description')
-                        || nativeFieldset.getAttribute('title')
-                    );
+            groupLabel = getLegendText(nativeFieldset);
         } else if (isNativeRadio) {
             const form = radio.closest('form');
             const formIndex = form ? forms.indexOf(form) : -1;
@@ -781,7 +779,16 @@ testFn.discoverRadios = async (scope) => {
         const helperText = Array.isArray(rawHelperText)
             ? rawHelperText
             : (rawHelperText ? [rawHelperText] : []);
+        let groupHasProgrammaticDescription = false;
+        let groupLabel = meta.groupLabel;
+        const groupLocator = getGroupDescriptionLocator(locator, meta.groupKind);
         let visualLabel = rawVisualLabel;
+
+        if (groupLocator && await groupLocator.count()) {
+            const groupAccessibilityNode = await getAccessibilityNodeInfo(groupLocator);
+            groupLabel = groupAccessibilityNode.name || groupLabel;
+            groupHasProgrammaticDescription = !!groupAccessibilityNode.description;
+        }
 
         if ((!visualLabel || !visualLabel.text || !visualLabel.text.trim()) && meta.controlText) {
             visualLabel = { text: meta.controlText, source: 'CONTROL_TEXT' };
@@ -807,8 +814,8 @@ testFn.discoverRadios = async (scope) => {
             programmaticallyRequired: meta.programmaticallyRequired,
             groupKey: meta.groupKey,
             groupKind: meta.groupKind,
-            groupLabel: meta.groupLabel,
-            groupHasProgrammaticDescription: meta.groupHasProgrammaticDescription,
+            groupLabel,
+            groupHasProgrammaticDescription,
         };
 
         inputs.push(item);
@@ -817,9 +824,9 @@ testFn.discoverRadios = async (scope) => {
             groupsByKey.set(meta.groupKey, {
                 groupKey: meta.groupKey,
                 groupKind: meta.groupKind,
-                groupLabel: meta.groupLabel,
+                groupLabel,
                 programmaticallyRequired: meta.groupProgrammaticallyRequired,
-                groupHasProgrammaticDescription: !!meta.groupHasProgrammaticDescription,
+                groupHasProgrammaticDescription,
                 hasNativeAriaStateMismatch: false,
                 nativeAriaStateMismatchCount: 0,
                 nativeAriaStateMismatchDetails: [],
@@ -907,14 +914,6 @@ testFn.discoverCheckboxes = async (scope) => {
                         return false;
                     }
                     return null;
-                };
-
-                const getAccessibleName = (element) => {
-                    try {
-                        return normalizeText(window.axe.commons.text.accessibleText(element));
-                    } catch {
-                        return '';
-                    }
                 };
 
                 const getNodePath = (element) => {
@@ -1006,24 +1005,13 @@ testFn.discoverCheckboxes = async (scope) => {
                     if (groupContainer.tagName === 'FIELDSET') {
                         groupKey = `fieldset:${fieldsets.indexOf(groupContainer)}:${getNodePath(groupContainer)}`;
                         groupKind = 'fieldset';
-                        groupLabel = getLegendText(groupContainer) || getAccessibleName(groupContainer);
-                        groupHasProgrammaticDescription = !!(
-                            groupContainer.getAttribute('aria-describedby')
-                            || groupContainer.getAttribute('aria-description')
-                            || groupContainer.getAttribute('title')
-                        );
+                        groupLabel = getLegendText(groupContainer);
                     } else {
                         groupKey = `group:${groupContainers.indexOf(groupContainer)}:${getNodePath(groupContainer)}`;
                         groupKind = 'group';
-                        groupLabel = getAccessibleName(groupContainer);
                         if (groupContainer.getAttribute('aria-required') === 'true') {
                             groupProgrammaticallyRequired = true;
                         }
-                        groupHasProgrammaticDescription = !!(
-                            groupContainer.getAttribute('aria-describedby')
-                            || groupContainer.getAttribute('aria-description')
-                            || groupContainer.getAttribute('title')
-                        );
                     }
                 }
 
@@ -1033,7 +1021,6 @@ testFn.discoverCheckboxes = async (scope) => {
                     groupKind,
                     groupLabel,
                     groupProgrammaticallyRequired,
-                    groupHasProgrammaticDescription,
                     disabled,
                     checked,
                     checkedStateDefined,
@@ -1053,7 +1040,16 @@ testFn.discoverCheckboxes = async (scope) => {
         const helperText = Array.isArray(rawHelperText)
             ? rawHelperText
             : (rawHelperText ? [rawHelperText] : []);
+        let groupHasProgrammaticDescription = false;
+        let groupLabel = meta.groupLabel;
+        const groupLocator = getGroupDescriptionLocator(locator, meta.groupKind);
         let visualLabel = rawVisualLabel;
+
+        if (groupLocator && await groupLocator.count()) {
+            const groupAccessibilityNode = await getAccessibilityNodeInfo(groupLocator);
+            groupLabel = groupAccessibilityNode.name || groupLabel;
+            groupHasProgrammaticDescription = !!groupAccessibilityNode.description;
+        }
 
         if ((!visualLabel || !visualLabel.text || !visualLabel.text.trim()) && meta.controlText) {
             visualLabel = { text: meta.controlText, source: 'CONTROL_TEXT' };
@@ -1079,8 +1075,8 @@ testFn.discoverCheckboxes = async (scope) => {
             programmaticallyRequired: meta.programmaticallyRequired,
             groupKey: meta.groupKey,
             groupKind: meta.groupKind,
-            groupLabel: meta.groupLabel,
-            groupHasProgrammaticDescription: meta.groupHasProgrammaticDescription,
+            groupLabel,
+            groupHasProgrammaticDescription,
         };
 
         inputs.push(item);
@@ -1090,9 +1086,9 @@ testFn.discoverCheckboxes = async (scope) => {
                 groupsByKey.set(meta.groupKey, {
                     groupKey: meta.groupKey,
                     groupKind: meta.groupKind,
-                    groupLabel: meta.groupLabel,
+                    groupLabel,
                     programmaticallyRequired: meta.groupProgrammaticallyRequired,
-                    groupHasProgrammaticDescription: !!meta.groupHasProgrammaticDescription,
+                    groupHasProgrammaticDescription,
                     hasNativeAriaStateMismatch: false,
                     nativeAriaStateMismatchCount: 0,
                     nativeAriaStateMismatchDetails: [],
