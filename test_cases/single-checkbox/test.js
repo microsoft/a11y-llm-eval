@@ -6,6 +6,38 @@
 module.exports.run = async ({ page, assert, utils }) => {
     const discovery = await utils.testFormControls.discoverCheckboxes(page);
 
+    await assert("Each checkbox has a valid role", async () => {
+        const checkboxes = discovery.inputs;
+
+        if (checkboxes.length === 0) {
+            return { pass: false, message: 'No checkboxes found in scope' };
+        }
+
+        let invalidCount = 0;
+        for (const checkbox of checkboxes) {
+            const hasValidRole = await checkbox.locator.evaluate((el) => {
+                const explicitRole = (el.getAttribute('role') || '').trim().toLowerCase();
+                const isNativeCheckbox = el.matches('input[type="checkbox"]');
+
+                if (isNativeCheckbox) {
+                    return explicitRole === '' || explicitRole === 'checkbox';
+                }
+
+                return explicitRole === 'checkbox';
+            });
+
+            if (!hasValidRole) {
+                invalidCount += 1;
+            }
+        }
+
+        if (invalidCount === 0) {
+            return { pass: true, message: 'All checkboxes expose valid checkbox roles' };
+        }
+
+        return { pass: false, message: `${invalidCount} checkbox option(s) do not expose a valid checkbox role` };
+    });
+
     await assert("Each checkbox has an accessible name", async () => {
         const checkboxes = discovery.inputs;
 

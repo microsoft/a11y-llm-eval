@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Single Checkbox Invalid Role</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has a valid role": "fail"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <div class="form-field">
+      <input id="agree-updates" type="checkbox" role="switch" checked />
+      <label for="agree-updates">I agree to receive updates</label>
+    </div>
+  </form>
+</body>
+</html>

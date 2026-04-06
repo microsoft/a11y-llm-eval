@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checkbox Group Invalid Role</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has a valid role": "fail",
+      "Each checkbox group has a valid role": "fail"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <div class="form-field">
+      <h2>Preferred contact methods</h2>
+      <div><input id="pref-email" type="checkbox" role="switch" checked /><label for="pref-email">Email</label></div>
+      <div><input id="pref-sms" type="checkbox" role="switch" /><label for="pref-sms">SMS</label></div>
+    </div>
+  </form>
+</body>
+</html>
