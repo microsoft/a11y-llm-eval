@@ -6,15 +6,17 @@ from datetime import datetime
 from pathlib import Path
 import typer
 import yaml
-from typing import List
+from typing import Any, List
 
 from . import generator, node_bridge
+from .prompt_specs import load_prompt_specs
 from .schema import (
     ResultRecord,
     TestFunctionResult,
     AxeResult,
     GenerationMeta,
     AggregateRecord,
+    PromptCase,
     PromptVariant,
 )
 from .metrics import compute_pass_at_k, format_pass_at_k
@@ -28,7 +30,6 @@ from dotenv import load_dotenv, dotenv_values
 load_dotenv() 
 
 app = typer.Typer(add_completion=False)
-
 
 def _render_progress(prefix: str, done: int, total: int) -> None:
     """Render an in-place progress indicator.
@@ -46,7 +47,18 @@ def _render_progress(prefix: str, done: int, total: int) -> None:
 
 def _evaluate_worker(args_tuple):
     """Top-level worker for multiprocessing to ensure picklability on spawn-based systems (macOS, Windows)."""
-    html_path, test_js_path, screenshot_path, test_name, model, sample_index, gen_meta, prompt_text, prompt_variant_id = args_tuple
+    html_path = args_tuple["html_path"]
+    test_js_path = args_tuple["test_js_path"]
+    screenshot_path = args_tuple["screenshot_path"]
+    test_name = args_tuple["test_name"]
+    base_test_name = args_tuple.get("base_test_name")
+    prompt_case_id = args_tuple.get("prompt_case_id")
+    prompt_dimensions = args_tuple.get("prompt_dimensions") or []
+    model = args_tuple["model"]
+    sample_index = args_tuple["sample_index"]
+    gen_meta = args_tuple.get("gen_meta") or {}
+    prompt_text = args_tuple.get("prompt_text") or ""
+    prompt_variant_id = args_tuple.get("prompt_variant_id")
     html = Path(html_path).read_text(encoding="utf-8")
     sp = Path(screenshot_path)
     sp.parent.mkdir(parents=True, exist_ok=True)
@@ -99,6 +111,9 @@ def _evaluate_worker(args_tuple):
     result_pass = bool(axe_obj) and (test_result.status == "pass" and axe_obj.failure_count == 0)
     rec = ResultRecord(
         test_name=test_name,
+        base_test_name=base_test_name,
+        prompt_case_id=prompt_case_id,
+        prompt_dimensions=prompt_dimensions,
         model_name=model,
         timestamp=datetime.utcnow(),
         generation_html_path=html_path,
@@ -123,28 +138,27 @@ def _evaluate_worker(args_tuple):
         sample_index=sample_index,
         prompt_variant_id=prompt_variant_id,
     )
-    return json.loads(rec.model_dump_json()), test_name, model, prompt_variant_id, {
-        "pass": result_pass,
-    }
+    return json.loads(rec.model_dump_json())
 
 
 def _generate_worker(task):
     """Top-level generation worker for multiprocessing; receives a tuple of parameters."""
-    (
-        test_name,
-        model,
-        sample_index,
-        prompt_text,
-        seed,
-        temperature,
-        disable_cache,
-        system_prompt_override,
-        custom_instructions_text,
-        prompt_variant_id,
-        debug_truncated_cache,
-        html_out_path,
-        model_display_name,
-    ) = task
+    test_name = task["test_name"]
+    base_test_name = task["base_test_name"]
+    prompt_case_id = task["prompt_case_id"]
+    prompt_dimensions = task.get("prompt_dimensions") or []
+    model = task["model"]
+    sample_index = task["sample_index"]
+    prompt_text = task["prompt_text"]
+    seed = task.get("seed")
+    temperature = task.get("temperature")
+    disable_cache = task.get("disable_cache", False)
+    system_prompt_override = task.get("system_prompt_override")
+    custom_instructions_text = task.get("custom_instructions_text")
+    prompt_variant_id = task.get("prompt_variant_id")
+    debug_truncated_cache = task.get("debug_truncated_cache", False)
+    html_out_path = task["html_out_path"]
+    model_display_name = task.get("model_display_name")
 
     # Configure prompts within this worker process for the specific variant.
     generator.configure_prompts(system_prompt_override, custom_instructions_text)
@@ -171,7 +185,54 @@ def _generate_worker(task):
     atomic_write_text(out_path, html, encoding="utf-8")
 
     # Return only small, picklable data
-    return test_name, model, sample_index, prompt_text, meta, str(out_path), prompt_variant_id
+    return {
+        "test_name": test_name,
+        "base_test_name": base_test_name,
+        "prompt_case_id": prompt_case_id,
+        "prompt_dimensions": prompt_dimensions,
+        "model": model,
+        "sample_index": sample_index,
+        "prompt_text": prompt_text,
+        "meta": meta,
+        "html_path": str(out_path),
+        "prompt_variant_id": prompt_variant_id,
+    }
+
+
+def _default_screenshot_path(
+    run_dir: Path,
+    prompt_case_id: str | None,
+    test_name: str,
+    model: str,
+    sample_index: int | None,
+    prompt_variant_id: str,
+) -> Path:
+    file_stem = prompt_case_id or test_name
+    file_name = f"{file_stem}__{model}__s{sample_index}.png" if sample_index is not None else f"{file_stem}__{model}.png"
+    if prompt_variant_id == "control":
+        return run_dir / "screenshots" / file_name
+    return run_dir / "screenshots_variants" / prompt_variant_id / file_name
+
+
+def _legacy_prompt_map(test_cases_dir: Path) -> dict[str, str]:
+    prompts_map = {}
+    for test_dir in sorted(p for p in test_cases_dir.iterdir() if p.is_dir()):
+        prompt_file = test_dir / "prompt.md"
+        if prompt_file.exists():
+            prompts_map[test_dir.name] = prompt_file.read_text(encoding="utf-8")
+    return prompts_map
+
+
+def _resolve_cli_path(path_value: str, base_dir: Path) -> Path:
+    candidate = Path(path_value)
+    if candidate.is_absolute():
+        return candidate
+
+    workspace_candidate = Path.cwd() / candidate
+    if workspace_candidate.exists():
+        return workspace_candidate
+
+    return base_dir / candidate
 
 
 def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[dict]:
@@ -225,6 +286,7 @@ def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[d
 @app.command()
 def run(
     models_file: str = typer.Option("config/models.yaml", help="Models config YAML"),
+    prompt_dimensions_file: str = typer.Option("config/prompt_dimensions.yaml", help="Global prompt dimensions config YAML."),
     out: str = typer.Option("runs", help="Output directory"),
     samples: int = typer.Option(1, min=1, help="Number of samples per (test,model)."),
     k: str = typer.Option("1,5,10", help="Comma-separated k values for pass@k metrics (stored for later evaluation)."),
@@ -299,7 +361,16 @@ def run(
         model_display_lookup[name] = display_name
         models_info.append({"name": name, "display_name": display_name})
     tcd = Path(test_cases_dir)
-    test_dirs = [p for p in tcd.iterdir() if p.is_dir() and (p / "prompt.md").exists()]
+    prompt_dimensions_path = _resolve_cli_path(prompt_dimensions_file, config_dir)
+    try:
+        prompt_spec_set = load_prompt_specs(tcd, prompt_dimensions_path.resolve())
+    except Exception as exc:
+        typer.secho(f"Failed to load prompt specs: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    test_dirs = prompt_spec_set.test_dirs
+    prompt_cases = prompt_spec_set.prompt_cases
+    prompts_map = prompt_spec_set.prompts_map
 
     # Prompt variants: always include control
     prompt_variants: list[dict] = []
@@ -340,12 +411,9 @@ def run(
             })
     # Build generation tasks
     results = []  # stub pending evaluation records
-    prompts_map = {}
     # Round-robin task queues per model to avoid hammering a single LLM
     tasks_by_model = {model: [] for model in model_names}
-    for td in test_dirs:
-        prompt_text = (td / "prompt.md").read_text(encoding="utf-8")
-        prompts_map[td.name] = prompt_text
+    for prompt_case in prompt_cases:
         for model in model_names:
             for variant in prompt_variants:
                 n_samples = int(variant.get("n_samples_requested") or samples)
@@ -354,27 +422,30 @@ def run(
                     variant_id = variant.get("id") or "control"
 
                     if variant_id == "control":
-                        raw_path = out_dir / "raw" / td.name
-                        html_file = raw_path / (f"{model}__s{sample_index}.html" if samples > 1 else f"{model}.html")
+                        raw_path = out_dir / "raw" / prompt_case.prompt_case_id
+                        html_file = raw_path / (f"{model}__s{sample_index}.html" if n_samples > 1 else f"{model}.html")
                     else:
-                        raw_path = out_dir / "raw_variants" / variant_id / td.name
+                        raw_path = out_dir / "raw_variants" / variant_id / prompt_case.prompt_case_id
                         html_file = raw_path / f"{model}__s{sample_index}.html"
 
-                    tasks_by_model[model].append((
-                        td.name,
-                        model,
-                        sample_index,
-                        prompt_text,
-                        seed,
-                        effective_temperature,
-                        disable_cache,
-                        system_prompt_override,
-                        variant.get("custom_instructions_text"),
-                        variant_id,
-                        debug_truncated_cache,
-                        str(html_file),
-                        model_display_lookup.get(model),
-                    ))
+                    tasks_by_model[model].append({
+                        "test_name": prompt_case.test_name,
+                        "base_test_name": prompt_case.base_test_name,
+                        "prompt_case_id": prompt_case.prompt_case_id,
+                        "prompt_dimensions": prompt_case.prompt_dimensions,
+                        "model": model,
+                        "sample_index": sample_index,
+                        "prompt_text": prompt_case.prompt_text,
+                        "seed": seed,
+                        "temperature": effective_temperature,
+                        "disable_cache": disable_cache,
+                        "system_prompt_override": system_prompt_override,
+                        "custom_instructions_text": variant.get("custom_instructions_text"),
+                        "prompt_variant_id": variant_id,
+                        "debug_truncated_cache": debug_truncated_cache,
+                        "html_out_path": str(html_file),
+                        "model_display_name": model_display_lookup.get(model),
+                    })
 
     # Flatten into a single task list using round-robin across models
     gen_tasks = []  # (test_name, model, sample_index, prompt, seed)
@@ -398,9 +469,20 @@ def run(
             total = len(gen_tasks)
             done = 0
             _render_progress("Generating", done, total)
-            for test_name, model, sample_index, prompt_text, meta, html_path, prompt_variant_id in gen_results_iter:
+            for gen_result in gen_results_iter:
                 done += 1
                 _render_progress("Generating", done, total)
+
+                test_name = gen_result["test_name"]
+                base_test_name = gen_result.get("base_test_name")
+                prompt_case_id = gen_result.get("prompt_case_id")
+                prompt_dimensions = gen_result.get("prompt_dimensions") or []
+                model = gen_result["model"]
+                sample_index = gen_result["sample_index"]
+                prompt_text = gen_result["prompt_text"]
+                meta = gen_result.get("meta") or {}
+                html_path = gen_result["html_path"]
+                prompt_variant_id = gen_result.get("prompt_variant_id")
 
                 if debug_truncated_cache and isinstance(meta, dict):
                     tcf = meta.get("truncated_cache_files")
@@ -413,6 +495,9 @@ def run(
 
                 rec = ResultRecord(
                     test_name=test_name,
+                    base_test_name=base_test_name,
+                    prompt_case_id=prompt_case_id,
+                    prompt_dimensions=prompt_dimensions,
                     model_name=model,
                     timestamp=datetime.utcnow(),
                     generation_html_path=str(html_path),
@@ -470,7 +555,7 @@ def run(
     run_json = {
         "run_id": run_id,
         "models": model_names,
-        "tests": [d.name for d in test_dirs],
+        "tests": [pc.test_name for pc in prompt_cases],
         "prompts": prompts_map,
         "results": results,
         "aggregates": [],  # will be populated after evaluation
@@ -482,6 +567,7 @@ def run(
                 "base_seed": base_seed,
                 "disable_cache": disable_cache,
                 "processes_generation": (processes if processes is not None else min(multiprocessing.cpu_count(), len(gen_tasks))) if gen_tasks else None,
+                "prompt_dimensions_file": str(prompt_dimensions_path.resolve()),
             },
             "prompting": {
                 "system_prompt": base_prompting_system_prompt,
@@ -496,6 +582,12 @@ def run(
                 custom_instructions_path=v.get("custom_instructions_path"),
                 n_samples_requested=v.get("n_samples_requested"),
             ).model_dump_json()) for v in prompt_variants],
+            "prompt_cases": [json.loads(PromptCase(
+                id=pc["id"],
+                test_name=pc["test_name"],
+                base_test_name=pc["base_test_name"],
+                prompt_dimensions=pc.get("prompt_dimensions") or [],
+            ).model_dump_json()) for pc in prompt_spec_set.prompt_cases_meta],
             "models_info": models_info,
             "status": "GENERATED_ONLY",
         },
@@ -536,32 +628,75 @@ def evaluate(
     meta_block = (prior_data.get("meta") or {})
     stored_models_info = meta_block.get("models_info") or []
     display_lookup = {m.get("name"): m.get("display_name") for m in stored_models_info if m.get("name")}
-    # prompts
     tcd = Path(test_cases_dir)
-    test_dirs = [p for p in tcd.iterdir() if p.is_dir() and (p / "prompt.md").exists()]
-    prompts_map = {td.name: (td / "prompt.md").read_text(encoding="utf-8") for td in test_dirs}
+    prompts_map = prior_data.get("prompts") or _legacy_prompt_map(tcd)
     k_values = [int(x.strip()) for x in k.split(",") if x.strip().isdigit()]
     if not k_values:
         k_values = [1]
 
-    # Map generation meta by (test, model, sample_index, variant) for reuse
+    # Map generation meta by (prompt_case_id or test_name, model, sample_index, variant) for reuse
     gen_meta_map = {}
     for r in prior_data.get("results", []) if prior_data else []:
         variant_id = r.get("prompt_variant_id") or "control"
-        key = (r.get("test_name"), r.get("model_name"), r.get("sample_index"), variant_id)
+        key = (r.get("prompt_case_id") or r.get("test_name"), r.get("model_name"), r.get("sample_index"), variant_id)
         gen_meta_map[key] = r.get("generation")
 
     # Build evaluation task list
-    # each entry: (html_path, test_js_path, screenshot_path, test_name, model, sample_index, gen_meta, prompt_text, prompt_variant_id)
     tasks = []
-    for td in test_dirs:
-        test_name = td.name
-        test_js = td / "test.js"
-        # Control (legacy behavior)
-        raw_dir = rd / "raw" / test_name
-        if raw_dir.exists():
-            html_files = sorted(raw_dir.glob("**/*.html"))
-            for hf in html_files:
+    test_js_lookup = {
+        p.name: p / "test.js"
+        for p in sorted(tcd.iterdir())
+        if p.is_dir() and (p / "test.js").exists()
+    }
+
+    prior_results = prior_data.get("results") or []
+    if prior_results:
+        for result in prior_results:
+            html_path = result.get("generation_html_path")
+            if not html_path:
+                continue
+            base_test_name = result.get("base_test_name") or result.get("test_name")
+            test_js = test_js_lookup.get(base_test_name)
+            if test_js is None:
+                typer.secho(f"Skipping missing test.js for base test '{base_test_name}'", err=True)
+                continue
+            test_name = result.get("test_name") or base_test_name
+            prompt_case_id = result.get("prompt_case_id") or test_name
+            prompt_variant_id = result.get("prompt_variant_id") or "control"
+            model = result.get("model_name")
+            sample_index = result.get("sample_index")
+            screenshot_path = result.get("screenshot_path") or str(_default_screenshot_path(
+                rd,
+                prompt_case_id,
+                test_name,
+                model,
+                sample_index,
+                prompt_variant_id,
+            ))
+            gen_meta = gen_meta_map.get((prompt_case_id, model, sample_index, prompt_variant_id)) or (result.get("generation") or {})
+            if sample_index is None and not gen_meta:
+                gen_meta = gen_meta_map.get((prompt_case_id, model, 0, prompt_variant_id)) or {}
+            tasks.append({
+                "html_path": str(html_path),
+                "test_js_path": str(test_js),
+                "screenshot_path": str(screenshot_path),
+                "test_name": test_name,
+                "base_test_name": base_test_name,
+                "prompt_case_id": prompt_case_id,
+                "prompt_dimensions": result.get("prompt_dimensions") or [],
+                "model": model,
+                "sample_index": sample_index,
+                "gen_meta": gen_meta,
+                "prompt_text": prompts_map.get(test_name, ""),
+                "prompt_variant_id": prompt_variant_id,
+            })
+    else:
+        typer.secho("No prior generation records found in results.json; falling back to legacy directory scan.", err=True)
+        for base_test_name, test_js in test_js_lookup.items():
+            raw_dir = rd / "raw" / base_test_name
+            if not raw_dir.exists():
+                continue
+            for hf in sorted(raw_dir.glob("**/*.html")):
                 fname = hf.name
                 if "__s" in fname:
                     model_part, sample_part = fname.split("__s", 1)
@@ -574,51 +709,35 @@ def evaluate(
                 else:
                     model = fname[:-5]
                     sample_index = None
-                screenshot_name = f"{test_name}__{model}__s{sample_index}.png" if sample_index is not None else f"{test_name}__{model}.png"
-                screenshot_path = rd / "screenshots" / screenshot_name
-                gen_meta = gen_meta_map.get((test_name, model, sample_index, "control")) or {}
-                if sample_index is None and not gen_meta:
-                    gen_meta = gen_meta_map.get((test_name, model, 0, "control")) or {}
-                tasks.append((str(hf), str(test_js), str(screenshot_path), test_name, model, sample_index, gen_meta, prompts_map.get(test_name, ""), "control"))
-        else:
-            typer.secho(f"Skipping missing raw dir for test '{test_name}'", err=True)
-
-        # Variants
-        variants_root = rd / "raw_variants"
-        if variants_root.exists():
-            for variant_dir in sorted([p for p in variants_root.iterdir() if p.is_dir()]):
-                variant_id = variant_dir.name
-                v_test_dir = variant_dir / test_name
-                if not v_test_dir.exists():
-                    continue
-                v_html_files = sorted(v_test_dir.glob("**/*.html"))
-                for hf in v_html_files:
-                    fname = hf.name
-                    if "__s" in fname:
-                        model_part, sample_part = fname.split("__s", 1)
-                        sample_index_str = sample_part[:-5] if sample_part.endswith(".html") else sample_part
-                        try:
-                            sample_index = int(sample_index_str)
-                        except ValueError:
-                            sample_index = None
-                        model = model_part
-                    else:
-                        model = fname[:-5]
-                        sample_index = None
-                    screenshot_name = f"{test_name}__{model}__s{sample_index}.png" if sample_index is not None else f"{test_name}__{model}.png"
-                    screenshot_path = rd / "screenshots_variants" / variant_id / screenshot_name
-                    gen_meta = gen_meta_map.get((test_name, model, sample_index, variant_id)) or {}
-                    if sample_index is None and not gen_meta:
-                        gen_meta = gen_meta_map.get((test_name, model, 0, variant_id)) or {}
-                    tasks.append((str(hf), str(test_js), str(screenshot_path), test_name, model, sample_index, gen_meta, prompts_map.get(test_name, ""), variant_id))
+                tasks.append({
+                    "html_path": str(hf),
+                    "test_js_path": str(test_js),
+                    "screenshot_path": str(_default_screenshot_path(rd, base_test_name, base_test_name, model, sample_index, "control")),
+                    "test_name": base_test_name,
+                    "base_test_name": base_test_name,
+                    "prompt_case_id": base_test_name,
+                    "prompt_dimensions": [],
+                    "model": model,
+                    "sample_index": sample_index,
+                    "gen_meta": gen_meta_map.get((base_test_name, model, sample_index, "control")) or {},
+                    "prompt_text": prompts_map.get(base_test_name, ""),
+                    "prompt_variant_id": "control",
+                })
 
     # Sort tasks for deterministic ordering
-    # Sort tasks for deterministic ordering (control first)
-    tasks.sort(key=lambda t: (t[8] != "control", t[8], t[3], t[4], t[5] if t[5] is not None else -1))
+    tasks.sort(
+        key=lambda t: (
+            t["prompt_variant_id"] != "control",
+            t["prompt_variant_id"],
+            t["test_name"],
+            t["model"],
+            t["sample_index"] if t["sample_index"] is not None else -1,
+        )
+    )
 
 
     all_results = []
-    pass_map = {}  # (test_name, model, variant) -> list[bool]
+    pass_map: dict[tuple[str, str, str | None, str, str], dict[str, Any]] = {}
     if not tasks:
         typer.secho("No evaluation tasks found.", err=True)
     else:
@@ -633,9 +752,17 @@ def evaluate(
             done = 0
             _render_progress("Evaluating", done, total)
             for t in tasks:
-                res, test_name, model, prompt_variant_id, sample_outcome = _evaluate_worker(t)
+                res = _evaluate_worker(t)
                 all_results.append(res)
-                pass_map.setdefault((test_name, model, prompt_variant_id or "control"), []).append(sample_outcome)
+                key = (
+                    res.get("test_name"),
+                    res.get("base_test_name"),
+                    res.get("prompt_case_id") or res.get("test_name"),
+                    res.get("model_name"),
+                    res.get("prompt_variant_id") or "control",
+                )
+                entry = pass_map.setdefault(key, {"statuses": [], "prompt_dimensions": res.get("prompt_dimensions") or []})
+                entry["statuses"].append({"pass": res.get("result") == "PASS"})
                 done += 1
                 _render_progress("Evaluating", done, total)
         else:
@@ -644,19 +771,31 @@ def evaluate(
                 total = len(tasks)
                 done = 0
                 _render_progress("Evaluating", done, total)
-                for res, test_name, model, prompt_variant_id, sample_outcome in pool.imap(_evaluate_worker, tasks):
+                for res in pool.imap(_evaluate_worker, tasks):
                     all_results.append(res)
-                    pass_map.setdefault((test_name, model, prompt_variant_id or "control"), []).append(sample_outcome)
+                    key = (
+                        res.get("test_name"),
+                        res.get("base_test_name"),
+                        res.get("prompt_case_id") or res.get("test_name"),
+                        res.get("model_name"),
+                        res.get("prompt_variant_id") or "control",
+                    )
+                    entry = pass_map.setdefault(key, {"statuses": [], "prompt_dimensions": res.get("prompt_dimensions") or []})
+                    entry["statuses"].append({"pass": res.get("result") == "PASS"})
                     done += 1
                     _render_progress("Evaluating", done, total)
 
     aggregates: List[dict] = []
-    for (test_name, model, variant_id), statuses in pass_map.items():
+    for (test_name, base_test_name, prompt_case_id, model, variant_id), entry in pass_map.items():
+        statuses = entry["statuses"]
         n = len(statuses)
         c = sum(1 for status in statuses if status.get("pass"))
         pass_at = compute_pass_at_k(c, n, k_values)
         agg = AggregateRecord(
             test_name=test_name,
+            base_test_name=base_test_name,
+            prompt_case_id=prompt_case_id,
+            prompt_dimensions=entry.get("prompt_dimensions") or [],
             model_name=model,
             prompt_variant_id=variant_id or "control",
             n_samples=n,
@@ -672,7 +811,7 @@ def evaluate(
     updated_json = {
         "run_id": prior_data.get("run_id") or rd.name,
         "models": model_names,
-        "tests": [d.name for d in test_dirs],
+        "tests": prior_data.get("tests") or sorted({r.get("test_name") for r in all_results if r.get("test_name")}),
         "prompts": prompts_map,
         "results": all_results,
         "aggregates": aggregates,

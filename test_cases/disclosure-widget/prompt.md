@@ -1,3 +1,0 @@
-- Generate an HTML file that demonstrates an expand/collapse widget.
-- Wrap each widget with a div that has an `example` class.
-- Give the container for controlled content a `details` class.

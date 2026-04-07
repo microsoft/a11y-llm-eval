@@ -79,8 +79,25 @@ class PromptVariant(BaseModel):
     n_samples_requested: Optional[int] = None
 
 
+class PromptDimensionAssignment(BaseModel):
+    id: str
+    label: str
+    value_id: str
+    value_label: str
+
+
+class PromptCase(BaseModel):
+    id: str
+    test_name: str
+    base_test_name: str
+    prompt_dimensions: List[PromptDimensionAssignment] = []
+
+
 class ResultRecord(BaseModel):
     test_name: str
+    base_test_name: Optional[str] = None
+    prompt_case_id: Optional[str] = None
+    prompt_dimensions: List[PromptDimensionAssignment] = []
     model_name: str
     timestamp: datetime
     generation_html_path: str
@@ -110,6 +127,9 @@ class AggregateStats(BaseModel):
 class AggregateRecord(BaseModel):
     """Aggregate statistics for a (test_name, model_name) pair across multiple samples."""
     test_name: str
+    base_test_name: Optional[str] = None
+    prompt_case_id: Optional[str] = None
+    prompt_dimensions: List[PromptDimensionAssignment] = []
     model_name: str
     # Prompt variant identifier. None or "control" for baseline runs.
     prompt_variant_id: Optional[str] = None

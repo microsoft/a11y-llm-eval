@@ -57,19 +57,21 @@ def test_cli_sampling_multi(monkeypatch, tmp_path):
     # Create a minimal test case directory
     tc_dir = tmp_path / "test_cases" / "sample-case"
     tc_dir.mkdir(parents=True)
-    (tc_dir / "prompt.md").write_text("Generate a page", encoding="utf-8")
+    (tc_dir / "prompt.yaml").write_text("base_prompt: |\n  Generate a page\n", encoding="utf-8")
     (tc_dir / "test.js").write_text("module.exports=()=>{}", encoding="utf-8")
 
     # Provide models config
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     (config_dir / "models.yaml").write_text("""models:\n  - name: test-model\n""", encoding="utf-8")
+    (config_dir / "prompt_dimensions.yaml").write_text("dimensions: {}\n", encoding="utf-8")
 
     runner = CliRunner()
     # Generation phase only
     gen_result = runner.invoke(app, [
         "run",
         "--models-file", str(config_dir / "models.yaml"),
+        "--prompt-dimensions-file", str(config_dir / "prompt_dimensions.yaml"),
         "--out", str(tmp_path / "runs"),
         "--test-cases-dir", str(tmp_path / "test_cases"),
         "--samples", "4",
@@ -109,6 +111,8 @@ def test_cli_sampling_multi(monkeypatch, tmp_path):
     assert agg["pass_at_k"]["4"] == 1.0
     sample_indices = sorted(r["sample_index"] for r in data["results"])
     assert sample_indices == [0, 1, 2, 3]
+    assert data["results"][0]["base_test_name"] == "sample-case"
+    assert data["results"][0]["prompt_case_id"] == "sample-case"
 
 
 def test_cli_sampling_single(monkeypatch, tmp_path):
@@ -117,17 +121,19 @@ def test_cli_sampling_single(monkeypatch, tmp_path):
 
     tc_dir = tmp_path / "test_cases" / "single"
     tc_dir.mkdir(parents=True)
-    (tc_dir / "prompt.md").write_text("Prompt", encoding="utf-8")
+    (tc_dir / "prompt.yaml").write_text("base_prompt: |\n  Prompt\n", encoding="utf-8")
     (tc_dir / "test.js").write_text("module.exports=()=>{}", encoding="utf-8")
 
     config_dir = tmp_path / "config"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "models.yaml").write_text("""models:\n  - name: m1\n""", encoding="utf-8")
+    (config_dir / "prompt_dimensions.yaml").write_text("dimensions: {}\n", encoding="utf-8")
 
     runner = CliRunner()
     gen_result = runner.invoke(app, [
         "run",
         "--models-file", str(config_dir / "models.yaml"),
+        "--prompt-dimensions-file", str(config_dir / "prompt_dimensions.yaml"),
         "--out", str(tmp_path / "runs"),
         "--test-cases-dir", str(tmp_path / "test_cases"),
         "--samples", "1",
@@ -156,6 +162,37 @@ def test_cli_sampling_single(monkeypatch, tmp_path):
     assert agg["n_samples"] == 1
     assert agg["n_pass"] == 0  # Seed=5 -> fail (odd)
     assert agg["pass_at_k"]["1"] == 0.0
+
+
+def test_cli_run_resolves_default_prompt_dimensions_from_workspace(monkeypatch, tmp_path):
+    monkeypatch.setattr("a11y_llm_tests.generator.generate_html_with_meta", fake_generate_html_with_meta)
+    monkeypatch.chdir(tmp_path)
+
+    tc_dir = tmp_path / "test_cases" / "sample-case"
+    tc_dir.mkdir(parents=True)
+    (tc_dir / "prompt.yaml").write_text("base_prompt: |\n  Generate a page\n", encoding="utf-8")
+    (tc_dir / "test.js").write_text("module.exports=()=>{}", encoding="utf-8")
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir(exist_ok=True)
+    (config_dir / "models.yaml").write_text("""models:\n  - name: m1\n""", encoding="utf-8")
+    (config_dir / "prompt_dimensions.yaml").write_text("dimensions: {}\n", encoding="utf-8")
+
+    runner = CliRunner()
+    gen_result = runner.invoke(
+        app,
+        [
+            "run",
+            "--models-file", str(config_dir / "models.yaml"),
+            "--out", str(tmp_path / "runs"),
+            "--test-cases-dir", str(tmp_path / "test_cases"),
+            "--samples", "1",
+            "--processes", "1",
+        ],
+        catch_exceptions=False,
+    )
+
+    assert gen_result.exit_code == 0, gen_result.output
 
 
 def test_bp_failure_not_affect_requirement_pass(monkeypatch, tmp_path):
@@ -188,17 +225,19 @@ def test_bp_failure_not_affect_requirement_pass(monkeypatch, tmp_path):
 
     tc_dir = tmp_path / "test_cases" / "bp-case"
     tc_dir.mkdir(parents=True)
-    (tc_dir / "prompt.md").write_text("Prompt", encoding="utf-8")
+    (tc_dir / "prompt.yaml").write_text("base_prompt: |\n  Prompt\n", encoding="utf-8")
     (tc_dir / "test.js").write_text("module.exports=()=>{}", encoding="utf-8")
 
     config_dir = tmp_path / "config"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "models.yaml").write_text("""models:\n  - name: modelX\n""", encoding="utf-8")
+    (config_dir / "prompt_dimensions.yaml").write_text("dimensions: {}\n", encoding="utf-8")
 
     runner_cli = CliRunner()
     gen_result = runner_cli.invoke(app, [
         "run",
         "--models-file", str(config_dir / "models.yaml"),
+        "--prompt-dimensions-file", str(config_dir / "prompt_dimensions.yaml"),
         "--out", str(tmp_path / "runs"),
         "--test-cases-dir", str(tmp_path / "test_cases"),
         "--samples", "1",
@@ -265,17 +304,19 @@ def test_requirement_na_does_not_change_sample_or_aggregate_pass_semantics(monke
 
     tc_dir = tmp_path / "test_cases" / "na-case"
     tc_dir.mkdir(parents=True)
-    (tc_dir / "prompt.md").write_text("Prompt", encoding="utf-8")
+    (tc_dir / "prompt.yaml").write_text("base_prompt: |\n  Prompt\n", encoding="utf-8")
     (tc_dir / "test.js").write_text("module.exports=()=>{}", encoding="utf-8")
 
     config_dir = tmp_path / "config"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "models.yaml").write_text("""models:\n  - name: model-na\n""", encoding="utf-8")
+    (config_dir / "prompt_dimensions.yaml").write_text("dimensions: {}\n", encoding="utf-8")
 
     runner_cli = CliRunner()
     gen_result = runner_cli.invoke(app, [
         "run",
         "--models-file", str(config_dir / "models.yaml"),
+        "--prompt-dimensions-file", str(config_dir / "prompt_dimensions.yaml"),
         "--out", str(tmp_path / "runs"),
         "--test-cases-dir", str(tmp_path / "test_cases"),
         "--samples", "4",

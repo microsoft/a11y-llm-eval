@@ -918,6 +918,17 @@ details li { margin-bottom: 0.35rem; }
 <section>
   <details>
     <summary><h3>{{ test_name }}</h3></summary>
+    {% if test_data.base_test_name %}
+    <p><strong>Base test:</strong> {{ test_data.base_test_name }}</p>
+    {% endif %}
+    {% if test_data.prompt_dimensions %}
+    <p>
+      <strong>Prompt dimensions:</strong>
+      {% for dim in test_data.prompt_dimensions %}
+        {{ dim.label }}: {{ dim.value_label }}{% if not loop.last %} | {% endif %}
+      {% endfor %}
+    </p>
+    {% endif %}
     {% set assertion_names = assertion_names_by_test.get(test_name) %}
     {% if assertion_names %}
     <div class="filters assertion-filters" role="region" aria-label="Filters for assertions in {{ test_name }} test case">
@@ -1429,10 +1440,16 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
   control_aggregates = [a for a in all_aggregates if (a.get("prompt_variant_id") or "control") == "control"]
 
   prompt_variants_meta = meta_block.get("prompt_variants") or []
+  prompt_cases_meta = meta_block.get("prompt_cases") or []
   prompt_variant_meta_by_id = {}
   for pv in prompt_variants_meta:
     if isinstance(pv, dict) and pv.get("id"):
       prompt_variant_meta_by_id[pv.get("id")] = pv
+
+  prompt_case_meta_by_test_name = {}
+  for prompt_case in prompt_cases_meta:
+    if isinstance(prompt_case, dict) and prompt_case.get("test_name"):
+      prompt_case_meta_by_test_name[prompt_case.get("test_name")] = prompt_case
 
   prompt_variant_names = {"control": "Control"}
   for pv in prompt_variants_meta:
@@ -1676,7 +1693,14 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
       return (vid != "control", vid, si is None, si or 0)
 
     samples_sorted = sorted(samples, key=_sample_sort_key)
-    test_entry = grouped_results.setdefault(test_name, {"prompt": prompts_map.get(test_name), "models": []})
+    prompt_case_meta = prompt_case_meta_by_test_name.get(test_name) or {}
+    sample_meta = samples_sorted[0] if samples_sorted else {}
+    test_entry = grouped_results.setdefault(test_name, {
+      "prompt": prompts_map.get(test_name),
+      "base_test_name": prompt_case_meta.get("base_test_name") or sample_meta.get("base_test_name"),
+      "prompt_dimensions": prompt_case_meta.get("prompt_dimensions") or sample_meta.get("prompt_dimensions") or [],
+      "models": [],
+    })
 
     aggregates_by_variant = {}
     for pv in (prompt_variants_meta or []):

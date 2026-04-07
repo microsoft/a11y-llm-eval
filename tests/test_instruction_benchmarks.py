@@ -60,13 +60,14 @@ def test_instruction_benchmarks_variants(monkeypatch, tmp_path: Path):
     # Minimal test case
     tc_dir = tmp_path / "test_cases" / "sample-case"
     tc_dir.mkdir(parents=True)
-    (tc_dir / "prompt.md").write_text("Generate a page", encoding="utf-8")
+    (tc_dir / "prompt.yaml").write_text("base_prompt: |\n  Generate a page\n", encoding="utf-8")
     (tc_dir / "test.js").write_text("module.exports=()=>{}", encoding="utf-8")
 
     # Models config
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     (config_dir / "models.yaml").write_text("""models:\n  - name: test-model\n""", encoding="utf-8")
+    (config_dir / "prompt_dimensions.yaml").write_text("dimensions: {}\n", encoding="utf-8")
 
     # Instruction sets
     instr_dir = config_dir / "instructions"
@@ -86,6 +87,8 @@ def test_instruction_benchmarks_variants(monkeypatch, tmp_path: Path):
             "run",
             "--models-file",
             str(config_dir / "models.yaml"),
+            "--prompt-dimensions-file",
+            str(config_dir / "prompt_dimensions.yaml"),
             "--out",
             str(tmp_path / "runs"),
             "--test-cases-dir",
