@@ -240,6 +240,7 @@ $$\text{PASS} \iff (\text{test\_function.status} = \text{"pass"}) \land (\text{a
   - Only `"R"` and `"BP"` are valid types; others become `"R"`.
 - Assertion helpers may return `"na"` when a check has no applicable target on the page, for example when no visible labels, helper text, placeholder text, or recognizable autocomplete purpose exist for that assertion.
 - Required-field assertions may treat a shared visible note such as `All questions are required.` or `All fields are required.` as a valid visual indicator for the relevant required controls or radio groups.
+- For native checkbox or radio groups that visibly require choosing one or at least one option but do not expose a valid group-level programmatic required state, the programmatic required-field assertion may return `"na"` rather than failing each item individually.
 - Best practice assertions (`BP`) do not affect overall pass/fail.
 - Requirement assertions marked `na` are tracked at the assertion level and do not change sample-level pass/fail or aggregate denominators.
 - Axe data handling is permissive:

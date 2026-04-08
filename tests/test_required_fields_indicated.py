@@ -119,4 +119,77 @@ module.exports.run = async ({{page, assert}}) => {{
     if found_programmatic.get('status') != expected_programmatic_status:
         actual = (found_programmatic.get('message') or '').strip().lower()
         pytest.fail(f"Case {name!r} expected programmatic status {expected_programmatic_status!r}, but got {found_programmatic.get('status')!r}. Message: '{actual}'")
+
+
+
+GROUPED_CASES = [
+    (
+        'checkbox_group_minimum_choice_not_applicable',
+        'discoverCheckboxes',
+        '<fieldset><legend>Select newsletter topics</legend><div class="form-field"><input id="topics-email" type="checkbox" aria-label="Announcements Only" checked><label for="topics-email">Email*</label><span>Pick at least one required option.</span></div><div class="form-field"><input id="topics-events" type="checkbox"><label for="topics-events">Events</label></div></fieldset>',
+        'pass',
+        'na',
+    ),
+    (
+        'radio_group_minimum_choice_not_applicable',
+        'discoverRadios',
+        '<fieldset><legend>Preferred contact method</legend><div class="form-field"><input id="contact-email" type="radio" name="contact-method" value="email" aria-label="Electronic Mail" checked><label for="contact-email">Email*</label><span>Choose one required option.</span></div><div class="form-field"><input id="contact-phone" type="radio" name="contact-method" value="phone"><label for="contact-phone">Phone</label></div></fieldset>',
+        'pass',
+        'na',
+    ),
+]
+
+
+@pytest.mark.parametrize('name,discovery_method,html_snippet,expected_visual_status,expected_programmatic_status', GROUPED_CASES, ids=[c[0] for c in GROUPED_CASES])
+def test_required_fields_indicated_grouped_minimum_choice(name, discovery_method, html_snippet, expected_visual_status, expected_programmatic_status, tmp_path):
+    html = f'<!doctype html><html><head><meta charset="utf-8"></head><body>{html_snippet}</body></html>'
+
+    helper_path_js = json.dumps(REQUIRED_HELPER_PATH)
+
+    test_js = f"""
+const testFormControls = require({helper_path_js});
+module.exports.run = async ({{page, assert}}) => {{
+    const discovery = await testFormControls.{discovery_method}(page);
+    const visualResults = await testFormControls.testRequiredFieldsIndicatedVisually(page, discovery);
+    const programmaticResults = await testFormControls.testRequiredFieldsIndicatedProgrammatically(page, discovery);
+    await assert('required-indicated-visually', () => {{
+        const status = visualResults && typeof visualResults.status === 'function' ? visualResults.status() : (visualResults && typeof visualResults.passed === 'function' && visualResults.passed() ? 'pass' : 'fail');
+        const message = visualResults && typeof visualResults.getMessage === 'function' ? visualResults.getMessage() : '';
+        return {{ status, message }};
+    }});
+    await assert('required-indicated-programmatically', () => {{
+        const status = programmaticResults && typeof programmaticResults.status === 'function' ? programmaticResults.status() : (programmaticResults && typeof programmaticResults.passed === 'function' && programmaticResults.passed() ? 'pass' : 'fail');
+        const message = programmaticResults && typeof programmaticResults.getMessage === 'function' ? programmaticResults.getMessage() : '';
+        return {{ status, message }};
+    }});
+}};
+"""
+    test_js_path = tmp_path / 'test-grouped.js'
+    test_js_path.write_text(test_js, encoding='utf-8')
+
+    screenshot_dir = Path('runs') / 'pytest_screenshots'
+    screenshot_dir.mkdir(parents=True, exist_ok=True)
+    screenshot_file = str(screenshot_dir / f"required_fields_grouped__{name}.png")
+
+    result = node_bridge.run(html, str(test_js_path), screenshot_file)
+
+    assert 'testFunctionResult' in result, f"Runner failed or returned unexpected output: {result}"
+    assertions = result['testFunctionResult'].get('assertions', [])
+
+    found_visual = None
+    found_programmatic = None
+    for assertion in assertions:
+        if assertion.get('name') == 'required-indicated-visually':
+            found_visual = assertion
+        if assertion.get('name') == 'required-indicated-programmatically':
+            found_programmatic = assertion
+
+    assert found_visual is not None, f"No 'required-indicated-visually' assertion in runner output: {result}"
+    assert found_programmatic is not None, f"No 'required-indicated-programmatically' assertion in runner output: {result}"
+    if found_visual.get('status') != expected_visual_status:
+        actual = (found_visual.get('message') or '').strip().lower()
+        pytest.fail(f"Case {name!r} expected visual status {expected_visual_status!r}, but got {found_visual.get('status')!r}. Message: '{actual}'")
+    if found_programmatic.get('status') != expected_programmatic_status:
+        actual = (found_programmatic.get('message') or '').strip().lower()
+        pytest.fail(f"Case {name!r} expected programmatic status {expected_programmatic_status!r}, but got {found_programmatic.get('status')!r}. Message: '{actual}'")
  

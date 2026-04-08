@@ -368,6 +368,45 @@ const hasRequiredHelperIndicator = (helpers) => {
     return false;
 };
 
+const normalizeIndicatorText = (value) => (value || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
+
+const hasMinimumChoiceHelperIndicator = (helpers, controlType) => {
+    const entries = Array.isArray(helpers)
+        ? helpers
+        : (helpers ? [helpers] : []);
+
+    for (const helper of entries) {
+        const text = normalizeIndicatorText(helper && helper.text);
+        if (!text) {
+            continue;
+        }
+
+        const hasOptionLikeTarget = /\b(option|options|choice|choices|item|items|answer|answers|selection|selections)\b/.test(text);
+
+        if (controlType === 'checkbox') {
+            if (/\b(choose|select|pick)\s+at\s+least\s+one\b/.test(text)) {
+                return true;
+            }
+
+            if (/\bat\s+least\s+one\s+(required\s+)?(option|options|choice|choices|item|items|answer|answers|selection|selections)\b/.test(text)) {
+                return true;
+            }
+        }
+
+        if (controlType === 'radio') {
+            if (hasOptionLikeTarget && /\b(choose|select|pick)\s+(one|1)\b/.test(text)) {
+                return true;
+            }
+
+            if (/\bone\s+required\s+(option|choice|item|answer|selection)\b/.test(text)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+};
+
 const hasSharedRequiredContextIndicator = async (locator) => {
     return locator.evaluate((element) => {
         const normalizeText = (value) => (value || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
@@ -402,6 +441,7 @@ const collectRequiredIndicatorEntries = async (discovery) => {
             const groupedItems = groupedControlType === 'radio' ? group.radios : group.checkboxes;
             const controlLabel = groupedControlType === 'radio' ? 'Radio group' : 'Checkbox group';
             const groupLabelIndicatesRequired = hasAsteriskRequiredIndicator({ text: group.groupLabel }) || hasTextualRequiredIndicator(group.groupLabel);
+            const hasMinimumChoiceHelper = groupedItems.some((item) => hasMinimumChoiceHelperIndicator(item.helperText, groupedControlType));
 
             let itemLevelVisualIndicator = false;
             for (const item of groupedItems) {
@@ -414,11 +454,16 @@ const collectRequiredIndicatorEntries = async (discovery) => {
             const sharedContextVisualIndicator = !groupLabelIndicatesRequired && !itemLevelVisualIndicator && groupedItems[0]?.locator
                 ? await hasSharedRequiredContextIndicator(groupedItems[0].locator)
                 : false;
+            const hasProgrammaticIndicator = !group.requiredStateMismatch && (!!group.programmaticallyRequired || groupedItems.some((item) => item.programmaticallyRequired));
+            const programmaticNotApplicable = !hasProgrammaticIndicator
+                && group.groupKind === 'fieldset'
+                && hasMinimumChoiceHelper;
 
             entries.push({
                 locator: groupedItems[0]?.locator,
                 hasVisualIndicator: groupLabelIndicatesRequired || itemLevelVisualIndicator || sharedContextVisualIndicator,
-                hasProgrammaticIndicator: !group.requiredStateMismatch && (!!group.programmaticallyRequired || groupedItems.some((item) => item.programmaticallyRequired)),
+                hasProgrammaticIndicator,
+                programmaticNotApplicable,
                 visualMissingMessage: `${controlLabel} is programmatically required but has no visual required indicator`,
                 programmaticMissingMessage: group.requiredStateMismatch
                     ? `${controlLabel} has conflicting native and ARIA required states`
@@ -498,8 +543,14 @@ testFn.testRequiredFieldsIndicatedProgrammatically = async (scope, discoveryCach
 
     const entries = await collectRequiredIndicatorEntries(d);
     let applicable = 0;
+    let notApplicableGroupedMinimumChoice = 0;
 
     for (const entry of entries) {
+        if (entry.programmaticNotApplicable) {
+            notApplicableGroupedMinimumChoice++;
+            continue;
+        }
+
         if (!entry.hasVisualIndicator && !entry.hasProgrammaticIndicator) {
             continue;
         }
@@ -513,7 +564,11 @@ testFn.testRequiredFieldsIndicatedProgrammatically = async (scope, discoveryCach
     }
 
     if (applicable === 0) {
-        results.addMessage("No visually required fields found");
+        if (notApplicableGroupedMinimumChoice > 0) {
+            results.addMessage("No applicable programmatic required indicators for native grouped minimum-choice requirements");
+        } else {
+            results.addMessage("No visually required fields found");
+        }
         results.forceNotApplicable();
     }
 
@@ -533,8 +588,14 @@ testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
 
     const entries = await collectRequiredIndicatorEntries(d);
     let applicable = 0;
+    let notApplicableGroupedMinimumChoice = 0;
 
     for (const entry of entries) {
+        if (entry.programmaticNotApplicable) {
+            notApplicableGroupedMinimumChoice++;
+            continue;
+        }
+
         if (!entry.hasVisualIndicator && !entry.hasProgrammaticIndicator) {
             continue;
         }
@@ -550,7 +611,11 @@ testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
     }
 
     if (applicable === 0) {
-        results.addMessage("No required fields found");
+        if (notApplicableGroupedMinimumChoice > 0) {
+            results.addMessage("No applicable required-field indicators for native grouped minimum-choice requirements");
+        } else {
+            results.addMessage("No required fields found");
+        }
         results.forceNotApplicable();
     }
 
