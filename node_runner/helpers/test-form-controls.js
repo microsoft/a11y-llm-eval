@@ -454,7 +454,7 @@ const collectRequiredIndicatorEntries = async (discovery) => {
             const sharedContextVisualIndicator = !groupLabelIndicatesRequired && !itemLevelVisualIndicator && groupedItems[0]?.locator
                 ? await hasSharedRequiredContextIndicator(groupedItems[0].locator)
                 : false;
-            const hasProgrammaticIndicator = !group.requiredStateMismatch && (!!group.programmaticallyRequired || groupedItems.some((item) => item.programmaticallyRequired));
+            const hasProgrammaticIndicator = !!group.programmaticallyRequired || groupedItems.some((item) => item.programmaticallyRequired);
             const programmaticNotApplicable = !hasProgrammaticIndicator
                 && group.groupKind === 'fieldset'
                 && hasMinimumChoiceHelper;
@@ -465,9 +465,7 @@ const collectRequiredIndicatorEntries = async (discovery) => {
                 hasProgrammaticIndicator,
                 programmaticNotApplicable,
                 visualMissingMessage: `${controlLabel} is programmatically required but has no visual required indicator`,
-                programmaticMissingMessage: group.requiredStateMismatch
-                    ? `${controlLabel} has conflicting native and ARIA required states`
-                    : `${controlLabel} appears visually required but has no programmatic required indicator`,
+                programmaticMissingMessage: `${controlLabel} appears visually required but has no programmatic required indicator`,
             });
         }
 
@@ -486,11 +484,9 @@ const collectRequiredIndicatorEntries = async (discovery) => {
         entries.push({
             locator: item.locator,
             hasVisualIndicator: localVisualIndicator || sharedContextVisualIndicator,
-            hasProgrammaticIndicator: !item.requiredStateMismatch && !!item.programmaticallyRequired,
+            hasProgrammaticIndicator: !!item.programmaticallyRequired,
             visualMissingMessage: "Input is programmatically required but has no visual required indicator",
-            programmaticMissingMessage: item.requiredStateMismatch
-                ? "Input has conflicting native and ARIA required states"
-                : "Input appears visually required but has no programmatic required indicator",
+            programmaticMissingMessage: "Input appears visually required but has no programmatic required indicator",
         });
     }
 
@@ -780,6 +776,7 @@ testFn.discoverRadios = async (scope) => {
         const checkedStateMismatch = isNativeRadio && ariaCheckedState !== null && ariaCheckedState !== nativeChecked;
         const disabledStateMismatch = isNativeRadio && ariaDisabledState !== null && ariaDisabledState !== nativeDisabled;
         const requiredStateMismatch = isNativeRadio && ariaRequiredState !== null && ariaRequiredState !== nativeRequired;
+        const programmaticallyRequired = isNativeRadio ? nativeRequired : nativeRequired || ariaRequiredState === true;
 
         const stateConsistencyIssues = [];
         if (checkedStateMismatch) {
@@ -834,7 +831,7 @@ testFn.discoverRadios = async (scope) => {
             nativeAriaStateMismatchCount: stateConsistencyIssues.length,
             nativeAriaStateMismatchDetails: stateConsistencyIssues,
             tabIndex: radio.tabIndex,
-            programmaticallyRequired: nativeRequired || ariaRequiredState === true,
+            programmaticallyRequired,
             groupProgrammaticallyRequired,
             controlText,
         };
@@ -1059,6 +1056,7 @@ testFn.discoverCheckboxes = async (scope) => {
                 const checkedStateMismatch = isNativeCheckbox && ariaCheckedState !== null && ariaCheckedState !== nativeCheckedState;
                 const disabledStateMismatch = isNativeCheckbox && ariaDisabledState !== null && ariaDisabledState !== nativeDisabled;
                 const requiredStateMismatch = isNativeCheckbox && ariaRequiredState !== null && ariaRequiredState !== nativeRequired;
+                const programmaticallyRequired = isNativeCheckbox ? nativeRequired : nativeRequired || ariaRequiredState === true;
 
                 const stateConsistencyIssues = [];
                 if (checkedStateMismatch) {
@@ -1107,7 +1105,7 @@ testFn.discoverCheckboxes = async (scope) => {
                     nativeAriaStateMismatchCount: stateConsistencyIssues.length,
                     nativeAriaStateMismatchDetails: stateConsistencyIssues,
                     tabIndex: checkbox.tabIndex,
-                    programmaticallyRequired: nativeRequired || ariaRequiredState === true,
+                    programmaticallyRequired,
                     controlText,
                 };
             }, { idx: index }),

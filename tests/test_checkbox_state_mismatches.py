@@ -40,7 +40,7 @@ CASES = [
         {
             'ARIA attributes match native checkbox attributes if used': 'fail',
             'Required fields are indicated visually': 'pass',
-            'Required fields are indicated programmatically': 'fail',
+            'Required fields are indicated programmatically': 'pass',
             'Checked state is programmatically exposed': 'pass',
         },
     ),
