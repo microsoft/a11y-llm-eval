@@ -240,6 +240,9 @@ $$\text{PASS} \iff (\text{test\_function.status} = \text{"pass"}) \land (\text{a
   - Only `"R"` and `"BP"` are valid types; others become `"R"`.
 - Assertion helpers may return `"na"` when a check has no applicable target on the page, for example when no visible labels, helper text, placeholder text, or recognizable autocomplete purpose exist for that assertion.
 - Required-field assertions may treat a shared visible note such as `All questions are required.` or `All fields are required.` as a valid visual indicator for the relevant required controls or radio groups.
+- For native checkbox or radio groups that visibly require choosing one or at least one option but do not expose a valid group-level programmatic required state, the programmatic required-field assertion may return `"na"` rather than failing each item individually.
+- For native checkbox fieldsets where only the group label indicates the group is required, both required-field assertions may return `"na"` because the label can represent a minimum-selection rule rather than each checkbox being individually required.
+- When native checkbox or radio controls conflict with ARIA required state, required-field assertions use the native `required` state while ARIA/native mismatch assertions still report the conflict.
 - Best practice assertions (`BP`) do not affect overall pass/fail.
 - Requirement assertions marked `na` are tracked at the assertion level and do not change sample-level pass/fail or aggregate denominators.
 - Axe data handling is permissive:
@@ -330,6 +333,7 @@ The runner:
 - Loads the HTML into a real browser page.
 - Injects axe-core and runs `axe.run()`.
 - Executes `test.js` assertions via an injected `assert(name, fn, opts)` helper.
+- Custom form-control assertions derive accessible names and descriptions from the corresponding Chromium accessibility tree nodes for the DOM elements under test.
 
 ### Acceptance criteria
 

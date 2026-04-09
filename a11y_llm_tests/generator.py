@@ -1,6 +1,6 @@
 """LLM HTML generation & caching layer."""
 from __future__ import annotations
-import hashlib, time, random
+import hashlib, os, time, random
 from pathlib import Path
 from typing import Tuple, Dict, Any, Optional
 import json
@@ -28,6 +28,14 @@ TRUNCATION_RETRY_MAX = 1
 
 # Default output budget. Many Anthropic/Claude routes default to ~4096 if not explicitly set.
 DEFAULT_MAX_TOKENS = 16384
+
+_PROVIDER_ENV_DEBUG_VARS: dict[str, tuple[str, ...]] = {
+    "azure": ("AZURE_API_BASE", "AZURE_API_KEY", "AZURE_API_VERSION"),
+    "azure_ai": ("AZURE_AI_API_BASE", "AZURE_AI_API_KEY", "AZURE_AI_API_VERSION"),
+    "anthropic": ("ANTHROPIC_API_KEY",),
+    "vertex_ai": ("VERTEXAI_PROJECT", "VERTEXAI_LOCATION", "GOOGLE_APPLICATION_CREDENTIALS"),
+    "openai": ("OPENAI_API_KEY",),
+}
 
 
 def _is_anthropic_model(model: str) -> bool:
@@ -88,6 +96,31 @@ class OutputTokenLimitHit(RuntimeError):
         self.finish_reason = finish_reason
         self.stop_reason = stop_reason
         self.tokens_out = tokens_out
+
+
+def _get_model_provider(model: str) -> str:
+    m = (model or "").strip()
+    if "/" in m:
+        return m.split("/", 1)[0].strip().lower() or "unknown"
+    return "unknown"
+
+
+def _format_model_debug_label(model: str, model_display_name: Optional[str] = None) -> str:
+    display = (model_display_name or "").strip()
+    if display and display != model:
+        return f"{display} [{model}]"
+    return model
+
+
+def _format_provider_auth_debug(model: str) -> str:
+    provider = _get_model_provider(model)
+    env_names = _PROVIDER_ENV_DEBUG_VARS.get(provider)
+    if not env_names:
+        return f"provider={provider}"
+    env_status = ", ".join(
+        f"{name}={'set' if os.environ.get(name) else 'missing'}" for name in env_names
+    )
+    return f"provider={provider}; auth_env[{env_status}]"
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are generating a single standalone HTML document. "
@@ -187,6 +220,7 @@ def generate_html_with_meta(
     seed: Optional[int] = None,
     disable_cache: bool = False,
     debug_truncated_cache: bool = False,
+    model_display_name: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Generate (or load cached) HTML plus metadata including token usage & cost.
 
@@ -222,6 +256,7 @@ def generate_html_with_meta(
                 "cached": True,
                 "latency_s": 0.0,
                 "prompt_hash": h,
+                "model_display_name": model_display_name,
                 "tokens_in": None,
                 "tokens_out": None,
                 "total_tokens": None,
@@ -259,7 +294,12 @@ def generate_html_with_meta(
 
     start = time.time()
     litellm.drop_params = True
-    print(f"Generating HTML with model={model}, temp={temperature}, seed={seed}...")
+    model_debug_label = _format_model_debug_label(model, model_display_name)
+    provider_auth_debug = _format_provider_auth_debug(model)
+    print(
+        f"Generating HTML with model={model_debug_label}, temp={temperature}, seed={seed} "
+        f"({provider_auth_debug})..."
+    )
 
     # Only set a default output token budget for Anthropic/Claude.
     # Other providers have their own defaults/limits; passing a large max_tokens
@@ -316,7 +356,8 @@ def generate_html_with_meta(
             jitter = random.uniform(0, delay * 0.1)
             sleep_for = delay + jitter
             print(
-                f"litellm call failed (attempt {attempt}/{RETRY_MAX_ATTEMPTS}): {last_exc}; "
+                f"litellm call failed for model={model_debug_label} ({provider_auth_debug}) "
+                f"(attempt {attempt}/{RETRY_MAX_ATTEMPTS}): {last_exc}; "
                 f"retrying in {sleep_for:.1f}s..."
             )
             time.sleep(sleep_for)
@@ -389,6 +430,7 @@ def generate_html_with_meta(
 
         meta_payload = {
             "model": model,
+            "model_display_name": model_display_name,
             "prompt_hash": h,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "tokens_in": tokens_in,
@@ -410,6 +452,7 @@ def generate_html_with_meta(
         "cached": False,
         "latency_s": elapsed,
         "prompt_hash": h,
+        "model_display_name": model_display_name,
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
         "total_tokens": total_tokens,

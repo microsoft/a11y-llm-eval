@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Single Checkbox With Visible Helper Outside Row</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Visual labels are defined and persistent": "pass",
+      "Helper text is programmatically associated": "fail",
+      "Required fields are indicated visually": "na",
+      "Required fields are indicated programmatically": "na",
+      "Each checkbox is keyboard reachable": "pass",
+      "Space toggles checkbox state": "pass",
+      "ARIA attributes match native checkbox attributes if used": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <div class="form-field">
+      <div class="checkbox-row">
+        <input id="subscribe-updates" type="checkbox" />
+        <label for="subscribe-updates">Subscribe to product updates</label>
+      </div>
+      <p class="helper-text">Receive occasional emails about new features, improvements, and announcements.</p>
+    </div>
+
+    <button type="submit">Submit</button>
+  </form>
+</body>
+</html>

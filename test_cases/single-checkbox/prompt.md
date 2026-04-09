@@ -1,0 +1,1 @@
+Create a page that showcases single checkbox examples for standalone choices such as agreeing to terms or subscribing to updates. Include examples with and without helper text. Each example should be wrapped in a div with class "form-field". Include a submit button.

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checkbox Group Label Helper Required Failures</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has an accessible name": "pass",
+      "Visible label is included in accessible name": "fail",
+      "Visual labels are defined and persistent": "pass",
+      "Helper text is programmatically associated": "fail",
+      "Required fields are indicated visually": "pass",
+      "Required fields are indicated programmatically": "na",
+      "Each checkbox group has an accessible label": "pass",
+      "Each checkbox is in the tab order": "pass",
+      "Space toggles checkbox state of each checkbox": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <fieldset>
+      <legend>Select Newsletter Topics</legend>
+      <div class="form-field">
+        <input id="topics-email" type="checkbox" checked aria-label="Announcements Only" />
+        <label for="topics-email">Email*</label>
+        <span>Pick at least one required option.</span>
+      </div>
+      <div class="form-field">
+        <input id="topics-events" type="checkbox" />
+        <label for="topics-events">Events</label>
+      </div>
+      <button type="submit">Continue</button>
+    </fieldset>
+  </form>
+</body>
+</html>

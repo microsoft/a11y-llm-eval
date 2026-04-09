@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checkbox Not Keyboard Reachable</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Visual labels are defined and persistent": "pass",
+      "Each checkbox is keyboard reachable": "fail",
+      "Space toggles checkbox state": "fail",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+  <style>
+    [role="checkbox"] {
+      border: 1px solid #333;
+      display: inline-block;
+      padding: 0.5rem 0.75rem;
+    }
+  </style>
+</head>
+<body>
+  <form>
+    <div class="form-field">
+      <div role="checkbox" tabindex="-1" aria-checked="false">Subscribe to product updates</div>
+    </div>
+    <button type="submit">Continue</button>
+  </form>
+</body>
+</html>

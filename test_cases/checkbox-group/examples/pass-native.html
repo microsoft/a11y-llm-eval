@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Native Checkbox Group</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has a valid role": "pass",
+      "Each checkbox has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Visual labels are defined and persistent": "pass",
+      "Helper text is programmatically associated": "na",
+      "Required fields are indicated visually": "na",
+      "Required fields are indicated programmatically": "na",
+      "Each checkbox group has an accessible label": "pass",
+      "Each checkbox group has a valid role": "pass",
+      "Each checkbox is in the tab order": "pass",
+      "Space toggles checkbox state of each checkbox": "pass",
+      "ARIA attributes match native checkbox attributes if used": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <fieldset>
+      <legend>Select Contact Preferences</legend>
+      <div class="form-field">
+        <input id="pref-email" type="checkbox" name="contact-preferences" value="email" checked />
+        <label for="pref-email">Email</label>
+      </div>
+      <div class="form-field">
+        <input id="pref-sms" type="checkbox" name="contact-preferences" value="sms" />
+        <label for="pref-sms">Text Message</label>
+      </div>
+      <div class="form-field">
+        <input id="pref-phone" type="checkbox" name="contact-preferences" value="phone" />
+        <label for="pref-phone">Phone Calls</label>
+      </div>
+      <button type="submit">Continue</button>
+    </fieldset>
+  </form>
+</body>
+</html>

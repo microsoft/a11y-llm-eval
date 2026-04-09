@@ -1,4 +1,9 @@
-const { FIELD_WRAPPER_SELECTOR } = require('./get-form-field-wrapper');
+const {
+    FIELD_WRAPPER_SELECTOR,
+    PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+    SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+    FALLBACK_FIELD_WRAPPER_SELECTOR,
+} = require('./get-form-field-wrapper');
 const SOURCE_VISUAL_NEARBY = "VISUAL_NEARBY";
 const SOURCE_VISUAL_DISTANT = "VISUAL_DISTANT";
 const SOURCE_LABEL_ELEMENT = "LABEL_ELEMENT";
@@ -14,6 +19,9 @@ const getVisualLabel = async (el, opts = {}) => {
     const visibleLabel = await el.evaluate((el, args) => {
         const {
             FIELD_WRAPPER_SELECTOR,
+            PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+            SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+            FALLBACK_FIELD_WRAPPER_SELECTOR,
             maxDistance,
             SOURCE_VISUAL_NEARBY,
             SOURCE_VISUAL_DISTANT,
@@ -128,7 +136,12 @@ const getVisualLabel = async (el, opts = {}) => {
         if (parts.length) return {text: parts.join(' '), source: SOURCE_LABEL_ELEMENT};
 
         // 4) Fallback visual search: find a nearby visible text node in a "form field" wrapper
-        const wrapper = el.closest(FIELD_WRAPPER_SELECTOR) || document.body;
+        const wrapper =
+            el.closest(PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR)
+            || el.closest(SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR)
+            || el.closest(FALLBACK_FIELD_WRAPPER_SELECTOR)
+            || el.closest(FIELD_WRAPPER_SELECTOR)
+            || document.body;
 
         // Build list of candidate elements that contain visible text, are not the control, and are not error-like
         const candidates = [];
@@ -197,6 +210,9 @@ const getVisualLabel = async (el, opts = {}) => {
         return {text: nearby.map(c => c.text).join(' '), source: SOURCE_VISUAL_NEARBY};
     }, {
         FIELD_WRAPPER_SELECTOR,
+        PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+        SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+        FALLBACK_FIELD_WRAPPER_SELECTOR,
         maxDistance,
         SOURCE_VISUAL_NEARBY,
         SOURCE_VISUAL_DISTANT,

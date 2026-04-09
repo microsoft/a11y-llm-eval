@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checkbox Label Helper Required Failures</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has an accessible name": "pass",
+      "Visible label is included in accessible name": "fail",
+      "Visual labels are defined and persistent": "pass",
+      "Helper text is programmatically associated": "fail",
+      "Required fields are indicated visually": "pass",
+      "Required fields are indicated programmatically": "fail",
+      "Each checkbox is keyboard reachable": "pass",
+      "Space toggles checkbox state": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <div class="form-field">
+      <input id="marketing-optin" type="checkbox" aria-label="Marketing emails only" checked />
+      <label for="marketing-optin">Receive updates*</label>
+      <span>Required for launch-day alerts.</span>
+    </div>
+    <button type="submit">Continue</button>
+  </form>
+</body>
+</html>

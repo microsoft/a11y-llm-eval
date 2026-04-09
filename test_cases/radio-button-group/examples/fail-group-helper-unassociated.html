@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Radio Group With Unassociated Helper</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each radio has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Visual labels are defined and persistent": "pass",
+      "Helper text is programmatically associated": "fail",
+      "Required fields are indicated visually": "na",
+      "Required fields are indicated programmatically": "na",
+      "Each radio group has an accessible label": "pass",
+      "Each radio group is keyboard reachable": "pass",
+      "Arrow keys change the selected radio within each group": "pass",
+      "ARIA attributes match native radio attributes if used": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <div class="form-field">
+      <fieldset>
+        <legend>Preferred Deployment Target</legend>
+        <p class="helper-text">Choose the environment you use most often.</p>
+        <div><input id="target-web" type="radio" name="target" value="web" checked /><label for="target-web">Web</label></div>
+        <div><input id="target-mobile" type="radio" name="target" value="mobile" /><label for="target-mobile">Mobile</label></div>
+        <div><input id="target-desktop" type="radio" name="target" value="desktop" /><label for="target-desktop">Desktop</label></div>
+      </fieldset>
+    </div>
+    <button type="submit">Continue</button>
+  </form>
+</body>
+</html>

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checkbox Group Not Keyboard Reachable</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Visual labels are defined and persistent": "pass",
+      "Each checkbox group has an accessible label": "pass",
+      "Each checkbox is in the tab order": "fail",
+      "Space toggles checkbox state of each checkbox": "fail",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+  <style>
+    [role="checkbox"] {
+      border: 1px solid #333;
+      display: inline-block;
+      margin-right: 0.5rem;
+      padding: 0.5rem 0.75rem;
+    }
+  </style>
+</head>
+<body>
+  <form>
+    <h1 id="keyboard-heading">Select Saved Searches</h1>
+    <div role="group" aria-labelledby="keyboard-heading">
+      <div class="form-field"><div role="checkbox" tabindex="-1" aria-checked="true">New Listings</div></div>
+      <div class="form-field"><div role="checkbox" tabindex="-1" aria-checked="false">Price Drops</div></div>
+    </div>
+  </form>
+</body>
+</html>

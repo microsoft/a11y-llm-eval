@@ -1,7 +1,7 @@
+const { getAccessibleName } = require('./get-accessibility-tree');
+
 const getName = async (el) => {
-    return await el.evaluate((el) => {
-        return window.axe.commons.text.accessibleText(el);
-    });
+    return getAccessibleName(el);
 }
 
 module.exports = getName;

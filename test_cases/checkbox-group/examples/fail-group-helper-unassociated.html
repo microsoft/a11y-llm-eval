@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checkbox Group With Unassociated Helper</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Visual labels are defined and persistent": "pass",
+      "Helper text is programmatically associated": "fail",
+      "Required fields are indicated visually": "na",
+      "Required fields are indicated programmatically": "na",
+      "Each checkbox group has an accessible label": "pass",
+      "Each checkbox is in the tab order": "pass",
+      "Space toggles checkbox state of each checkbox": "pass",
+      "ARIA attributes match native checkbox attributes if used": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <div class="form-field">
+      <fieldset>
+        <legend>Select Newsletter Topics</legend>
+        <p class="helper-text">Choose all the topics you want to receive.</p>
+        <div><input id="topic-product" type="checkbox" name="topics" checked /><label for="topic-product">Product Updates</label></div>
+        <div><input id="topic-events" type="checkbox" name="topics" /><label for="topic-events">Events</label></div>
+        <div><input id="topic-security" type="checkbox" name="topics" /><label for="topic-security">Security Notices</label></div>
+      </fieldset>
+    </div>
+    <button type="submit">Continue</button>
+  </form>
+</body>
+</html>

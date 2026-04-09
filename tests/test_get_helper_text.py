@@ -98,14 +98,14 @@ CASES = [
         },
     ),
     (
-        'ignore_error_messages',
+        'include_error_messages',
         '<input id="i" type="text" aria-describedby="err h"><span id="err" class="error">Invalid</span><span id="h">Include area code</span>',
         {
             "combined": "include area code",
             "helpers": [
                 {"text": "Include area code", "source": "ARIA_DESCRIBEDBY"},
             ],
-            "accessible_description": "Include area code",
+            "accessible_description": "Invalid Include area code",
         },
     ),
     (
@@ -238,14 +238,16 @@ def test_get_helper_text(name, html_snippet, expected, tmp_path):
     helper_path_js = json.dumps(HELPER_PATH)
     expected_js = expected
 
-    test_js = f"""
+    test_js = rf"""
 module.exports.run = async ({{page, assert}}) => {{
     const {{getHelperText, combineHelperTexts, getAccessibleDescription}} = require({helper_path_js});
     const input = await page.$('#i');
     const helper = await getHelperText(input);
     const expected = {json.dumps(expected_js)};
-    await assert('helper-text', () => {{
+    await assert('helper-text', async () => {{
         const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+        const accessibleDescription = await getAccessibleDescription(input);
 
         const combined = combineHelperTexts(helper);
         const combinedNorm = norm(combined);
@@ -270,8 +272,6 @@ module.exports.run = async ({{page, assert}}) => {{
                 }};
             }})
             : [];
-
-        const accessibleDescription = getAccessibleDescription(helper);
         const accessibleDescriptionNorm = norm(accessibleDescription);
         const expectedAccessibleDescriptionNorm = norm(expected && expected.accessible_description);
 

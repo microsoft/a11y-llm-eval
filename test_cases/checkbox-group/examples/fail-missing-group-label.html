@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Missing Checkbox Group Label</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Visual labels are defined and persistent": "pass",
+      "Each checkbox group has an accessible label": "fail",
+      "Each checkbox is in the tab order": "pass",
+      "Space toggles checkbox state of each checkbox": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <div>
+      <div class="form-field">
+        <input id="unlabeled-group-email" type="checkbox" checked />
+        <label for="unlabeled-group-email">Email</label>
+      </div>
+      <div class="form-field">
+        <input id="unlabeled-group-sms" type="checkbox" />
+        <label for="unlabeled-group-sms">SMS</label>
+      </div>
+      <button type="submit">Continue</button>
+    </div>
+  </form>
+</body>
+</html>

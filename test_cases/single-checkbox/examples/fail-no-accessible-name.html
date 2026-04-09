@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checkbox Missing Accessible Name</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has an accessible name": "fail",
+      "Visible label is included in accessible name": "na",
+      "Visual labels are defined and persistent": "fail",
+      "Each checkbox is keyboard reachable": "pass",
+      "Space toggles checkbox state": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <div class="form-field">
+      <input type="checkbox" checked />
+    </div>
+    <button type="submit">Continue</button>
+  </form>
+</body>
+</html>

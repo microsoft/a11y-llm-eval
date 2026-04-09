@@ -1,4 +1,10 @@
-const { FIELD_WRAPPER_SELECTOR } = require('./get-form-field-wrapper');
+const {
+    FIELD_WRAPPER_SELECTOR,
+    PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+    SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+    FALLBACK_FIELD_WRAPPER_SELECTOR,
+} = require('./get-form-field-wrapper');
+const { getAccessibleDescription: getAccessibilityTreeDescription } = require('./get-accessibility-tree');
 const { getVisualLabel, SOURCE_PLACEHOLDER } = require('./get-visual-label');
 
 const SOURCE_HELPER_NEARBY = "HELPER_NEARBY";
@@ -30,6 +36,9 @@ const getHelperText = async (el, opts = {}) => {
     const helper = await el.evaluate((el, args) => {
         const {
             FIELD_WRAPPER_SELECTOR,
+            PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+            SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+            FALLBACK_FIELD_WRAPPER_SELECTOR,
             visualLabelText,
             SOURCE_HELPER_NEARBY,
             SOURCE_ARIA_DESCRIBEDBY,
@@ -169,7 +178,6 @@ const getHelperText = async (el, opts = {}) => {
             const ariaText = normText(ariaParts.join(' '));
             if (ariaText) {
                 addHelper(ariaText, SOURCE_ARIA_DESCRIBEDBY, firstNode || el);
-                hasAriaHelper = true;
             }
         }
 
@@ -202,7 +210,12 @@ const getHelperText = async (el, opts = {}) => {
         }
 
         // --- 4. Visual helper text nearby via TreeWalker ---
-        const wrapper = el.closest(FIELD_WRAPPER_SELECTOR) || document.body;
+        const wrapper =
+            el.closest(PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR)
+            || el.closest(SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR)
+            || el.closest(FALLBACK_FIELD_WRAPPER_SELECTOR)
+            || el.closest(FIELD_WRAPPER_SELECTOR)
+            || document.body;
 
         const walker = document.createTreeWalker(
             wrapper,
@@ -231,7 +244,7 @@ const getHelperText = async (el, opts = {}) => {
                     }
 
                     // Skip obvious labels (fallback)
-                    if (parentTag === 'LABEL') {
+                    if (parentTag === 'LABEL' || parentTag === 'LEGEND' || (parent.closest && parent.closest('label'))) {
                         return NodeFilter.FILTER_REJECT;
                     }
 
@@ -284,6 +297,9 @@ const getHelperText = async (el, opts = {}) => {
         return ordered.map(({ _node, ...rest }) => rest);
     }, {
         FIELD_WRAPPER_SELECTOR,
+        PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+        SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+        FALLBACK_FIELD_WRAPPER_SELECTOR,
         visualLabelText,
         SOURCE_HELPER_NEARBY,
         SOURCE_ARIA_DESCRIBEDBY,
@@ -315,32 +331,9 @@ const combineHelperTexts = (helper) => {
 
 
 
-// Compute the accessible description text from helper entries.
-// Accepts the result of getHelperText (single object or array) and
-// returns the first matching text in this priority order:
-// 1) ARIA_DESCRIBEDBY
-// 2) ARIA_DESCRIPTION
-// 3) TITLE
-// Other sources are ignored.
-const getAccessibleDescription = (helper) => {
-    const helpers = Array.isArray(helper)
-        ? helper
-        : (helper ? [helper] : []);
-
-    const priorities = [
-        SOURCE_ARIA_DESCRIBEDBY,
-        SOURCE_ARIA_DESCRIPTION,
-        SOURCE_TITLE,
-    ];
-
-    for (const source of priorities) {
-        const match = helpers.find(h => h && h.source === source && h.text && String(h.text).trim());
-        if (match) {
-            return String(match.text).trim();
-        }
-    }
-
-    return '';
+// Return the Chromium accessibility-tree description for the given node.
+const getAccessibleDescription = async (el) => {
+    return getAccessibilityTreeDescription(el);
 };
 
 module.exports.getHelperText = getHelperText;
