@@ -3,18 +3,21 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Checkbox Group Label Helper Required Failures</title>
+  <title>Checkbox Group Visual Only Required Item</title>
   <script id="a11y-assertions" type="application/json">{
     "assertions": {
+      "Each checkbox has a valid role": "pass",
       "Each checkbox has an accessible name": "pass",
-      "Visible label is included in accessible name": "fail",
+      "Visible label is included in accessible name": "pass",
       "Visual labels are defined and persistent": "pass",
-      "Helper text is programmatically associated": "fail",
+      "Helper text is programmatically associated": "na",
       "Required fields are indicated visually": "pass",
-      "Required fields are indicated programmatically": "na",
+      "Required fields are indicated programmatically": "fail",
       "Each checkbox group has an accessible label": "pass",
+      "Each checkbox group has a valid role": "pass",
       "Each checkbox is in the tab order": "pass",
       "Space toggles checkbox state of each checkbox": "pass",
+      "ARIA attributes match native checkbox attributes if used": "pass",
       "Checked state is programmatically exposed": "pass"
     }
   }</script>
@@ -22,15 +25,14 @@
 <body>
   <form>
     <fieldset>
-      <legend>Select Newsletter Topics</legend>
+      <legend>Select Delivery Methods</legend>
       <div class="form-field">
-        <input id="topics-email" type="checkbox" checked aria-label="Announcements Only" />
-        <label for="topics-email">Email*</label>
-        <span>Pick at least one required option.</span>
+        <input id="visual-only-email" type="checkbox" checked />
+        <label for="visual-only-email">Email*</label>
       </div>
       <div class="form-field">
-        <input id="topics-events" type="checkbox" />
-        <label for="topics-events">Events</label>
+        <input id="visual-only-sms" type="checkbox" />
+        <label for="visual-only-sms">SMS</label>
       </div>
       <button type="submit">Continue</button>
     </fieldset>
