@@ -131,6 +131,13 @@ GROUPED_CASES = [
         'na',
     ),
     (
+        'checkbox_group_required_legend_not_applicable',
+        'discoverCheckboxes',
+        '<fieldset><legend>Select delivery methods (required)</legend><div class="form-field"><input id="delivery-email" type="checkbox" checked><label for="delivery-email">Email</label></div><div class="form-field"><input id="delivery-sms" type="checkbox"><label for="delivery-sms">SMS</label></div></fieldset>',
+        'na',
+        'na',
+    ),
+    (
         'radio_group_minimum_choice_not_applicable',
         'discoverRadios',
         '<fieldset><legend>Preferred contact method</legend><div class="form-field"><input id="contact-email" type="radio" name="contact-method" value="email" aria-label="Electronic Mail" checked><label for="contact-email">Email*</label><span>Choose one required option.</span></div><div class="form-field"><input id="contact-phone" type="radio" name="contact-method" value="phone"><label for="contact-phone">Phone</label></div></fieldset>',

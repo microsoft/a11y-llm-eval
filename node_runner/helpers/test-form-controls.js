@@ -455,14 +455,23 @@ const collectRequiredIndicatorEntries = async (discovery) => {
                 ? await hasSharedRequiredContextIndicator(groupedItems[0].locator)
                 : false;
             const hasProgrammaticIndicator = !!group.programmaticallyRequired || groupedItems.some((item) => item.programmaticallyRequired);
-            const programmaticNotApplicable = !hasProgrammaticIndicator
+            const checkboxGroupLabelMinimumChoice = groupedControlType === 'checkbox'
                 && group.groupKind === 'fieldset'
-                && hasMinimumChoiceHelper;
+                && groupLabelIndicatesRequired
+                && !itemLevelVisualIndicator
+                && !hasProgrammaticIndicator;
+            const visualNotApplicable = checkboxGroupLabelMinimumChoice;
+            const programmaticNotApplicable = checkboxGroupLabelMinimumChoice || (
+                !hasProgrammaticIndicator
+                && group.groupKind === 'fieldset'
+                && hasMinimumChoiceHelper
+            );
 
             entries.push({
                 locator: groupedItems[0]?.locator,
                 hasVisualIndicator: groupLabelIndicatesRequired || itemLevelVisualIndicator || sharedContextVisualIndicator,
                 hasProgrammaticIndicator,
+                visualNotApplicable,
                 programmaticNotApplicable,
                 visualMissingMessage: `${controlLabel} is programmatically required but has no visual required indicator`,
                 programmaticMissingMessage: `${controlLabel} appears visually required but has no programmatic required indicator`,
@@ -505,8 +514,14 @@ testFn.testRequiredFieldsIndicatedVisually = async (scope, discoveryCache) => {
 
     const entries = await collectRequiredIndicatorEntries(d);
     let applicable = 0;
+    let notApplicableGroupedMinimumChoice = 0;
 
     for (const entry of entries) {
+        if (entry.visualNotApplicable) {
+            notApplicableGroupedMinimumChoice++;
+            continue;
+        }
+
         if (!entry.hasProgrammaticIndicator && !entry.hasVisualIndicator) {
             continue;
         }
@@ -520,7 +535,11 @@ testFn.testRequiredFieldsIndicatedVisually = async (scope, discoveryCache) => {
     }
 
     if (applicable === 0) {
-        results.addMessage("No programmatically required fields found");
+        if (notApplicableGroupedMinimumChoice > 0) {
+            results.addMessage("No applicable visual required indicators for native grouped minimum-choice requirements");
+        } else {
+            results.addMessage("No programmatically required fields found");
+        }
         results.forceNotApplicable();
     }
 
@@ -542,7 +561,7 @@ testFn.testRequiredFieldsIndicatedProgrammatically = async (scope, discoveryCach
     let notApplicableGroupedMinimumChoice = 0;
 
     for (const entry of entries) {
-        if (entry.programmaticNotApplicable) {
+        if (entry.visualNotApplicable || entry.programmaticNotApplicable) {
             notApplicableGroupedMinimumChoice++;
             continue;
         }
@@ -587,7 +606,7 @@ testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
     let notApplicableGroupedMinimumChoice = 0;
 
     for (const entry of entries) {
-        if (entry.programmaticNotApplicable) {
+        if (entry.visualNotApplicable || entry.programmaticNotApplicable) {
             notApplicableGroupedMinimumChoice++;
             continue;
         }
