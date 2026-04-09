@@ -38,6 +38,18 @@ _PROVIDER_ENV_DEBUG_VARS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _load_required_env(env_name: str) -> str:
+    value = os.environ.get(env_name)
+    if value:
+        return value
+    raise RuntimeError(f"Required environment variable is not set: {env_name}")
+
+
+def _load_optional_env(env_name: str) -> Optional[str]:
+    value = os.environ.get(env_name)
+    return value if value else None
+
+
 def _is_anthropic_model(model: str) -> bool:
     """Heuristic for whether a LiteLLM model routes to Anthropic.
 
@@ -121,6 +133,55 @@ def _format_provider_auth_debug(model: str) -> str:
         f"{name}={'set' if os.environ.get(name) else 'missing'}" for name in env_names
     )
     return f"provider={provider}; auth_env[{env_status}]"
+
+
+def _build_provider_completion_kwargs(model: str, provider_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    provider = _get_model_provider(model)
+    config = provider_config or {}
+    auth_cfg = config.get("auth") if isinstance(config, dict) else None
+    if not isinstance(auth_cfg, dict):
+        return {}
+
+    mode = str(auth_cfg.get("mode") or "").strip().lower()
+    if not mode or mode == "env":
+        return {}
+
+    if mode != "default_azure_credential":
+        raise RuntimeError(f"Unsupported auth mode for provider '{provider}': {mode}")
+
+    if provider not in {"azure", "azure_ai"}:
+        raise RuntimeError(
+            f"auth.mode=default_azure_credential is only supported for Azure providers, got '{provider}'"
+        )
+
+    try:
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+    except ImportError as exc:
+        raise RuntimeError(
+            "Model provider is configured with auth.mode=default_azure_credential, but azure-identity is not installed"
+        ) from exc
+
+    if provider == "azure_ai":
+        default_api_base_env = "AZURE_AI_API_BASE"
+        default_api_version_env = "AZURE_AI_API_VERSION"
+    else:
+        default_api_base_env = "AZURE_API_BASE"
+        default_api_version_env = "AZURE_API_VERSION"
+
+    api_base_env = str(auth_cfg.get("api_base_env") or default_api_base_env)
+    api_version_env = str(auth_cfg.get("api_version_env") or default_api_version_env)
+    scope = str(auth_cfg.get("scope") or "https://cognitiveservices.azure.com/.default")
+
+    credential = DefaultAzureCredential()
+    token_provider = get_bearer_token_provider(credential, scope)
+    kwargs = {
+        "api_base": _load_required_env(api_base_env),
+        "azure_ad_token_provider": token_provider,
+    }
+    api_version = _load_optional_env(api_version_env)
+    if api_version is not None:
+        kwargs["api_version"] = api_version
+    return kwargs
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are generating a single standalone HTML document. "
@@ -221,6 +282,7 @@ def generate_html_with_meta(
     disable_cache: bool = False,
     debug_truncated_cache: bool = False,
     model_display_name: Optional[str] = None,
+    provider_config: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Generate (or load cached) HTML plus metadata including token usage & cost.
 
@@ -342,6 +404,7 @@ def generate_html_with_meta(
                     kwargs["temperature"] = temperature
                 if effective_max_tokens is not None:
                     kwargs["max_tokens"] = effective_max_tokens
+                kwargs.update(_build_provider_completion_kwargs(model, provider_config))
 
                 resp = litellm.completion(**kwargs)
                 if resp and getattr(resp, "choices", None) and len(resp.choices) > 0:

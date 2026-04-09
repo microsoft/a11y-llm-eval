@@ -159,6 +159,7 @@ def _generate_worker(task):
     debug_truncated_cache = task.get("debug_truncated_cache", False)
     html_out_path = task["html_out_path"]
     model_display_name = task.get("model_display_name")
+    provider_config = task.get("provider_config")
 
     # Configure prompts within this worker process for the specific variant.
     generator.configure_prompts(system_prompt_override, custom_instructions_text)
@@ -172,6 +173,8 @@ def _generate_worker(task):
         generate_signature = inspect.signature(generator.generate_html_with_meta)
         if "model_display_name" in generate_signature.parameters:
             kwargs["model_display_name"] = model_display_name
+        if "provider_config" in generate_signature.parameters:
+            kwargs["provider_config"] = provider_config
     except (TypeError, ValueError):
         pass
 
@@ -233,6 +236,13 @@ def _resolve_cli_path(path_value: str, base_dir: Path) -> Path:
         return workspace_candidate
 
     return base_dir / candidate
+
+
+def _get_model_provider(model: str) -> str:
+    value = (model or "").strip()
+    if "/" in value:
+        return value.split("/", 1)[0].strip().lower() or "unknown"
+    return "unknown"
 
 
 def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[dict]:
@@ -352,13 +362,17 @@ def run(
     base_prompting_system_prompt = generator.get_base_system_prompt()
     base_prompting_effective_system_prompt = generator.get_effective_system_prompt()
     base_prompting_custom_instructions = generator.get_custom_instructions()
+    providers_cfg = models_cfg.get("providers") or {}
     model_names = [m["name"] for m in models_cfg.get("models", [])]
     model_display_lookup = {}
+    model_provider_lookup = {}
     models_info = []
     for m in models_cfg.get("models", []):
         name = m.get("name")
         display_name = m.get("display_name") or (name.split('/')[-1] if isinstance(name, str) else name)
+        provider_name = _get_model_provider(name) if isinstance(name, str) else "unknown"
         model_display_lookup[name] = display_name
+        model_provider_lookup[name] = providers_cfg.get(provider_name) if isinstance(providers_cfg, dict) else None
         models_info.append({"name": name, "display_name": display_name})
     tcd = Path(test_cases_dir)
     prompt_dimensions_path = _resolve_cli_path(prompt_dimensions_file, config_dir)
@@ -445,6 +459,7 @@ def run(
                         "debug_truncated_cache": debug_truncated_cache,
                         "html_out_path": str(html_file),
                         "model_display_name": model_display_lookup.get(model),
+                        "provider_config": model_provider_lookup.get(model),
                     })
 
     # Flatten into a single task list using round-robin across models

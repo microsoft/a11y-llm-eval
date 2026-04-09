@@ -127,6 +127,9 @@ export OPENAI_API_KEY=... # etc. or put in .env and use dotenv
 # Copy model config and set API keys
 cp config/models.yaml.example config/models.yaml
 
+# Optional: for Azure provider auth via DefaultAzureCredential
+# pip install azure-identity
+
 # Run all tests against configured models
 python -m a11y_llm_tests.cli run --models-file config/models.yaml --out runs
 ```

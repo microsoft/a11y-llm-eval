@@ -113,6 +113,13 @@ The effective system prompt is:
 - `defaults.custom_instructions_markdown` (path to a markdown file)
 - `defaults.temperature` (float)
 
+`config/models.yaml` may also define provider-level configuration under `providers.<provider>`.
+
+- `providers.<provider>.auth.mode` may be omitted or set to `env` to preserve LiteLLM's existing environment-based behavior.
+- `providers.azure.auth.mode` and `providers.azure_ai.auth.mode` may be set to `default_azure_credential` to pass an Azure bearer token provider from `azure.identity.DefaultAzureCredential()` into LiteLLM.
+- For `default_azure_credential`, the harness reads `api_base` from `api_base_env` and optionally reads `api_version` from `api_version_env`, defaulting to `AZURE_API_BASE` / `AZURE_API_VERSION` for `azure` and `AZURE_AI_API_BASE` / `AZURE_AI_API_VERSION` for `azure_ai`.
+- When `default_azure_credential` is configured, `azure-identity` must be installed; otherwise generation fails with a clear error.
+
 If `run --temperature` is not provided, the effective temperature defaults to `defaults.temperature` if present.
 
 If neither `run --temperature` nor `defaults.temperature` is provided, the harness omits `temperature` from the LiteLLM request so the provider/model default temperature is used.
