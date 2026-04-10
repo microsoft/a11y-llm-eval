@@ -2,7 +2,11 @@ const detailedResults = require('./detailed-results');
 const getName = require('./get-name');
 const { getAccessibilityNodeInfo } = require('./get-accessibility-tree');
 const { getVisualLabel, SOURCE_PLACEHOLDER } = require('./get-visual-label');
-const { getAllFormFieldWrappers } = require('./get-form-field-wrapper');
+const {
+    getAllFormFieldWrappers,
+    PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+    SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+} = require('./get-form-field-wrapper');
 const { combineHelperTexts, getHelperText, SOURCE_ARIA_DESCRIBEDBY, SOURCE_ARIA_DESCRIPTION, SOURCE_TITLE, SOURCE_CSS_PLACEHOLDER } = require('./get-helper-text');
 const { discover } = require('./discovery');
 
@@ -29,6 +33,18 @@ const getGroupDescriptionLocator = (locator, groupKind) => {
 
     if (groupKind === 'group') {
         return locator.locator('xpath=ancestor::*[@role="group"][1]').first();
+    }
+
+    if (groupKind === 'wrapper') {
+        return locator.locator('xpath=ancestor::*['
+            + 'contains(@class, "field") or '
+            + 'contains(@class, "input") or '
+            + 'contains(@class, "control") or '
+            + 'contains(@class, "item") or '
+            + 'contains(@class, "group") or '
+            + 'contains(@class, "question") or '
+            + 'contains(@class, "prompt")'
+            + '][1]').first();
     }
 
     return null;
@@ -1235,6 +1251,7 @@ testFn.discoverCheckboxes = async (scope) => {
     const count = await checkboxLocator.count();
     const inputs = [];
     const groupsByKey = new Map();
+    const wrapperSelector = `${PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR}, ${SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR}, [class*="question"], [class*="prompt"]`;
 
     for (let index = 0; index < count; index++) {
         const locator = checkboxLocator.nth(index);
@@ -1244,7 +1261,7 @@ testFn.discoverCheckboxes = async (scope) => {
             getHelperText(locator),
             locator.isVisible(),
             locator.evaluate((checkbox, args) => {
-                const { idx } = args;
+                const { idx, wrapperSelector } = args;
                 const normalizeText = (value) => (value || '').toString().replace(/\s+/g, ' ').trim();
                 const parseAriaBoolean = (value) => {
                     if (value === 'true') {
@@ -1314,6 +1331,8 @@ testFn.discoverCheckboxes = async (scope) => {
                 const fieldsets = Array.from(document.querySelectorAll('fieldset'));
                 const isNativeCheckbox = checkbox.matches('input[type="checkbox"]');
                 const groupContainer = checkbox.closest('fieldset, [role="group"]');
+                const wrapperContainers = Array.from(document.querySelectorAll(wrapperSelector));
+                const wrapperContainer = checkbox.closest(wrapperSelector);
                 const requiredAttr = checkbox.getAttribute('required');
                 const ariaRequired = checkbox.getAttribute('aria-required');
                 const ariaDisabled = checkbox.getAttribute('aria-disabled');
@@ -1368,6 +1387,12 @@ testFn.discoverCheckboxes = async (scope) => {
                             groupProgrammaticallyRequired = true;
                         }
                     }
+                } else if (wrapperContainer) {
+                    const checkboxCountInWrapper = wrapperContainer.querySelectorAll('input[type="checkbox"], [role="checkbox"]').length;
+                    if (checkboxCountInWrapper > 1) {
+                        groupKey = `wrapper:${wrapperContainers.indexOf(wrapperContainer)}:${getNodePath(wrapperContainer)}`;
+                        groupKind = 'wrapper';
+                    }
                 }
 
                 return {
@@ -1389,7 +1414,7 @@ testFn.discoverCheckboxes = async (scope) => {
                     programmaticallyRequired,
                     controlText,
                 };
-            }, { idx: index }),
+            }, { idx: index, wrapperSelector }),
         ]);
 
         const helperText = Array.isArray(rawHelperText)

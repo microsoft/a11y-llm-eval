@@ -7,7 +7,7 @@ from a11y_llm_tests import node_bridge
 FORM_CONTROLS_HELPER_PATH = str((Path(__file__).resolve().parents[1] / 'node_runner' / 'helpers' / 'test-form-controls.js').resolve())
 
 
-def test_helper_text_associated_message_lists_failing_controls_for_repeated_group_helper(tmp_path):
+def test_helper_text_associated_message_uses_group_context_for_repeated_group_helper(tmp_path):
     html = '''<!doctype html>
 <html><body>
   <form>
@@ -56,8 +56,8 @@ module.exports.run = async ({{page, assert}}) => {{
     assert found.get('status') == 'fail'
 
     message = found.get('message') or ''
-    assert 'text input "Mercury" has helper text "Select all planets primarily composed of hydrogen and helium."' in message
-    assert 'text input "Neptune" has helper text "Select all planets primarily composed of hydrogen and helium."' in message
+    assert 'checkbox group "Which planets in our solar system are considered gas giants?" has helper text "Select all planets primarily composed of hydrogen and helium." that is not programmatically associated' in message
+    assert 'text input "Mercury" has helper text' not in message
 
 
 def test_helper_text_associated_group_requires_real_programmatic_description(tmp_path):
@@ -161,3 +161,57 @@ module.exports.run = async ({{page, assert}}) => {{
     message = found.get('message') or ''
     assert 'checkbox group "Which of the following are programming languages?" has helper text "Select all that apply." that is not programmatically associated' in message
     assert 'Which of the following are programming languages? Select all that apply.' not in message
+
+
+def test_helper_text_associated_wrapper_checkbox_group_uses_shared_group_context(tmp_path):
+    html = '''<!doctype html>
+<html><body>
+  <form>
+    <div class="form-field">
+      <div class="question-header">
+        <h2 class="question-title">1. Which of these are programming languages?</h2>
+        <p class="help-text">Choose every item that is a computer programming language.</p>
+      </div>
+      <div class="choices">
+        <label class="choice"><input type="checkbox" id="lang-a" name="q1"><span>Python</span></label>
+        <label class="choice"><input type="checkbox" id="lang-b" name="q1"><span>HTML</span></label>
+        <label class="choice"><input type="checkbox" id="lang-c" name="q1"><span>JavaScript</span></label>
+        <label class="choice"><input type="checkbox" id="lang-d" name="q1"><span>CSS</span></label>
+      </div>
+    </div>
+  </form>
+</body></html>'''
+
+    helper_path_js = json.dumps(FORM_CONTROLS_HELPER_PATH)
+
+    test_js = f'''
+const testFormControls = require({helper_path_js});
+module.exports.run = async ({{page, assert}}) => {{
+    const discovery = await testFormControls.discoverCheckboxes(page);
+    const results = await testFormControls.testHelperTextAssociated(page, discovery);
+    await assert('helper-text-associated', () => {{
+        const status = results && typeof results.status === 'function' ? results.status() : 'fail';
+        const message = results && typeof results.getMessage === 'function' ? results.getMessage() : '';
+        return {{ status, message }};
+    }});
+}};
+'''
+    test_js_path = tmp_path / 'test.js'
+    test_js_path.write_text(test_js, encoding='utf-8')
+
+    screenshot_dir = Path('runs') / 'pytest_screenshots'
+    screenshot_dir.mkdir(parents=True, exist_ok=True)
+    screenshot_file = str(screenshot_dir / 'helper_text_associated_wrapper_checkbox_group.png')
+
+    result = node_bridge.run(html, str(test_js_path), screenshot_file)
+
+    assert 'testFunctionResult' in result, f"Runner failed or returned unexpected output: {result}"
+    assertions = result['testFunctionResult'].get('assertions', [])
+    found = next((assertion for assertion in assertions if assertion.get('name') == 'helper-text-associated'), None)
+
+    assert found is not None, f"No 'helper-text-associated' assertion in runner output: {result}"
+    assert found.get('status') == 'fail'
+
+    message = found.get('message') or ''
+    assert 'checkbox group "1. Which of these are programming languages?" has helper text "Choose every item that is a computer programming language." that is not programmatically associated' in message
+    assert 'text input "Python" has helper text' not in message
