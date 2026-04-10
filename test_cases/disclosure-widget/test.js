@@ -34,7 +34,11 @@ module.exports.run = async ({ page, assert }) => {
       
       let isHidden = await example.$eval(".details", el => {
         const virtualNode = window.axe.utils.getNodeFromTree(el);
-        const isVisuallyHidden = !window.axe.commons.dom.isVisible(el, false, true);
+        const hasNoContentBox = el.clientHeight === 0;
+        const style = window.getComputedStyle(el);
+        const clipsOverflow = /(hidden|clip)/.test(`${style.overflow} ${style.overflowX} ${style.overflowY}`);
+        const isVisuallyHidden = !window.axe.commons.dom.isVisible(el, false, true)
+          || (hasNoContentBox && clipsOverflow);
         const isScreenReaderHidden = !window.axe.commons.dom.isVisibleToScreenReaders(virtualNode);
         return isVisuallyHidden && isScreenReaderHidden;
       });

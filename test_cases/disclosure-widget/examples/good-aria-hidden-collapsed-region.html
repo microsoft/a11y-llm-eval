@@ -2,7 +2,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Collapsed disclosure content hidden visually and programmatically</title>
+    <title>Collapsed disclosure content hidden while border remains visible</title>
     <script id="a11y-assertions" type="application/json">{
         "assertions": {
             "All examples have a valid semantics": "pass",
@@ -13,8 +13,10 @@
 <body>
     <div class="example">
         <button aria-expanded="false">Show cat facts</button>
-        <div class="details" aria-hidden="true" style="display: none;">
-            <p>Cats sleep for much of the day.</p>
+        <div class="details" aria-hidden="true" style="max-height: 0; overflow: hidden; border-top: 1px solid #ccc;">
+            <div style="padding-top: 16px;">
+                <p>Cats sleep for much of the day.</p>
+            </div>
         </div>
     </div>
 </body>
