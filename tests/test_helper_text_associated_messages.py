@@ -7,7 +7,7 @@ from a11y_llm_tests import node_bridge
 FORM_CONTROLS_HELPER_PATH = str((Path(__file__).resolve().parents[1] / 'node_runner' / 'helpers' / 'test-form-controls.js').resolve())
 
 
-def test_helper_text_associated_message_deduplicates_repeated_group_helper(tmp_path):
+def test_helper_text_associated_message_lists_failing_controls_for_repeated_group_helper(tmp_path):
     html = '''<!doctype html>
 <html><body>
   <form>
@@ -56,8 +56,8 @@ module.exports.run = async ({{page, assert}}) => {{
     assert found.get('status') == 'fail'
 
     message = found.get('message') or ''
-    expected_fragment = 'Found `Select all planets primarily composed of hydrogen and helium.`'
-    assert message.count(expected_fragment) == 1, message
+    assert 'text input "Mercury" has helper text "Select all planets primarily composed of hydrogen and helium."' in message
+    assert 'text input "Neptune" has helper text "Select all planets primarily composed of hydrogen and helium."' in message
 
 
 def test_helper_text_associated_group_requires_real_programmatic_description(tmp_path):
@@ -106,4 +106,4 @@ module.exports.run = async ({{page, assert}}) => {{
     assert found.get('status') == 'fail'
 
     message = found.get('message') or ''
-    assert 'Found `Choose all fruits you like.`' in message
+    assert 'checkbox group "Which fruits do you like?" has helper text "Choose all fruits you like." that is not programmatically associated' in message

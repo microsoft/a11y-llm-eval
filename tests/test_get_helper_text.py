@@ -226,6 +226,37 @@ CASES = [
             "accessible_description": "include first and last name",
         },
     ),
+    (
+        'description_nested_inside_label',
+        '<label class="option"><input id="i" type="checkbox" aria-label="Python"><span class="option-label"><span class="option-title">Python</span><span class="option-desc">A valid language or technology in this context.</span></span></label>',
+        {
+            "combined": "a valid language or technology in this context.",
+            "helpers": [
+                {"text": "A valid language or technology in this context.", "source": "HELPER_NEARBY"},
+            ],
+            "accessible_description": "",
+        },
+    ),
+    (
+        'prefer_in_label_description_over_wrapper_question_text',
+        '<div class="form-field">'
+        '<h3 class="question-title">1. Which of the following are programming languages?</h3>'
+        '<p class="help-text">Select all that apply. More than one answer may be correct.</p>'
+        '<label class="option"><input id="i" type="checkbox" aria-label="Python">'
+        '<span class="option-label"><span class="option-title">Python</span><span class="option-desc">A valid language or technology in this context.</span></span>'
+        '</label>'
+        '<label class="option"><input type="checkbox" aria-label="HTML">'
+        '<span class="option-label"><span class="option-title">HTML</span><span class="option-desc">Not the best fit for this question.</span></span>'
+        '</label>'
+        '</div>',
+        {
+            "combined": "a valid language or technology in this context.",
+            "helpers": [
+                {"text": "A valid language or technology in this context.", "source": "HELPER_NEARBY"},
+            ],
+            "accessible_description": "",
+        },
+    ),
 ]
 
 

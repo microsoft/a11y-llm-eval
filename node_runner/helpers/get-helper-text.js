@@ -51,9 +51,39 @@ const getHelperText = async (el, opts = {}) => {
         } = args;
 
         const labelLower = (visualLabelText || '').toLowerCase();
+        const SUPPLEMENTARY_CLASS_RE = /\b(desc|description|helper|help-text|helper-text|hint|tooltip|supporting|assistive|option-desc|field-note|field-description)\b/;
 
         function normText(s) {
             return (s || '').replace(/\s+/g, ' ').trim();
+        }
+
+        function looksLikeSupplementary(node) {
+            if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+            const role = (node.getAttribute && (node.getAttribute('role') || '')).toLowerCase();
+            if (role && (role === 'tooltip' || role === 'note' || role === 'status' || role === 'alert')) {
+                return true;
+            }
+            if (node.hasAttribute && (node.hasAttribute('aria-live') || node.hasAttribute('aria-description'))) {
+                return true;
+            }
+            const cls = (node.className || '').toString().toLowerCase();
+            return SUPPLEMENTARY_CLASS_RE.test(cls);
+        }
+
+        function hasSupplementaryAncestorWithinLabel(node) {
+            if (!node || !node.closest) return false;
+            const label = node.closest('label');
+            if (!label) return false;
+
+            let current = node;
+            while (current && current !== label) {
+                if (looksLikeSupplementary(current)) {
+                    return true;
+                }
+                current = current.parentElement;
+            }
+
+            return false;
         }
 
         function splitWords(s) {
@@ -209,72 +239,123 @@ const getHelperText = async (el, opts = {}) => {
             addHelper(afterContent, SOURCE_CSS_PLACEHOLDER, el);
         }
 
-        // --- 4. Visual helper text nearby via TreeWalker ---
-        const wrapper =
-            el.closest(PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR)
-            || el.closest(SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR)
-            || el.closest(FALLBACK_FIELD_WRAPPER_SELECTOR)
-            || el.closest(FIELD_WRAPPER_SELECTOR)
-            || document.body;
+        // --- 4. Supplementary/helper text nested inside the control's own label ---
+        let foundInLabelSupplementaryHelper = false;
+        const enclosingLabel = el.closest && el.closest('label');
+        if (enclosingLabel) {
+            const labelWalker = document.createTreeWalker(
+                enclosingLabel,
+                NodeFilter.SHOW_TEXT,
+                {
+                    acceptNode(node) {
+                        if (!node || !node.parentElement) return NodeFilter.FILTER_REJECT;
+                        if (el.contains(node.parentElement)) return NodeFilter.FILTER_REJECT;
 
-        const walker = document.createTreeWalker(
-            wrapper,
-            NodeFilter.SHOW_TEXT,
-            {
-                acceptNode(node) {
-                    if (!node || !node.parentElement) return NodeFilter.FILTER_REJECT;
+                        const parent = node.parentElement;
+                        const txt = normText(node.nodeValue);
+                        if (!txt) return NodeFilter.FILTER_REJECT;
+                        const txtLower = txt.toLowerCase();
 
-                    // Don't treat text inside the control itself as helper text
-                    if (el.contains(node.parentElement)) {
-                        return NodeFilter.FILTER_REJECT;
+                        if (!hasSupplementaryAncestorWithinLabel(parent)) {
+                            return NodeFilter.FILTER_REJECT;
+                        }
+
+                        if (labelLower && isMostlyFromLabel(txtLower, labelLower)) {
+                            return NodeFilter.FILTER_REJECT;
+                        }
+
+                        return NodeFilter.FILTER_ACCEPT;
                     }
+                },
+                false
+            );
 
-                    // Skip nodes that belong to aria-describedby targets
-                    const parent = node.parentElement;
-                    if (parent.id && describedIds.has(parent.id)) {
-                        return NodeFilter.FILTER_REJECT;
+            while (labelWalker.nextNode()) {
+                const node = labelWalker.currentNode;
+                const txt = normText(node.nodeValue);
+                if (!txt) continue;
+                addHelper(txt, SOURCE_HELPER_NEARBY, node.parentElement || node);
+                foundInLabelSupplementaryHelper = true;
+            }
+        }
+
+        // --- 5. Visual helper text nearby via TreeWalker ---
+        // If the control already exposes supplementary text inside its own label,
+        // prefer that local helper content over broader wrapper text.
+        if (!foundInLabelSupplementaryHelper) {
+            const wrapper =
+                el.closest(PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR)
+                || el.closest(SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR)
+                || el.closest(FALLBACK_FIELD_WRAPPER_SELECTOR)
+                || el.closest(FIELD_WRAPPER_SELECTOR)
+                || document.body;
+
+            const walker = document.createTreeWalker(
+                wrapper,
+                NodeFilter.SHOW_TEXT,
+                {
+                    acceptNode(node) {
+                        if (!node || !node.parentElement) return NodeFilter.FILTER_REJECT;
+
+                        // Don't treat text inside the control itself as helper text
+                        if (el.contains(node.parentElement)) {
+                            return NodeFilter.FILTER_REJECT;
+                        }
+
+                        // Skip nodes that belong to aria-describedby targets
+                        const parent = node.parentElement;
+                        if (parent.id && describedIds.has(parent.id)) {
+                            return NodeFilter.FILTER_REJECT;
+                        }
+
+                        const parentTag = parent.tagName || '';
+                        const parentCls = (parent.className || '').toString().toLowerCase();
+
+                        // Skip style/script content
+                        if (parentTag === 'STYLE' || parentTag === 'SCRIPT') {
+                            return NodeFilter.FILTER_REJECT;
+                        }
+
+                        // Skip obvious labels (fallback), except supplementary/helper-like text nested inside a label.
+                        if (parentTag === 'LEGEND') {
+                            return NodeFilter.FILTER_REJECT;
+                        }
+
+                        const parentLabel = parent.closest && parent.closest('label');
+                        if (parentTag === 'LABEL' || parentLabel) {
+                            if (!hasSupplementaryAncestorWithinLabel(parent)) {
+                                return NodeFilter.FILTER_REJECT;
+                            }
+                        }
+
+                        // Skip obvious error messages
+                        if (/error|invalid|validation|err/.test(parentCls)) {
+                            return NodeFilter.FILTER_REJECT;
+                        }
+
+                        const txt = normText(node.nodeValue);
+                        if (!txt) return NodeFilter.FILTER_REJECT;
+
+                        const txtLower = txt.toLowerCase();
+
+                        // Skip text that appears to be (mostly) the visual label itself,
+                        // including small fragments like "*".
+                        if (labelLower && isMostlyFromLabel(txtLower, labelLower)) {
+                            return NodeFilter.FILTER_REJECT;
+                        }
+
+                        return NodeFilter.FILTER_ACCEPT;
                     }
+                },
+                false
+            );
 
-                    const parentTag = parent.tagName || '';
-                    const parentCls = (parent.className || '').toString().toLowerCase();
-
-                    // Skip style/script content
-                    if (parentTag === 'STYLE' || parentTag === 'SCRIPT') {
-                        return NodeFilter.FILTER_REJECT;
-                    }
-
-                    // Skip obvious labels (fallback)
-                    if (parentTag === 'LABEL' || parentTag === 'LEGEND' || (parent.closest && parent.closest('label'))) {
-                        return NodeFilter.FILTER_REJECT;
-                    }
-
-                    // Skip obvious error messages
-                    if (/error|invalid|validation|err/.test(parentCls)) {
-                        return NodeFilter.FILTER_REJECT;
-                    }
-
-                    const txt = normText(node.nodeValue);
-                    if (!txt) return NodeFilter.FILTER_REJECT;
-
-                    const txtLower = txt.toLowerCase();
-
-                    // Skip text that appears to be (mostly) the visual label itself,
-                    // including small fragments like "*".
-                    if (labelLower && isMostlyFromLabel(txtLower, labelLower)) {
-                        return NodeFilter.FILTER_REJECT;
-                    }
-
-                    return NodeFilter.FILTER_ACCEPT;
-                }
-            },
-            false
-        );
-
-        while (walker.nextNode()) {
-            const node = walker.currentNode;
-            const txt = normText(node.nodeValue);
-            if (!txt) continue;
-            addHelper(txt, SOURCE_HELPER_NEARBY, node.parentElement || node);
+            while (walker.nextNode()) {
+                const node = walker.currentNode;
+                const txt = normText(node.nodeValue);
+                if (!txt) continue;
+                addHelper(txt, SOURCE_HELPER_NEARBY, node.parentElement || node);
+            }
         }
 
         if (!helpers.length) {

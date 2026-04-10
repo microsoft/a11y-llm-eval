@@ -33,27 +33,65 @@ const getVisualLabel = async (el, opts = {}) => {
 
         const isVisible = (node) => window.axe.commons.dom.isVisible(node, false, true);
 
-        function textOf(node) {
+        const SUPPLEMENTARY_CLASS_RE = /\b(desc|description|helper|help-text|helper-text|hint|tooltip|supporting|assistive|option-desc|field-note|field-description)\b/;
+        const PRIMARY_LABEL_SELECTOR = [
+            '.option-title',
+            '.label-text',
+            '.field-label',
+            '.input-label',
+            '.control-label',
+            '.question-label',
+            '.form-label',
+            '.legend-text',
+            '[data-label-text]',
+            '[data-slot="label"]',
+        ].join(',');
+
+        function looksLikeSupplementary(node) {
+            if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+            const role = (node.getAttribute && (node.getAttribute('role') || '')).toLowerCase();
+            if (role && (role === 'tooltip' || role === 'note' || role === 'status' || role === 'alert')) {
+                return true;
+            }
+            if (node.hasAttribute && (node.hasAttribute('aria-live') || node.hasAttribute('aria-description'))) {
+                return true;
+            }
+            const cls = (node.className || '').toString().toLowerCase();
+            if (SUPPLEMENTARY_CLASS_RE.test(cls)) {
+                return true;
+            }
+            return false;
+        }
+
+        function collectVisibleText(node, options = {}) {
+            const { excludeSupplementary = false } = options;
             if (!node) return '';
 
-            // Gather visible text from this node and its descendants, excluding fully transparent elements.
+            if (node.nodeType === Node.ELEMENT_NODE && excludeSupplementary && looksLikeSupplementary(node)) {
+                return '';
+            }
+
             const collect = (n) => {
                 if (!n) return '';
 
-                // If this is an element that is fully transparent, skip its subtree.
-                if (n.nodeType === Node.ELEMENT_NODE && window.getComputedStyle) {
-                    const cs = window.getComputedStyle(n);
-                    if (cs && cs.color) {
-                        // color can be rgb/rgba; treat fully transparent as invisible.
-                        const color = cs.color.trim().toLowerCase();
-                        if (color.startsWith('rgba')) {
-                            const m = color.match(/rgba\([^,]+,[^,]+,[^,]+,\s*([0-9.]+)\)/);
-                            if (m && parseFloat(m[1]) === 0) {
+                if (n.nodeType === Node.ELEMENT_NODE) {
+                    if (excludeSupplementary && looksLikeSupplementary(n)) {
+                        return '';
+                    }
+
+                    if (window.getComputedStyle) {
+                        const cs = window.getComputedStyle(n);
+                        if (cs && cs.color) {
+                            const color = cs.color.trim().toLowerCase();
+                            if (color.startsWith('rgba')) {
+                                const m = color.match(/rgba\([^,]+,[^,]+,[^,]+,\s*([0-9.]+)\)/);
+                                if (m && parseFloat(m[1]) === 0) {
+                                    return '';
+                                }
+                            }
+                            if (color === 'transparent') {
                                 return '';
                             }
-                        }
-                        if (color === 'transparent') {
-                            return '';
                         }
                     }
                 }
@@ -69,17 +107,14 @@ const getVisualLabel = async (el, opts = {}) => {
                 return buffer;
             };
 
-            // base text from DOM text nodes (visible-only)
             let text = collect(node).replace(/\s+/g, ' ').trim();
 
-            // include simple CSS pseudo-element content (e.g., asterisks for required fields)
             if (node.nodeType === Node.ELEMENT_NODE && window.getComputedStyle) {
                 const pseudoContent = (which) => {
                     const cs = window.getComputedStyle(node, which);
                     if (!cs) return '';
                     let c = cs.getPropertyValue('content');
                     if (!c || c === 'none' || c === 'normal') return '';
-                    // strip surrounding quotes Playwright/JS engines add around string content
                     c = c.trim();
                     if ((c.startsWith('"') && c.endsWith('"')) || (c.startsWith("'") && c.endsWith("'"))) {
                         c = c.slice(1, -1);
@@ -103,6 +138,42 @@ const getVisualLabel = async (el, opts = {}) => {
             return text;
         }
 
+        function labelTextOf(node) {
+            if (!node) return '';
+
+            if (node.nodeType === Node.ELEMENT_NODE) {
+                const candidates = [];
+                if (node.matches && node.matches(PRIMARY_LABEL_SELECTOR) && isVisible(node) && !looksLikeSupplementary(node)) {
+                    candidates.push(node);
+                }
+                if (node.querySelectorAll) {
+                    for (const candidate of node.querySelectorAll(PRIMARY_LABEL_SELECTOR)) {
+                        if (isVisible(candidate) && !looksLikeSupplementary(candidate)) {
+                            candidates.push(candidate);
+                        }
+                    }
+                }
+
+                const filteredCandidates = candidates.filter((candidate, index) => {
+                    return !candidates.some((other, otherIndex) => otherIndex !== index && other.contains(candidate));
+                });
+
+                if (filteredCandidates.length > 0) {
+                    const parts = [];
+                    for (const candidate of filteredCandidates) {
+                        const text = collectVisibleText(candidate, { excludeSupplementary: true });
+                        if (text) parts.push(text);
+                    }
+                    const combined = parts.join(' ').replace(/\s+/g, ' ').trim();
+                    if (combined) {
+                        return combined;
+                    }
+                }
+            }
+
+            return collectVisibleText(node, { excludeSupplementary: true });
+        }
+
         // Use a single parts array for programmatic labels first
         const parts = [];
 
@@ -112,7 +183,7 @@ const getVisualLabel = async (el, opts = {}) => {
             for (const id of labelledby.split(/\s+/)) {
                 const target = document.getElementById(id);
                 if (target && isVisible(target)) {
-                    const t = textOf(target);
+                    const t = labelTextOf(target);
                     if (t) parts.push(t);
                 }
             }
@@ -125,7 +196,7 @@ const getVisualLabel = async (el, opts = {}) => {
             if (el.labels && el.labels.length) {
                 for (const lab of el.labels) {
                     if (isVisible(lab)) {
-                        const t = textOf(lab);
+                        const t = labelTextOf(lab);
                         if (t) parts.push(t);
                     }
                 }
@@ -168,7 +239,7 @@ const getVisualLabel = async (el, opts = {}) => {
             acceptNode(node) {
                 if (node === el) return NodeFilter.FILTER_REJECT;
                 if (!isVisible(node)) return NodeFilter.FILTER_REJECT;
-                const txt = textOf(node);
+                const txt = labelTextOf(node);
                 if (!txt) return NodeFilter.FILTER_REJECT;
                 if (looksLikeNonLabel(node)) return NodeFilter.FILTER_REJECT;
                 if (described.has(node.id)) return NodeFilter.FILTER_REJECT;
@@ -185,7 +256,7 @@ const getVisualLabel = async (el, opts = {}) => {
             const dx = (rect.left + rect.right) / 2 - (inputRect.left + inputRect.right) / 2;
             const dy = (rect.top + rect.bottom) / 2 - (inputRect.top + inputRect.bottom) / 2;
             const distance = Math.hypot(dx, dy);
-            candidates.push({ node, text: textOf(node), rect, distance, dy });
+            candidates.push({ node, text: labelTextOf(node), rect, distance, dy });
         }
 
         if (candidates.length === 0) {
