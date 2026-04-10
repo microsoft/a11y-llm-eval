@@ -90,7 +90,7 @@ const describeControl = (item, controlType, index = null) => {
 };
 
 const describeGroup = (group, groupType, index = null) => {
-    const label = normalizeText(group && group.groupLabel);
+    const label = normalizeText((group && group.groupLabel) || (group && group.groupVisualLabel));
     if (label) {
         return `${groupType} ${quoteText(label)}`;
     }
@@ -98,6 +98,125 @@ const describeGroup = (group, groupType, index = null) => {
         return `${groupType} ${index + 1}`;
     }
     return groupType;
+};
+
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const stripLeadingGroupLabelText = (text, labelCandidates) => {
+    const normalizedText = normalizeText(text);
+    if (!normalizedText) {
+        return '';
+    }
+
+    for (const candidate of labelCandidates) {
+        const normalizedCandidate = normalizeText(candidate);
+        if (!normalizedCandidate) {
+            continue;
+        }
+
+        const exactPattern = new RegExp(`^\\s*(?:\\d+[\\.)]\\s*)?${escapeRegExp(normalizedCandidate)}\\s*$`, 'i');
+        if (exactPattern.test(normalizedText)) {
+            return '';
+        }
+
+        const prefixPattern = new RegExp(`^\\s*(?:\\d+[\\.)]\\s*)?${escapeRegExp(normalizedCandidate)}(?:\\s*[:;\\-]\\s*|\\s+)`, 'i');
+        if (prefixPattern.test(normalizedText)) {
+            const stripped = normalizedText.replace(prefixPattern, '').trim();
+            if (stripped) {
+                return stripped;
+            }
+        }
+    }
+
+    return normalizedText;
+};
+
+const getGroupVisualLabel = async (groupLocator) => {
+    if (!groupLocator || !await groupLocator.count()) {
+        return '';
+    }
+
+    return groupLocator.evaluate((groupEl) => {
+        const normalizeText = (value) => (value || '').toString().replace(/\s+/g, ' ').trim();
+        const LABEL_CLASS_RE = /\b(question|prompt|legend|label|title|heading)\b/;
+        const SUPPLEMENTARY_CLASS_RE = /\b(desc|description|helper|help-text|helper-text|hint|tooltip|supporting|assistive|option-desc|field-note|field-description|validation|error|alert)\b/;
+
+        const collectTextExcludingSupplementary = (node) => {
+            if (!node) return '';
+            if (node.nodeType === Node.TEXT_NODE) {
+                return node.nodeValue || '';
+            }
+            if (node.nodeType !== Node.ELEMENT_NODE) {
+                return '';
+            }
+
+            const className = (node.className || '').toString().toLowerCase();
+            if (SUPPLEMENTARY_CLASS_RE.test(className)) {
+                return '';
+            }
+
+            let buffer = '';
+            for (const child of node.childNodes) {
+                buffer += ` ${collectTextExcludingSupplementary(child)}`;
+            }
+            return buffer;
+        };
+
+        const isVisible = (node) => {
+            if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+            if (window.axe && window.axe.commons && window.axe.commons.dom && typeof window.axe.commons.dom.isVisible === 'function') {
+                return window.axe.commons.dom.isVisible(node, false, true);
+            }
+
+            const style = window.getComputedStyle(node);
+            if (!style) return true;
+            return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+        };
+
+        const isChoiceLabel = (node) => {
+            if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+            if (node.closest && node.closest('label')) {
+                const label = node.closest('label');
+                if (label && label.querySelector('input, textarea, select, [role="checkbox"], [role="radio"]')) {
+                    return true;
+                }
+            }
+            return !!node.querySelector && !!node.querySelector('input, textarea, select, [role="checkbox"], [role="radio"]');
+        };
+
+        const labelledby = (groupEl.getAttribute && groupEl.getAttribute('aria-labelledby')) || '';
+        for (const id of labelledby.split(/\s+/)) {
+            if (!id) continue;
+            const target = document.getElementById(id);
+            if (!target || !isVisible(target)) continue;
+            const text = normalizeText(collectTextExcludingSupplementary(target) || target.textContent || target.innerText || '');
+            if (text) return text;
+        }
+
+        const wrapper = groupEl.closest('[class*="field"], [class*="input"], [class*="control"], [class*="item"], [class*="question"], [class*="prompt"]')
+            || groupEl.parentElement
+            || groupEl;
+
+        const candidates = Array.from(wrapper.querySelectorAll('legend, h1, h2, h3, h4, h5, h6, [class*="question"], [class*="label"], [class*="title"], [data-label], [data-question]'));
+
+        for (const candidate of candidates) {
+            if (!isVisible(candidate) || isChoiceLabel(candidate)) {
+                continue;
+            }
+
+            const className = (candidate.className || '').toString().toLowerCase();
+            if (SUPPLEMENTARY_CLASS_RE.test(className) && !LABEL_CLASS_RE.test(className)) {
+                continue;
+            }
+
+            const text = normalizeText(collectTextExcludingSupplementary(candidate) || candidate.textContent || candidate.innerText || '');
+            if (text) {
+                return text;
+            }
+        }
+
+        return '';
+    });
 };
 
 // Check that each text input has an accessible name (R - WCAG 4.1.2)
@@ -990,6 +1109,7 @@ testFn.discoverRadios = async (scope) => {
             : (rawHelperText ? [rawHelperText] : []);
         let groupHasProgrammaticDescription = false;
         let groupLabel = meta.groupLabel;
+        let groupVisualLabel = '';
         const groupLocator = getGroupDescriptionLocator(locator, meta.groupKind);
         let visualLabel = rawVisualLabel;
 
@@ -997,6 +1117,7 @@ testFn.discoverRadios = async (scope) => {
             const groupAccessibilityNode = await getAccessibilityNodeInfo(groupLocator);
             groupLabel = groupAccessibilityNode.name || groupLabel;
             groupHasProgrammaticDescription = !!groupAccessibilityNode.description;
+            groupVisualLabel = await getGroupVisualLabel(groupLocator);
         }
 
         if ((!visualLabel || !visualLabel.text || !visualLabel.text.trim()) && meta.controlText) {
@@ -1024,6 +1145,7 @@ testFn.discoverRadios = async (scope) => {
             groupKey: meta.groupKey,
             groupKind: meta.groupKind,
             groupLabel,
+            groupVisualLabel,
             groupHasProgrammaticDescription,
         };
 
@@ -1034,6 +1156,7 @@ testFn.discoverRadios = async (scope) => {
                 groupKey: meta.groupKey,
                 groupKind: meta.groupKind,
                 groupLabel,
+                groupVisualLabel,
                 programmaticallyRequired: meta.groupProgrammaticallyRequired,
                 groupHasProgrammaticDescription,
                 hasNativeAriaStateMismatch: false,
@@ -1061,6 +1184,8 @@ testFn.discoverRadios = async (scope) => {
 
     for (const group of groups) {
         const groupLabel = normalizeText(group.groupLabel);
+        const groupVisualLabel = normalizeText(group.groupVisualLabel);
+        const groupLabelCandidates = [group.groupLabel, group.groupVisualLabel].filter(Boolean);
         const radioLabels = new Set(
             group.radios
                 .map((radio) => normalizeText((radio.visualLabel && radio.visualLabel.text) || radio.name))
@@ -1069,11 +1194,20 @@ testFn.discoverRadios = async (scope) => {
 
         for (const radio of group.radios) {
             radio.helperText = radio.helperText.filter((helper) => {
-                const text = normalizeText(helper && helper.text);
+                const strippedText = stripLeadingGroupLabelText(helper && helper.text, groupLabelCandidates);
+                if (!strippedText) {
+                    return false;
+                }
+
+                helper.text = strippedText;
+                const text = normalizeText(strippedText);
                 if (!text) {
                     return false;
                 }
                 if (text === groupLabel) {
+                    return false;
+                }
+                if (text === groupVisualLabel) {
                     return false;
                 }
                 if (radioLabels.has(text)) {
@@ -1263,6 +1397,7 @@ testFn.discoverCheckboxes = async (scope) => {
             : (rawHelperText ? [rawHelperText] : []);
         let groupHasProgrammaticDescription = false;
         let groupLabel = meta.groupLabel;
+        let groupVisualLabel = '';
         const groupLocator = getGroupDescriptionLocator(locator, meta.groupKind);
         let visualLabel = rawVisualLabel;
 
@@ -1270,6 +1405,7 @@ testFn.discoverCheckboxes = async (scope) => {
             const groupAccessibilityNode = await getAccessibilityNodeInfo(groupLocator);
             groupLabel = groupAccessibilityNode.name || groupLabel;
             groupHasProgrammaticDescription = !!groupAccessibilityNode.description;
+            groupVisualLabel = await getGroupVisualLabel(groupLocator);
         }
 
         if ((!visualLabel || !visualLabel.text || !visualLabel.text.trim()) && meta.controlText) {
@@ -1297,6 +1433,7 @@ testFn.discoverCheckboxes = async (scope) => {
             groupKey: meta.groupKey,
             groupKind: meta.groupKind,
             groupLabel,
+            groupVisualLabel,
             groupHasProgrammaticDescription,
         };
 
@@ -1308,6 +1445,7 @@ testFn.discoverCheckboxes = async (scope) => {
                     groupKey: meta.groupKey,
                     groupKind: meta.groupKind,
                     groupLabel,
+                    groupVisualLabel,
                     programmaticallyRequired: meta.groupProgrammaticallyRequired,
                     groupHasProgrammaticDescription,
                     hasNativeAriaStateMismatch: false,
@@ -1336,6 +1474,8 @@ testFn.discoverCheckboxes = async (scope) => {
 
     for (const group of groups) {
         const groupLabel = normalizeText(group.groupLabel);
+        const groupVisualLabel = normalizeText(group.groupVisualLabel);
+        const groupLabelCandidates = [group.groupLabel, group.groupVisualLabel].filter(Boolean);
         const checkboxLabels = new Set(
             group.checkboxes
                 .map((checkbox) => normalizeText((checkbox.visualLabel && checkbox.visualLabel.text) || checkbox.name))
@@ -1344,11 +1484,20 @@ testFn.discoverCheckboxes = async (scope) => {
 
         for (const checkbox of group.checkboxes) {
             checkbox.helperText = checkbox.helperText.filter((helper) => {
-                const text = normalizeText(helper && helper.text);
+                const strippedText = stripLeadingGroupLabelText(helper && helper.text, groupLabelCandidates);
+                if (!strippedText) {
+                    return false;
+                }
+
+                helper.text = strippedText;
+                const text = normalizeText(strippedText);
                 if (!text) {
                     return false;
                 }
                 if (text === groupLabel) {
+                    return false;
+                }
+                if (text === groupVisualLabel) {
                     return false;
                 }
                 if (checkboxLabels.has(text)) {
