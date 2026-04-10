@@ -3,6 +3,30 @@
  * Supports native checkboxes and custom ARIA checkbox groups.
  */
 
+const normalizeText = (value) => (value || '').toString().replace(/[\s\u00A0]+/g, ' ').trim();
+const summarizeList = (items, maxItems = 4) => {
+    const filtered = items.filter(Boolean);
+    if (filtered.length <= maxItems) {
+        return filtered.join(', ');
+    }
+    return `${filtered.slice(0, maxItems).join(', ')}, and ${filtered.length - maxItems} more`;
+};
+const describeCheckbox = (checkbox, index) => {
+    const label = normalizeText((checkbox.visualLabel && checkbox.visualLabel.text) || checkbox.name);
+    const groupLabel = normalizeText(checkbox.groupLabel);
+    if (label && groupLabel) {
+        return `checkbox "${label}" in group "${groupLabel}"`;
+    }
+    if (label) {
+        return `checkbox "${label}"`;
+    }
+    return `checkbox ${index + 1}`;
+};
+const describeGroup = (group, index) => {
+    const label = normalizeText(group.groupLabel);
+    return label ? `checkbox group "${label}"` : `checkbox group ${index + 1}`;
+};
+
 module.exports.run = async ({ page, assert, utils }) => {
     const discovery = await utils.testFormControls.discoverCheckboxes(page);
 
@@ -13,8 +37,8 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: false, message: 'No checkboxes found in scope' };
         }
 
-        let invalidCount = 0;
-        for (const checkbox of checkboxes) {
+        const invalidCheckboxes = [];
+        for (const [index, checkbox] of checkboxes.entries()) {
             const hasValidRole = await checkbox.locator.evaluate((el) => {
                 const explicitRole = (el.getAttribute('role') || '').trim().toLowerCase();
                 const isNativeCheckbox = el.matches('input[type="checkbox"]');
@@ -27,15 +51,15 @@ module.exports.run = async ({ page, assert, utils }) => {
             });
 
             if (!hasValidRole) {
-                invalidCount += 1;
+                invalidCheckboxes.push(describeCheckbox(checkbox, index));
             }
         }
 
-        if (invalidCount === 0) {
+        if (invalidCheckboxes.length === 0) {
             return { pass: true, message: 'All checkboxes expose valid checkbox roles' };
         }
 
-        return { pass: false, message: `${invalidCount} checkbox option(s) do not expose a valid checkbox role` };
+        return { pass: false, message: `Invalid checkbox role on ${summarizeList(invalidCheckboxes)}` };
     });
 
     await assert("Each checkbox has an accessible name", async () => {
@@ -45,12 +69,14 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: false, message: 'No checkboxes found in scope' };
         }
 
-        const unnamedCount = checkboxes.filter((checkbox) => !checkbox.name).length;
-        if (unnamedCount === 0) {
+        const unnamedCheckboxes = checkboxes
+            .map((checkbox, index) => (!checkbox.name ? describeCheckbox(checkbox, index) : null))
+            .filter(Boolean);
+        if (unnamedCheckboxes.length === 0) {
             return { pass: true, message: 'All checkboxes have accessible names' };
         }
 
-        return { pass: false, message: `${unnamedCount} checkbox option(s) are missing accessible names` };
+        return { pass: false, message: `Missing accessible names for ${summarizeList(unnamedCheckboxes)}` };
     });
 
     await assert("Visible label is included in accessible name", async () => {
@@ -85,12 +111,14 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: false, message: 'No checkbox groups found in scope' };
         }
 
-        const unlabeledGroups = groups.filter((group) => !group.groupLabel);
+        const unlabeledGroups = groups
+            .map((group, index) => (!group.groupLabel ? describeGroup(group, index) : null))
+            .filter(Boolean);
         if (unlabeledGroups.length === 0) {
             return { pass: true, message: 'All checkbox groups have accessible labels' };
         }
 
-        return { pass: false, message: `${unlabeledGroups.length} checkbox group(s) are missing accessible labels` };
+        return { pass: false, message: `Missing accessible labels for ${summarizeList(unlabeledGroups)}` };
     });
 
     await assert("Each checkbox group has a valid role", async () => {
@@ -100,12 +128,14 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: false, message: 'No checkbox groups found in scope' };
         }
 
-        const invalidGroups = groups.filter((group) => group.groupKind !== 'fieldset' && group.groupKind !== 'group');
+        const invalidGroups = groups
+            .map((group, index) => ((group.groupKind !== 'fieldset' && group.groupKind !== 'group') ? `${describeGroup(group, index)} uses invalid grouping semantics` : null))
+            .filter(Boolean);
         if (invalidGroups.length === 0) {
             return { pass: true, message: 'All checkbox groups expose valid group roles' };
         }
 
-        return { pass: false, message: `${invalidGroups.length} checkbox group(s) do not expose a valid group role` };
+        return { pass: false, message: summarizeList(invalidGroups) };
     });
 
     await assert("Each checkbox is in the tab order", async () => {
@@ -115,13 +145,15 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: false, message: 'No checkboxes found in scope' };
         }
 
-        const outOfTabOrder = checkboxes.filter((checkbox) => checkbox.visible && !checkbox.disabled && checkbox.tabIndex < 0);
+        const outOfTabOrder = checkboxes
+            .map((checkbox, index) => (checkbox.visible && !checkbox.disabled && checkbox.tabIndex < 0 ? `${describeCheckbox(checkbox, index)} has tabindex ${checkbox.tabIndex}` : null))
+            .filter(Boolean);
 
         if (outOfTabOrder.length === 0) {
             return { pass: true, message: 'Each interactive checkbox is in the tab order' };
         }
 
-        return { pass: false, message: `${outOfTabOrder.length} checkbox option(s) are not in the tab order` };
+        return { pass: false, message: `Not in the tab order: ${summarizeList(outOfTabOrder)}` };
     });
 
     await assert("Space toggles checkbox state of each checkbox", async () => {
@@ -132,8 +164,13 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: false, message: 'No checkboxes found in scope' };
         }
 
+        const nonInteractiveCheckboxes = currentDiscovery.inputs
+            .map((checkbox, index) => ((!checkbox.visible || checkbox.disabled) ? describeCheckbox(checkbox, index) : null))
+            .filter(Boolean);
+
         let applicableCheckboxes = 0;
         let passingCheckboxes = 0;
+        const failedCheckboxes = [];
 
         for (let checkboxIndex = 0; checkboxIndex < currentDiscovery.inputs.length; checkboxIndex += 1) {
             await utils.reload();
@@ -157,18 +194,23 @@ module.exports.run = async ({ page, assert, utils }) => {
 
             if (after !== before) {
                 passingCheckboxes += 1;
+            } else {
+                failedCheckboxes.push(describeCheckbox(checkbox, checkboxIndex));
             }
         }
 
         if (applicableCheckboxes === 0) {
-            return { pass: false, message: 'No interactive checkboxes were available for Space-key testing' };
+            const suffix = nonInteractiveCheckboxes.length > 0
+                ? `: ${summarizeList(nonInteractiveCheckboxes)}`
+                : '';
+            return { pass: false, message: `No interactive checkboxes were available for Space-key testing${suffix}` };
         }
 
         if (passingCheckboxes === applicableCheckboxes) {
             return { pass: true, message: 'Space toggles each checkbox state' };
         }
 
-        return { pass: false, message: `${applicableCheckboxes - passingCheckboxes} checkbox option(s) did not toggle state on Space` };
+        return { pass: false, message: `Space did not toggle ${summarizeList(failedCheckboxes)}` };
     });
 
     await assert("ARIA attributes match native checkbox attributes if used", async () => {
@@ -183,10 +225,13 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: true, message: 'ARIA state is consistent with native checkbox state' };
         }
 
-        const mismatchCount = invalidCheckboxes.reduce((total, checkbox) => total + (checkbox.nativeAriaStateMismatchCount || 0), 0);
+        const mismatchDetails = invalidCheckboxes.map((checkbox, index) => {
+            const details = (checkbox.nativeAriaStateMismatchDetails || []).join(', ');
+            return `${describeCheckbox(checkbox, index)} (${details || 'state mismatch'})`;
+        });
         return {
             pass: false,
-            message: `${invalidCheckboxes.length} checkbox option(s) have ${mismatchCount} conflicting native and ARIA state value(s)`,
+            message: `Conflicting native and ARIA state on ${summarizeList(mismatchDetails)}`,
         };
     });
 
@@ -197,12 +242,14 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: false, message: 'No checkboxes found in scope' };
         }
 
-        const invalidCount = checkboxes.filter((checkbox) => !checkbox.checkedStateDefined || checkbox.checkedStateMismatch).length;
-        if (invalidCount === 0) {
+        const invalidCheckboxes = checkboxes
+            .map((checkbox, index) => ((!checkbox.checkedStateDefined || checkbox.checkedStateMismatch) ? describeCheckbox(checkbox, index) : null))
+            .filter(Boolean);
+        if (invalidCheckboxes.length === 0) {
             return { pass: true, message: 'All checkboxes expose checked state programmatically' };
         }
 
-        return { pass: false, message: `${invalidCount} checkbox option(s) do not expose checked state programmatically without contradiction` };
+        return { pass: false, message: `Checked state is not exposed consistently for ${summarizeList(invalidCheckboxes)}` };
     });
 
     return {};

@@ -3,6 +3,30 @@
  * Supports native radios and custom ARIA radiogroups.
  */
 
+const normalizeText = (value) => (value || '').toString().replace(/[\s\u00A0]+/g, ' ').trim();
+const summarizeList = (items, maxItems = 4) => {
+    const filtered = items.filter(Boolean);
+    if (filtered.length <= maxItems) {
+        return filtered.join(', ');
+    }
+    return `${filtered.slice(0, maxItems).join(', ')}, and ${filtered.length - maxItems} more`;
+};
+const describeRadio = (radio, index) => {
+    const label = normalizeText((radio.visualLabel && radio.visualLabel.text) || radio.name);
+    const groupLabel = normalizeText(radio.groupLabel);
+    if (label && groupLabel) {
+        return `radio "${label}" in group "${groupLabel}"`;
+    }
+    if (label) {
+        return `radio "${label}"`;
+    }
+    return `radio ${index + 1}`;
+};
+const describeGroup = (group, index) => {
+    const label = normalizeText(group.groupLabel);
+    return label ? `radio group "${label}"` : `radio group ${index + 1}`;
+};
+
 module.exports.run = async ({ page, assert, utils }) => {
     const discovery = await utils.testFormControls.discoverRadios(page);
 
@@ -14,12 +38,14 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: false, message: 'No radios found in scope' };
         }
 
-        const unnamedCount = radios.filter((radio) => !radio.name).length;
-        if (unnamedCount === 0) {
+        const unnamedRadios = radios
+            .map((radio, index) => (!radio.name ? describeRadio(radio, index) : null))
+            .filter(Boolean);
+        if (unnamedRadios.length === 0) {
             return { pass: true, message: 'All radios have accessible names' };
         }
 
-        return { pass: false, message: `${unnamedCount} radio option(s) are missing accessible names` };
+        return { pass: false, message: `Missing accessible names for ${summarizeList(unnamedRadios)}` };
     });
 
     await assert("Visible label is included in accessible name", async () => {
@@ -54,12 +80,14 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: false, message: 'No radio groups found in scope' };
         }
 
-        const unlabeledGroups = groups.filter((group) => !group.groupLabel);
+        const unlabeledGroups = groups
+            .map((group, index) => (!group.groupLabel ? describeGroup(group, index) : null))
+            .filter(Boolean);
         if (unlabeledGroups.length === 0) {
             return { pass: true, message: 'All radio groups have accessible labels' };
         }
 
-        return { pass: false, message: `${unlabeledGroups.length} radio group(s) are missing accessible labels` };
+        return { pass: false, message: `Missing accessible labels for ${summarizeList(unlabeledGroups)}` };
     });
 
     await assert("Each radio group is keyboard reachable", async () => {
@@ -69,15 +97,18 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: false, message: 'No radio groups found in scope' };
         }
 
-        const unreachableGroups = groups.filter((group) => {
-            return !group.radios.some((radio) => radio.visible && !radio.disabled && radio.tabIndex >= 0);
-        });
+        const unreachableGroups = groups
+            .map((group, index) => {
+                const reachable = group.radios.some((radio) => radio.visible && !radio.disabled && radio.tabIndex >= 0);
+                return reachable ? null : describeGroup(group, index);
+            })
+            .filter(Boolean);
 
         if (unreachableGroups.length === 0) {
             return { pass: true, message: 'Each radio group has a keyboard-reachable option' };
         }
 
-        return { pass: false, message: `${unreachableGroups.length} radio group(s) are not keyboard reachable` };
+        return { pass: false, message: `Not keyboard reachable: ${summarizeList(unreachableGroups)}` };
     });
 
     await assert("Arrow keys change the selected radio within each group", async () => {
@@ -88,8 +119,16 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: false, message: 'No radio groups found in scope' };
         }
 
+        const nonInteractiveGroups = groups
+            .map((group, index) => {
+                const interactiveRadios = group.radios.filter((radio) => radio.visible && !radio.disabled);
+                return interactiveRadios.length < 2 ? describeGroup(group, index) : null;
+            })
+            .filter(Boolean);
+
         let applicableGroups = 0;
         let passingGroups = 0;
+        const failedGroups = [];
 
         for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
             await utils.reload();
@@ -127,18 +166,23 @@ module.exports.run = async ({ page, assert, utils }) => {
 
             if (after && after !== before) {
                 passingGroups += 1;
+            } else {
+                failedGroups.push(describeGroup(group, groupIndex));
             }
         }
 
         if (applicableGroups === 0) {
-            return { pass: false, message: 'No multi-option radio groups were available for arrow-key testing' };
+            const suffix = nonInteractiveGroups.length > 0
+                ? `: ${summarizeList(nonInteractiveGroups)}`
+                : '';
+            return { pass: false, message: `No multi-option radio groups were available for arrow-key testing${suffix}` };
         }
 
         if (passingGroups === applicableGroups) {
             return { pass: true, message: 'Arrow keys update selection in each radio group' };
         }
 
-        return { pass: false, message: `${applicableGroups - passingGroups} radio group(s) did not update selection on arrow keys` };
+        return { pass: false, message: `Arrow keys did not update selection for ${summarizeList(failedGroups)}` };
     });
 
     await assert("ARIA attributes match native radio attributes if used", async () => {
@@ -154,10 +198,13 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: true, message: 'ARIA state is consistent with native radio state' };
         }
 
-        const mismatchCount = invalidRadios.reduce((total, radio) => total + (radio.nativeAriaStateMismatchCount || 0), 0);
+        const mismatchDetails = invalidRadios.map((radio, index) => {
+            const details = (radio.nativeAriaStateMismatchDetails || []).join(', ');
+            return `${describeRadio(radio, index)} (${details || 'state mismatch'})`;
+        });
         return {
             pass: false,
-            message: `${invalidRadios.length} radio option(s) have ${mismatchCount} conflicting native and ARIA state value(s)`,
+            message: `Conflicting native and ARIA state on ${summarizeList(mismatchDetails)}`,
         };
     });
 
@@ -169,12 +216,14 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: false, message: 'No radios found in scope' };
         }
 
-        const invalidCount = radios.filter((radio) => !radio.checkedStateDefined || radio.checkedStateMismatch).length;
-        if (invalidCount === 0) {
+        const invalidRadios = radios
+            .map((radio, index) => ((!radio.checkedStateDefined || radio.checkedStateMismatch) ? describeRadio(radio, index) : null))
+            .filter(Boolean);
+        if (invalidRadios.length === 0) {
             return { pass: true, message: 'All radios expose checked state programmatically' };
         }
 
-        return { pass: false, message: `${invalidCount} radio option(s) do not expose checked state programmatically without contradiction` };
+        return { pass: false, message: `Checked state is not exposed consistently for ${summarizeList(invalidRadios)}` };
     });
 
     return {};

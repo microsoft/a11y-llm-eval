@@ -364,6 +364,8 @@ The runner:
     - boolean, or
     - `{ pass: boolean, message?: string }`, or
     - `{ status: "pass" | "fail" | "na", message?: string }`.
+  - When an assertion fails, the recorded assertion entry includes a human-readable `message`.
+  - For assertion helpers that identify specific failing controls or groups, the failure `message` names those problem elements rather than only reporting a count.
 - Runner output JSON contains (at minimum):
   - `testFunctionResult` with `status` and `assertions`.
     - `status` is determined by requirement assertion failures only.

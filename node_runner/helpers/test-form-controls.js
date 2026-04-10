@@ -34,6 +34,72 @@ const getGroupDescriptionLocator = (locator, groupKind) => {
     return null;
 };
 
+const normalizeText = (value) => (value || '').toString().replace(/[\s\u00A0]+/g, ' ').trim();
+
+const quoteText = (value) => {
+    const text = normalizeText(value);
+    return text ? `"${text}"` : '';
+};
+
+const summarizeList = (items, maxItems = 4) => {
+    const filtered = items.filter(Boolean);
+    if (filtered.length === 0) {
+        return '';
+    }
+
+    if (filtered.length <= maxItems) {
+        return filtered.join(', ');
+    }
+
+    const remaining = filtered.length - maxItems;
+    return `${filtered.slice(0, maxItems).join(', ')}, and ${remaining} more`;
+};
+
+const pickControlLabel = (item) => {
+    const visualLabel = normalizeText(item && item.visualLabel && item.visualLabel.text);
+    const accessibleName = normalizeText(item && item.name);
+
+    if (visualLabel) {
+        return visualLabel;
+    }
+    if (accessibleName) {
+        return accessibleName;
+    }
+    return '';
+};
+
+const describeControl = (item, controlType, index = null) => {
+    const roleLabel = controlType || 'control';
+    const chosenLabel = pickControlLabel(item);
+    const groupLabel = normalizeText(item && item.groupLabel);
+    const ordinal = Number.isInteger(index) ? index + 1 : null;
+
+    if (chosenLabel && groupLabel) {
+        return `${roleLabel} ${quoteText(chosenLabel)} in group ${quoteText(groupLabel)}`;
+    }
+    if (chosenLabel) {
+        return `${roleLabel} ${quoteText(chosenLabel)}`;
+    }
+    if (groupLabel) {
+        return `${roleLabel} ${ordinal || 'item'} in group ${quoteText(groupLabel)}`;
+    }
+    if (ordinal) {
+        return `${roleLabel} ${ordinal}`;
+    }
+    return roleLabel;
+};
+
+const describeGroup = (group, groupType, index = null) => {
+    const label = normalizeText(group && group.groupLabel);
+    if (label) {
+        return `${groupType} ${quoteText(label)}`;
+    }
+    if (Number.isInteger(index)) {
+        return `${groupType} ${index + 1}`;
+    }
+    return groupType;
+};
+
 // Check that each text input has an accessible name (R - WCAG 4.1.2)
 testFn.testEachInputHasName = async (scope, discoveryCache) => {
     let results = new detailedResults();
@@ -45,13 +111,20 @@ testFn.testEachInputHasName = async (scope, discoveryCache) => {
         return results;
     }
 
-    for (const item of d.inputs) {
+    const unnamedInputs = [];
+
+    for (const [index, item] of d.inputs.entries()) {
         const name = item.name;
         if (name && name.trim().length > 0) {
             results.addPass(item.locator);
         } else {
             results.addFail(item.locator);
+            unnamedInputs.push(describeControl(item, 'text input', index));
         }
+    }
+
+    if (unnamedInputs.length > 0) {
+        results.addMessage(`Missing accessible names for ${summarizeList(unnamedInputs)}`);
     }
 
     return results;
@@ -138,10 +211,11 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
         }
 
         results.addFail(locator);
-        const failureKey = normalizeForCompare(combinedHelperText);
+        const targetDescription = options.targetDescription || 'control';
+        const failureKey = `${targetDescription}:${normalizeForCompare(combinedHelperText)}`;
         if (!reportedHelperFailures.has(failureKey)) {
             reportedHelperFailures.add(failureKey);
-            results.addMessage("Found `" + combinedHelperText + "`");
+            results.addMessage(`${targetDescription} has helper text ${quoteText(combinedHelperText)} that is not programmatically associated`);
         }
         return true;
     };
@@ -173,11 +247,14 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
                 groupedItems[0].locator,
                 helperEntries,
                 [group.groupLabel, ...groupedItems.map((item) => item.name)],
-                { groupHasProgrammaticDescription: !!group.groupHasProgrammaticDescription },
+                {
+                    groupHasProgrammaticDescription: !!group.groupHasProgrammaticDescription,
+                    targetDescription: describeGroup(group, groupedControlType === 'radio' ? 'radio group' : 'checkbox group'),
+                },
             );
         }
 
-        for (const item of d.inputs) {
+        for (const [index, item] of d.inputs.entries()) {
             if (groupedIndexes.has(item.domIndex)) {
                 continue;
             }
@@ -187,7 +264,9 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
                 continue;
             }
 
-            evaluateHelperTarget(item.locator, helperEntries, [item.name]);
+            evaluateHelperTarget(item.locator, helperEntries, [item.name], {
+                targetDescription: describeControl(item, groupedControlType, index),
+            });
         }
 
         if (applicable === 0) {
@@ -198,14 +277,16 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
         return results;
     }
 
-    for (const item of d.inputs) {
+    for (const [index, item] of d.inputs.entries()) {
         const meaningfulHelpers = normalizeHelpers(item.helperText);
 
         if (meaningfulHelpers.length === 0) {
             continue; // no meaningful helper text to check
         }
 
-        evaluateHelperTarget(item.locator, meaningfulHelpers, [item.name]);
+        evaluateHelperTarget(item.locator, meaningfulHelpers, [item.name], {
+            targetDescription: describeControl(item, 'text input', index),
+        });
     }
 
     if (applicable === 0) {
@@ -227,7 +308,9 @@ testFn.testEachInputFocusable = async (scope, discoveryCache) => {
         return results;
     }
 
-    for (const item of d.inputs) {
+    const unfocusableInputs = [];
+
+    for (const [index, item] of d.inputs.entries()) {
         if (!item.visible) {
             continue; // skip hidden inputs
         }
@@ -237,7 +320,12 @@ testFn.testEachInputFocusable = async (scope, discoveryCache) => {
             results.addPass(item.locator);
         } else {
             results.addFail(item.locator);
+            unfocusableInputs.push(`${describeControl(item, 'text input', index)} has tabindex ${quoteText(tabindex)}`);
         }
+    }
+
+    if (unfocusableInputs.length > 0) {
+        results.addMessage(`Not keyboard focusable: ${summarizeList(unfocusableInputs)}`);
     }
 
     return results;
@@ -259,7 +347,9 @@ testFn.testPlaceholderTextDefined = async (scope, discoveryCache) => {
 
     let applicable = 0;
 
-    for (const item of d.inputs) {
+    const cssOnlyPlaceholders = [];
+
+    for (const [index, item] of d.inputs.entries()) {
         const placeholder = item.placeholder;
         const ariaPlaceholder = item.ariaPlaceholder;
 
@@ -285,11 +375,15 @@ testFn.testPlaceholderTextDefined = async (scope, discoveryCache) => {
             // Placeholder-like text rendered only via CSS pseudo-elements,
             // with no programmatic placeholder or aria-placeholder property.
             results.addFail(item.locator);
-            results.addMessage("Found CSS placeholder text without programmatic placeholder property");
+            cssOnlyPlaceholders.push(describeControl(item, 'text input', index));
         } else if (hasStandardPlaceholder) {
             // Placeholder text is exposed via a proper property.
             results.addPass(item.locator);
         }
+    }
+
+    if (cssOnlyPlaceholders.length > 0) {
+        results.addMessage(`CSS-only placeholder text found for ${summarizeList(cssOnlyPlaceholders)}`);
     }
 
     if (applicable === 0) {
@@ -312,13 +406,20 @@ testFn.testEachInputHasPersistentVisualLabel = async (scope, discoveryCache) => 
         return results;
     }
 
-    for (const item of d.inputs) {
+    const missingVisualLabels = [];
+
+    for (const [index, item] of d.inputs.entries()) {
         const visualLabel = item.visualLabel;
         if (visualLabel && visualLabel.text.trim().length > 0 && visualLabel.source !== SOURCE_PLACEHOLDER) {
             results.addPass(item.locator);
         } else {
             results.addFail(item.locator);
+            missingVisualLabels.push(describeControl(item, 'text input', index));
         }
+    }
+
+    if (missingVisualLabels.length > 0) {
+        results.addMessage(`Missing persistent visual labels for ${summarizeList(missingVisualLabels)}`);
     }
 
     return results;
@@ -469,19 +570,20 @@ const collectRequiredIndicatorEntries = async (discovery) => {
 
             entries.push({
                 locator: groupedItems[0]?.locator,
+                description: describeGroup(group, controlLabel.toLowerCase()),
                 hasVisualIndicator: groupLabelIndicatesRequired || itemLevelVisualIndicator || sharedContextVisualIndicator,
                 hasProgrammaticIndicator,
                 visualNotApplicable,
                 programmaticNotApplicable,
-                visualMissingMessage: `${controlLabel} is programmatically required but has no visual required indicator`,
-                programmaticMissingMessage: `${controlLabel} appears visually required but has no programmatic required indicator`,
+                visualMissingMessage: `${describeGroup(group, controlLabel.toLowerCase())} is programmatically required but has no visual required indicator`,
+                programmaticMissingMessage: `${describeGroup(group, controlLabel.toLowerCase())} appears visually required but has no programmatic required indicator`,
             });
         }
 
         return entries;
     }
 
-    for (const item of discovery.inputs) {
+    for (const [index, item] of discovery.inputs.entries()) {
         const helpers = Array.isArray(item.helperText)
             ? item.helperText
             : (item.helperText ? [item.helperText] : []);
@@ -492,10 +594,11 @@ const collectRequiredIndicatorEntries = async (discovery) => {
 
         entries.push({
             locator: item.locator,
+            description: describeControl(item, 'text input', index),
             hasVisualIndicator: localVisualIndicator || sharedContextVisualIndicator,
             hasProgrammaticIndicator: !!item.programmaticallyRequired,
-            visualMissingMessage: "Input is programmatically required but has no visual required indicator",
-            programmaticMissingMessage: "Input appears visually required but has no programmatic required indicator",
+            visualMissingMessage: `${describeControl(item, 'text input', index)} is programmatically required but has no visual required indicator`,
+            programmaticMissingMessage: `${describeControl(item, 'text input', index)} appears visually required but has no programmatic required indicator`,
         });
     }
 
@@ -516,6 +619,8 @@ testFn.testRequiredFieldsIndicatedVisually = async (scope, discoveryCache) => {
     let applicable = 0;
     let notApplicableGroupedMinimumChoice = 0;
 
+    const missingVisualIndicators = [];
+
     for (const entry of entries) {
         if (entry.visualNotApplicable) {
             notApplicableGroupedMinimumChoice++;
@@ -530,8 +635,12 @@ testFn.testRequiredFieldsIndicatedVisually = async (scope, discoveryCache) => {
             results.addPass(entry.locator);
         } else {
             results.addFail(entry.locator);
-            results.addMessage(entry.visualMissingMessage);
+            missingVisualIndicators.push(entry.visualMissingMessage);
         }
+    }
+
+    if (missingVisualIndicators.length > 0) {
+        results.addMessage(summarizeList(missingVisualIndicators));
     }
 
     if (applicable === 0) {
@@ -560,6 +669,8 @@ testFn.testRequiredFieldsIndicatedProgrammatically = async (scope, discoveryCach
     let applicable = 0;
     let notApplicableGroupedMinimumChoice = 0;
 
+    const missingProgrammaticIndicators = [];
+
     for (const entry of entries) {
         if (entry.visualNotApplicable || entry.programmaticNotApplicable) {
             notApplicableGroupedMinimumChoice++;
@@ -574,8 +685,12 @@ testFn.testRequiredFieldsIndicatedProgrammatically = async (scope, discoveryCach
             results.addPass(entry.locator);
         } else {
             results.addFail(entry.locator);
-            results.addMessage(entry.programmaticMissingMessage);
+            missingProgrammaticIndicators.push(entry.programmaticMissingMessage);
         }
+    }
+
+    if (missingProgrammaticIndicators.length > 0) {
+        results.addMessage(summarizeList(missingProgrammaticIndicators));
     }
 
     if (applicable === 0) {
@@ -605,6 +720,8 @@ testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
     let applicable = 0;
     let notApplicableGroupedMinimumChoice = 0;
 
+    const requiredIndicatorFailures = [];
+
     for (const entry of entries) {
         if (entry.visualNotApplicable || entry.programmaticNotApplicable) {
             notApplicableGroupedMinimumChoice++;
@@ -620,9 +737,13 @@ testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
         } else {
             results.addFail(entry.locator);
             if (entry.hasProgrammaticIndicator && !entry.hasVisualIndicator) {
-                results.addMessage(entry.visualMissingMessage);
+                requiredIndicatorFailures.push(entry.visualMissingMessage);
             }
         }
+    }
+
+    if (requiredIndicatorFailures.length > 0) {
+        results.addMessage(summarizeList(requiredIndicatorFailures));
     }
 
     if (applicable === 0) {
@@ -667,7 +788,9 @@ testFn.testLabelInName = async (scope, discoveryCache) => {
 
     // Only applies when there is a visible text label (not placeholder-only)
     let applicable = 0;
-    for (const item of d.inputs) {
+    const labelMismatchMessages = [];
+
+    for (const [index, item] of d.inputs.entries()) {
         const vl = item.visualLabel;
         if (!vl || !vl.text || !vl.text.trim()) {
             continue; // no visible text label
@@ -682,7 +805,12 @@ testFn.testLabelInName = async (scope, discoveryCache) => {
             results.addPass(item.locator);
         } else {
             results.addFail(item.locator);
+            labelMismatchMessages.push(`${describeControl(item, 'text input', index)} has visible label ${quoteText(vl.text)} but accessible name ${quoteText(item.name || 'missing')}`);
         }
+    }
+
+    if (labelMismatchMessages.length > 0) {
+        results.addMessage(`Visible label mismatch: ${summarizeList(labelMismatchMessages)}`);
     }
 
     if (applicable === 0) {
@@ -1359,7 +1487,8 @@ testFn.testIdentifyInputPurposeAutocomplete = async (scope, discoveryCache) => {
     };
 
     let applicable = 0;
-    for (const item of d.inputs) {
+    const autocompleteFailures = [];
+    for (const [index, item] of d.inputs.entries()) {
         const expected = inferExpectedAutocomplete(item.name, item.visualLabel);
         if (!expected || expected.length === 0) {
             continue; // Not applicable for this input
@@ -1372,6 +1501,7 @@ testFn.testIdentifyInputPurposeAutocomplete = async (scope, discoveryCache) => {
         // If autocomplete is missing or is 'on'/'off', this fails when we expect a specific token
         if (!val || val === 'on' || val === 'off') {
             results.addFail(item.locator);
+            autocompleteFailures.push(`${describeControl(item, 'text input', index)} should use ${quoteText(expected.join(' or '))} but has ${quoteText(val || 'no autocomplete value')}`);
             continue;
         }
 
@@ -1380,7 +1510,12 @@ testFn.testIdentifyInputPurposeAutocomplete = async (scope, discoveryCache) => {
             results.addPass(item.locator);
         } else {
             results.addFail(item.locator);
+            autocompleteFailures.push(`${describeControl(item, 'text input', index)} should use ${quoteText(expected.join(' or '))} but has ${quoteText(val)}`);
         }
+    }
+
+    if (autocompleteFailures.length > 0) {
+        results.addMessage(`Incorrect autocomplete values: ${summarizeList(autocompleteFailures)}`);
     }
 
     if (applicable === 0) {
