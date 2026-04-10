@@ -265,6 +265,12 @@ $$\text{PASS} \iff (\text{test\_function.status} = \text{"pass"}) \land (\text{a
   - For button-based disclosure implementations, collapsed content must be hidden from assistive technology.
   - The visual-hidden check is evaluated against the collapsed content area, not decorative container chrome alone.
   - A collapsed disclosure container may still render decorative borders or similar non-content styling and pass, so long as the content box is collapsed/clipped and the disclosure content itself is not visually exposed.
+- Shopping home page: `Has a skip navigation link`
+  - The page must include at least one link whose accessible name indicates bypassing repeated navigation, such as `Skip nav`, `Skip to main`, `Skip header`, `Jump to main`, or `Go to main`.
+  - The skip link must target the page's single `main` landmark or a same-page fragment target at the start of the main content.
+  - The target must be keyboard focusable, either by being in the focus order or by exposing `tabindex="-1"`.
+  - A target later in the main content does not satisfy this assertion.
+  - If the page does not expose exactly one `main` landmark, this assertion fails.
 - Assertion helpers may return `"na"` when a check has no applicable target on the page, for example when no visible labels, helper text, placeholder text, or recognizable autocomplete purpose exist for that assertion.
 - Required-field assertions may treat a shared visible note such as `All questions are required.` or `All fields are required.` as a valid visual indicator for the relevant required controls or radio groups.
 - For native checkbox or radio groups that visibly require choosing one or at least one option but do not expose a valid group-level programmatic required state, the programmatic required-field assertion may return `"na"` rather than failing each item individually.

@@ -2,7 +2,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Example pass</title>
+    <title>Example pass with skip nav anchor target</title>
     <script id="a11y-assertions" type="application/json">{
         "assertions": {
             "Has a skip navigation link": "pass",
@@ -17,8 +17,8 @@
     }</script>
 </head>
     <body>
-        <a href="#main-content">Jump to main</a>
-        <header>Header content
+        <a href="#catalog-start">Skip nav</a>
+        <header>
             <nav>
                 <ul>
                     <li><a href="">nav link 1</a></li>
@@ -26,16 +26,13 @@
                 </ul>
             </nav>
         </header>
-        <main id="main-content" tabindex="-1">
+        <main>
+            <a id="catalog-start" tabindex="-1"></a>
             <h1>page title</h1>
             <div>content</div>
             <h2>section title</h2>
             <div>content</div>
-            <h2>section title</h2>
-            <div>content</div>
         </main>
-        <footer>
-            Footer
-        </footer>
+        <footer>Footer</footer>
     </body>
 </html>
