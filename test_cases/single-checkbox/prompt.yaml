@@ -6,12 +6,3 @@ common_requirements:
   - Include concise helper text for the checkbox.
   - Make the checkbox required.
 dimensions:
-  validation-message:
-    label: Validation Message
-    values:
-      present:
-        label: Error Message Present
-        prompt_fragment: Show an inline validation message for the checkbox state.
-      absent:
-        label: No Error Message
-        prompt_fragment: Do not show an inline validation message on initial render.

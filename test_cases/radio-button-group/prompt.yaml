@@ -5,12 +5,3 @@ common_requirements:
   - Wrap the question in a div with class "form-field".
   - Include a submit button.
 dimensions:
-  validation-message:
-    label: Validation Message
-    values:
-      present:
-        label: Error Message Present
-        prompt_fragment: Include an inline validation message for the group.
-      absent:
-        label: No Error Message
-        prompt_fragment: Do not show an inline validation message on initial render.
