@@ -27,7 +27,7 @@ RETRY_MAX_DELAY = 60.0  # seconds
 TRUNCATION_RETRY_MAX = 1
 
 # Default output budget. Many Anthropic/Claude routes default to ~4096 if not explicitly set.
-DEFAULT_MAX_TOKENS = 16384
+DEFAULT_MAX_TOKENS = 32768
 
 _PROVIDER_ENV_DEBUG_VARS: dict[str, tuple[str, ...]] = {
     "azure": ("AZURE_API_BASE", "AZURE_API_KEY", "AZURE_API_VERSION"),
