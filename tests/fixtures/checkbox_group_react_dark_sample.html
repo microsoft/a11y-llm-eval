@@ -1,0 +1,200 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Computer Languages Quiz</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #f8fafc;
+            font-family: 'Inter', sans-serif;
+        }
+        .form-field {
+            background-color: #1e293b;
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid #334155;
+            transition: border-color 0.2s;
+        }
+        .form-field:focus-within {
+            border-color: #38bdf8;
+        }
+        .checkbox-custom {
+            appearance: none;
+            width: 1.25rem;
+            height: 1.25rem;
+            border: 2px solid #475569;
+            border-radius: 0.25rem;
+            background-color: transparent;
+            display: inline-grid;
+            place-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .checkbox-custom:checked {
+            background-color: #38bdf8;
+            border-color: #38bdf8;
+        }
+        .checkbox-custom::before {
+            content: "";
+            width: 0.65rem;
+            height: 0.65rem;
+            transform: scale(0);
+            transition: 120ms transform ease-in-out;
+            box-shadow: inset 1em 1em white;
+            clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+        }
+        .checkbox-custom:checked::before {
+            transform: scale(1);
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        const QUIZ_DATA = [
+            {
+                id: 1,
+                question: "Which of the following are statically typed languages?",
+                helpText: "Statically typed languages perform type checking at compile-time rather than run-time.",
+                options: ["Java", "Python", "C++", "JavaScript"],
+                answers: ["Java", "C++"]
+            },
+            {
+                id: 2,
+                question: "Which languages are officially supported for Android app development?",
+                options: ["Kotlin", "Swift", "Java", "Ruby"],
+                answers: ["Kotlin", "Java"]
+            },
+            {
+                id: 3,
+                question: "Select the languages primarily used for Web Development (Frontend or Backend):",
+                options: ["PHP", "Assembly", "TypeScript", "COBOL"],
+                answers: ["PHP", "TypeScript"]
+            }
+        ];
+
+        const Question = ({ data, selections, onToggle }) => {
+            return (
+                <div className="form-field">
+                    <h3 className="text-lg font-semibold mb-1 text-slate-100">{data.question}</h3>
+                    {data.helpText && (
+                        <p className="text-sm text-slate-400 mb-4 italic">{data.helpText}</p>
+                    )}
+                    <div className="space-y-3 mt-4">
+                        {data.options.map(option => (
+                            <label key={option} className="flex items-center space-x-3 cursor-pointer group">
+                                <input 
+                                    type="checkbox" 
+                                    className="checkbox-custom"
+                                    checked={selections.includes(option)}
+                                    onChange={() => onToggle(data.id, option)}
+                                />
+                                <span className="text-slate-300 group-hover:text-sky-400 transition-colors">
+                                    {option}
+                                </span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const QuizApp = () => {
+            const [userSelections, setUserSelections] = useState({ 1: [], 2: [], 3: [] });
+            const [submitted, setSubmitted] = useState(false);
+            const [score, setScore] = useState(0);
+
+            const handleToggle = (questionId, option) => {
+                if (submitted) return;
+                
+                setUserSelections(prev => {
+                    const current = prev[questionId];
+                    const next = current.includes(option)
+                        ? current.filter(item => item !== option)
+                        : [...current, option];
+                    return { ...prev, [questionId]: next };
+                });
+            };
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                let points = 0;
+                QUIZ_DATA.forEach(q => {
+                    const user = [...userSelections[q.id]].sort();
+                    const correct = [...q.answers].sort();
+                    if (JSON.stringify(user) === JSON.stringify(correct)) {
+                        points++;
+                    }
+                });
+                setScore(points);
+                setSubmitted(true);
+            };
+
+            const resetQuiz = () => {
+                setUserSelections({ 1: [], 2: [], 3: [] });
+                setSubmitted(false);
+                setScore(0);
+            };
+
+            return (
+                <div className="max-w-2xl mx-auto py-12 px-4">
+                    <header className="mb-10 text-center">
+                        <h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-emerald-400">
+                            Computer Language Quiz
+                        </h1>
+                        <p className="text-slate-400 mt-2">Test your knowledge of programming paradigms</p>
+                    </header>
+
+                    <form onSubmit={handleSubmit}>
+                        {QUIZ_DATA.map(q => (
+                            <Question 
+                                key={q.id} 
+                                data={q} 
+                                selections={userSelections[q.id]}
+                                onToggle={handleToggle}
+                            />
+                        ))}
+
+                        {!submitted ? (
+                            <button 
+                                type="submit"
+                                className="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-3 px-6 rounded-lg transition-all transform hover:scale-[1.01] active:scale-95 shadow-lg shadow-sky-900/20"
+                            >
+                                Submit Answers
+                            </button>
+                        ) : (
+                            <div className="mt-8 p-6 bg-slate-800 rounded-xl border border-slate-700 text-center">
+                                <h2 className="text-2xl font-bold mb-2">Quiz Complete!</h2>
+                                <p className="text-xl">Your Score: <span className="text-sky-400 font-mono">{score} / {QUIZ_DATA.length}</span></p>
+                                <button 
+                                    type="button"
+                                    onClick={resetQuiz}
+                                    className="mt-4 text-sm text-slate-400 hover:text-white underline"
+                                >
+                                    Try Again
+                                </button>
+                            </div>
+                        )}
+                    </form>
+                    
+                    <footer className="mt-12 text-center text-slate-600 text-xs">
+                        &copy; 2023 DevQuiz Logic. All rights reserved.
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<QuizApp />);
+    </script>
+</body>
+</html>

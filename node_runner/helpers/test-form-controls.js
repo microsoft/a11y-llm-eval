@@ -37,6 +37,7 @@ const getGroupDescriptionLocator = (locator, groupKind) => {
 
     if (groupKind === 'wrapper') {
         return locator.locator('xpath=ancestor::*['
+            + 'not(self::label) and ('
             + 'contains(@class, "field") or '
             + 'contains(@class, "input") or '
             + 'contains(@class, "control") or '
@@ -44,6 +45,8 @@ const getGroupDescriptionLocator = (locator, groupKind) => {
             + 'contains(@class, "group") or '
             + 'contains(@class, "question") or '
             + 'contains(@class, "prompt")'
+            + ') and '
+            + 'count(.//input[@type="checkbox"] | .//*[@role="checkbox"]) > 1'
             + '][1]').first();
     }
 
@@ -117,6 +120,46 @@ const describeGroup = (group, groupType, index = null) => {
 };
 
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const normalizeLabelFragment = (value) => (value || '')
+    .toString()
+    .replace(/\p{P}+/gu, ' ')
+    .replace(/[\s\u00A0]+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+const isGroupLabelFragment = (text, labelCandidates) => {
+    const normalizedText = normalizeLabelFragment(text);
+    if (!normalizedText) {
+        return true;
+    }
+
+    if (/^\d+$/.test(normalizedText)) {
+        return true;
+    }
+
+    const textWordCount = normalizedText.split(/\s+/).filter(Boolean).length;
+
+    for (const candidate of labelCandidates) {
+        const normalizedCandidate = normalizeLabelFragment(candidate);
+        if (!normalizedCandidate) {
+            continue;
+        }
+
+        if (normalizedText === normalizedCandidate) {
+            return true;
+        }
+
+        // Group labels often get harvested as multiple nearby text nodes
+        // (for example: "1", ".", and "Which ..."). Treat any multi-word
+        // helper entry that is wholly contained within the group label as label text.
+        if (textWordCount >= 2 && normalizedCandidate.includes(normalizedText)) {
+            return true;
+        }
+    }
+
+    return false;
+};
 
 const stripLeadingGroupLabelText = (text, labelCandidates) => {
     const normalizedText = normalizeText(text);
@@ -1220,6 +1263,9 @@ testFn.discoverRadios = async (scope) => {
                 if (!text) {
                     return false;
                 }
+                if (isGroupLabelFragment(text, groupLabelCandidates)) {
+                    return false;
+                }
                 if (text === groupLabel) {
                     return false;
                 }
@@ -1327,12 +1373,45 @@ testFn.discoverCheckboxes = async (scope) => {
                     return normalizeText(legend ? legend.textContent : '');
                 };
 
+                const isMeaningfulWrapperContainer = (element) => {
+                    if (!element || element.nodeType !== Node.ELEMENT_NODE) {
+                        return false;
+                    }
+
+                    const tagName = (element.tagName || '').toUpperCase();
+                    if (tagName === 'LABEL') {
+                        return false;
+                    }
+
+                    const role = (element.getAttribute('role') || '').toLowerCase();
+                    if (role === 'checkbox' || role === 'radio') {
+                        return false;
+                    }
+
+                    return true;
+                };
+
+                const findWrapperContainer = (element, selector) => {
+                    let current = element && element.parentElement;
+                    while (current) {
+                        if (current.matches && current.matches(selector) && isMeaningfulWrapperContainer(current)) {
+                            const checkboxCount = current.querySelectorAll('input[type="checkbox"], [role="checkbox"]').length;
+                            if (checkboxCount > 1) {
+                                return current;
+                            }
+                        }
+                        current = current.parentElement;
+                    }
+
+                    return null;
+                };
+
                 const groupContainers = Array.from(document.querySelectorAll('fieldset, [role="group"]'));
                 const fieldsets = Array.from(document.querySelectorAll('fieldset'));
                 const isNativeCheckbox = checkbox.matches('input[type="checkbox"]');
                 const groupContainer = checkbox.closest('fieldset, [role="group"]');
                 const wrapperContainers = Array.from(document.querySelectorAll(wrapperSelector));
-                const wrapperContainer = checkbox.closest(wrapperSelector);
+                const wrapperContainer = findWrapperContainer(checkbox, wrapperSelector);
                 const requiredAttr = checkbox.getAttribute('required');
                 const ariaRequired = checkbox.getAttribute('aria-required');
                 const ariaDisabled = checkbox.getAttribute('aria-disabled');
@@ -1517,6 +1596,9 @@ testFn.discoverCheckboxes = async (scope) => {
                 helper.text = strippedText;
                 const text = normalizeText(strippedText);
                 if (!text) {
+                    return false;
+                }
+                if (isGroupLabelFragment(text, groupLabelCandidates)) {
                     return false;
                 }
                 if (text === groupLabel) {

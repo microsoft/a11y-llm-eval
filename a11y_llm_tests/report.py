@@ -1506,6 +1506,39 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         items.append(item)
     return items
 
+  def _split_message_title(message: str) -> tuple[str, str] | None:
+    current = []
+    quote_char = None
+    bracket_depth = 0
+
+    for index, char in enumerate(message):
+      if quote_char:
+        if char == quote_char:
+          quote_char = None
+        continue
+
+      if char in {'"', "'"}:
+        quote_char = char
+        continue
+
+      if char in "([{" :
+        bracket_depth += 1
+        continue
+
+      if char in ")]}":
+        if bracket_depth > 0:
+          bracket_depth -= 1
+        continue
+
+      if char == ":" and bracket_depth == 0:
+        title = message[:index].strip()
+        remainder = message[index + 1:].strip()
+        if title and remainder:
+          return title, remainder
+        return None
+
+    return None
+
   def _format_assertion_message(message: str | None) -> dict | None:
     if not message:
       return None
@@ -1514,7 +1547,8 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     if not message:
       return None
 
-    if ":" not in message:
+    split_message = _split_message_title(message)
+    if not split_message:
       repeated_items = _split_repeated_entity_items(message)
       if repeated_items:
         return {
@@ -1523,11 +1557,7 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         }
       return None
 
-    title, remainder = message.split(":", 1)
-    title = title.strip()
-    remainder = remainder.strip()
-    if not title or not remainder:
-      return None
+    title, remainder = split_message
 
     items = [part.strip() for part in _split_message_items(remainder) if part.strip()]
     if len(items) <= 1:

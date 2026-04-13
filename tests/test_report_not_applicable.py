@@ -293,3 +293,89 @@ def test_render_report_formats_repeated_helper_text_messages_as_sublists(tmp_pat
     assert "Helper text is programmatically associated" in html
     assert "text input &#34;PythonA valid language or technology in this context.&#34; has helper text &#34;1. Which of the following are programming languages?&#34; that is not programmatically associated" in html
     assert "text input &#34;JavaScriptA valid language or technology in this context.&#34; has helper text &#34;1. Which of the following are programming languages?&#34; that is not programmatically associated" in html
+
+
+def test_render_report_does_not_split_on_colon_inside_quoted_helper_text(tmp_path: Path):
+    run_dir = tmp_path / "runs" / "2026-04-13_19-19-24"
+    run_dir.mkdir(parents=True)
+
+    run_json_path = run_dir / "results.json"
+    run_json_path.write_bytes(
+        orjson.dumps(
+            {
+                "run_id": "2026-04-13_19-19-24",
+                "models": ["provider/model-a"],
+                "tests": ["sample-case"],
+                "prompts": {"sample-case": "Generate a checkbox quiz."},
+                "meta": {
+                    "sampling": {"samples_per_case": 1},
+                    "status": "EVALUATED",
+                },
+                "results": [
+                    {
+                        "test_name": "sample-case",
+                        "model_name": "provider/model-a",
+                        "timestamp": "2026-04-13T19:30:00Z",
+                        "generation_html_path": "runs/2026-04-13_19-19-24/raw/sample-case/model-a.html",
+                        "screenshot_path": None,
+                        "test_function": {
+                            "status": "fail",
+                            "assertions": [
+                                {
+                                    "name": "Helper text is programmatically associated",
+                                    "status": "fail",
+                                    "type": "R",
+                                    "message": 'checkbox group "1 . Which of the following are statically typed languages?" has helper text "Hint: These languages typically require you to declare the data type of a variable before using it." that is not programmatically associated',
+                                }
+                            ],
+                            "total_assertion_failures": 1,
+                            "total_assertion_bp_failures": 0,
+                            "total_assertion_na": 0,
+                            "total_assertion_bp_na": 0,
+                        },
+                        "axe": {
+                            "failure_count": 0,
+                            "failures": [],
+                            "best_practice_count": 0,
+                            "best_practice_failures": [],
+                        },
+                        "result": "FAIL",
+                        "generation": {
+                            "latency_s": 0.01,
+                            "prompt_hash": "ghi",
+                            "cached": False,
+                            "cost_usd": None,
+                        },
+                        "sample_index": 0,
+                        "prompt_variant_id": "control",
+                    }
+                ],
+                "aggregates": [
+                    {
+                        "test_name": "sample-case",
+                        "model_name": "provider/model-a",
+                        "prompt_variant_id": "control",
+                        "n_samples": 1,
+                        "n_applicable": 1,
+                        "n_not_applicable": 0,
+                        "n_pass": 0,
+                        "pass_at_k": {"1": 0.0},
+                        "k_values": [1],
+                        "computed_at": "2026-04-13T19:30:02Z",
+                    }
+                ],
+            }
+        )
+    )
+
+    out_html = run_dir / "index.html"
+    render_report(
+        run_json_path,
+        out_html,
+        {"models": [{"name": "provider/model-a", "display_name": "Model A"}]},
+    )
+
+    html = out_html.read_text(encoding="utf-8")
+    assert 'Hint: These languages typically require you to declare the data type of a variable before using it.' in html
+    assert 'class="assertion-message-list"' not in html
+    assert '<div class="assertion-message-block">' not in html

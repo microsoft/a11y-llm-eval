@@ -279,16 +279,87 @@ const getHelperText = async (el, opts = {}) => {
             }
         }
 
+        function isMeaningfulWrapper(node) {
+            if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+
+            const tagName = (node.tagName || '').toUpperCase();
+            if (tagName === 'LABEL') {
+                return false;
+            }
+
+            const role = (node.getAttribute && (node.getAttribute('role') || '')).toLowerCase();
+            if (role === 'checkbox' || role === 'radio') {
+                return false;
+            }
+
+            return true;
+        }
+
+        function findNearestMeaningfulWrapper(element) {
+            const isCheckbox = !!(element && element.matches && element.matches('input[type="checkbox"], [role="checkbox"]'));
+            const isRadio = !!(element && element.matches && element.matches('input[type="radio"], [role="radio"]'));
+            const groupedSelector = isCheckbox
+                ? 'input[type="checkbox"], [role="checkbox"]'
+                : (isRadio ? 'input[type="radio"], [role="radio"]' : '');
+
+            let current = element && element.parentElement;
+            let fallback = null;
+            let primaryGroupedWrapper = null;
+            let semanticGroupWrapper = null;
+            let groupedFieldWrapper = null;
+            let primaryWrapper = null;
+            let secondaryWrapper = null;
+            while (current) {
+                if (isMeaningfulWrapper(current)) {
+                    if (current.matches && current.matches(PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR)) {
+                        primaryWrapper = primaryWrapper || current;
+                    }
+
+                    if (current.matches && current.matches(SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR)) {
+                        secondaryWrapper = secondaryWrapper || current;
+                    }
+
+                    if (current.matches && current.matches(FIELD_WRAPPER_SELECTOR)) {
+                        fallback = fallback || current;
+
+                        if (!groupedSelector) {
+                            current = current.parentElement;
+                            continue;
+                        }
+
+                        const groupedCount = current.querySelectorAll(groupedSelector).length;
+                        if (groupedCount > 1) {
+                            if (!groupedFieldWrapper) {
+                                groupedFieldWrapper = current;
+                            }
+
+                            if (!primaryGroupedWrapper && current.matches(PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR)) {
+                                primaryGroupedWrapper = current;
+                            }
+                        }
+                    }
+
+                    if (groupedSelector && !semanticGroupWrapper && current.matches && current.matches('fieldset, [role="group"], [role="radiogroup"]')) {
+                        semanticGroupWrapper = current;
+                    }
+                }
+                current = current.parentElement;
+            }
+
+            const hasGroupedWrapper = !!(primaryGroupedWrapper || semanticGroupWrapper || groupedFieldWrapper);
+
+            if (!groupedSelector || !hasGroupedWrapper) {
+                return primaryWrapper || secondaryWrapper || fallback || document.body;
+            }
+
+            return primaryGroupedWrapper || semanticGroupWrapper || groupedFieldWrapper || fallback || document.body;
+        }
+
         // --- 5. Visual helper text nearby via TreeWalker ---
         // If the control already exposes supplementary text inside its own label,
         // prefer that local helper content over broader wrapper text.
         if (!foundInLabelSupplementaryHelper) {
-            const wrapper =
-                el.closest(PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR)
-                || el.closest(SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR)
-                || el.closest(FALLBACK_FIELD_WRAPPER_SELECTOR)
-                || el.closest(FIELD_WRAPPER_SELECTOR)
-                || document.body;
+            const wrapper = findNearestMeaningfulWrapper(el);
 
             const walker = document.createTreeWalker(
                 wrapper,
@@ -313,6 +384,11 @@ const getHelperText = async (el, opts = {}) => {
 
                         // Skip style/script content
                         if (parentTag === 'STYLE' || parentTag === 'SCRIPT') {
+                            return NodeFilter.FILTER_REJECT;
+                        }
+
+                        // Skip text that belongs to interactive widgets such as buttons/links.
+                        if (parent.closest && parent.closest('button, [role="button"], a[href], summary')) {
                             return NodeFilter.FILTER_REJECT;
                         }
 
