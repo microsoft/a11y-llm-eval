@@ -102,6 +102,8 @@ Generation uses `litellm.completion(...)` with:
 - A system message that is the **effective system prompt**.
 - A user message that is the composed prompt case text built from `prompt.yaml` plus the configured global prompt dimensions.
 
+For providers that do not opt out, generation may use LiteLLM's same-model batch completion helper to submit multiple uncached prompts together when their effective request settings match.
+
 The effective system prompt is:
 
 - `DEFAULT_SYSTEM_PROMPT`, unless overridden.
@@ -116,6 +118,7 @@ The effective system prompt is:
 `config/models.yaml` may also define provider-level configuration under `providers.<provider>`.
 
 - `providers.<provider>.auth.mode` may be omitted or set to `env` to preserve LiteLLM's existing environment-based behavior.
+- `providers.<provider>.batch.enabled` may be omitted or set to `true` to allow LiteLLM batch submission for eligible generation groups; set it to `false` to force per-request generation for that provider.
 - `providers.azure.auth.mode` and `providers.azure_ai.auth.mode` may be set to `default_azure_credential` to pass an Azure bearer token provider from `azure.identity.DefaultAzureCredential()` into LiteLLM.
 - For `default_azure_credential`, the harness reads `api_base` from `api_base_env` and optionally reads `api_version` from `api_version_env`, defaulting to `AZURE_API_BASE` / `AZURE_API_VERSION` for `azure` and `AZURE_AI_API_BASE` / `AZURE_AI_API_VERSION` for `azure_ai`.
 - When `default_azure_credential` is configured, `azure-identity` must be installed; otherwise generation fails with a clear error.
@@ -154,6 +157,8 @@ Cache identity includes:
 
 On cache hits, the generator returns `cached: True` and can optionally load token/cost metadata from a `.meta.json` file.
 
+When LiteLLM batching is enabled for a provider, cache identity and cache validation remain per request. Cached requests are not submitted to LiteLLM batching; only cache misses are sent.
+
 ### Acceptance criteria
 
 - Cache files are created at:
@@ -163,6 +168,7 @@ On cache hits, the generator returns `cached: True` and can optionally load toke
 - If a cached HTML file is incomplete/corrupted, it is treated as a cache miss and a fresh generation is performed.
 - Debugging: `run --debug-truncated-cache` prints a list of truncated/corrupted cached HTML files at the end of generation and preserves them for inspection.
 - The `--disable-cache` flag forces fresh generation even if a cache entry exists.
+- If LiteLLM batching is attempted for a group and the batch call or an individual item fails, the harness falls back to the existing per-request generation path for the affected requests.
 
 ---
 

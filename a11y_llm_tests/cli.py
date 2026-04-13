@@ -245,6 +245,91 @@ def _get_model_provider(model: str) -> str:
     return "unknown"
 
 
+def _provider_batch_enabled(provider_config: Any) -> bool:
+    if not isinstance(provider_config, dict):
+        return True
+    batch_cfg = provider_config.get("batch")
+    if not isinstance(batch_cfg, dict):
+        return True
+    enabled = batch_cfg.get("enabled")
+    if enabled is None:
+        return True
+    return bool(enabled)
+
+
+def _batch_group_key(task: dict[str, Any]) -> tuple[Any, ...]:
+    provider_config = task.get("provider_config") or {}
+    return (
+        task.get("model"),
+        task.get("seed"),
+        task.get("temperature"),
+        task.get("system_prompt_override"),
+        task.get("custom_instructions_text"),
+        task.get("disable_cache", False),
+        task.get("debug_truncated_cache", False),
+        json.dumps(provider_config, sort_keys=True),
+    )
+
+
+def _generate_batch_group(indexed_tasks: list[tuple[int, dict[str, Any]]]) -> list[dict[str, Any]]:
+    first_task = indexed_tasks[0][1]
+    generator.configure_prompts(
+        first_task.get("system_prompt_override"),
+        first_task.get("custom_instructions_text"),
+    )
+
+    requests = []
+    for _, task in indexed_tasks:
+        requests.append({
+            "user_prompt": task["prompt_text"],
+            "iteration": task["sample_index"],
+            "temperature": task.get("temperature"),
+            "seed": task.get("seed"),
+            "disable_cache": task.get("disable_cache", False),
+            "debug_truncated_cache": task.get("debug_truncated_cache", False),
+        })
+
+    kwargs = {
+        "temperature": first_task.get("temperature"),
+        "seed": first_task.get("seed"),
+        "disable_cache": first_task.get("disable_cache", False),
+        "debug_truncated_cache": first_task.get("debug_truncated_cache", False),
+    }
+    try:
+        batch_signature = inspect.signature(generator.generate_html_batch_with_meta)
+        if "model_display_name" in batch_signature.parameters:
+            kwargs["model_display_name"] = first_task.get("model_display_name")
+        if "provider_config" in batch_signature.parameters:
+            kwargs["provider_config"] = first_task.get("provider_config")
+    except (TypeError, ValueError):
+        pass
+
+    batch_results = generator.generate_html_batch_with_meta(first_task["model"], requests, **kwargs)
+    if len(batch_results) != len(indexed_tasks):
+        raise RuntimeError("generate_html_batch_with_meta returned an unexpected number of results")
+
+    generated_results = []
+    for (_, task), batch_result in zip(indexed_tasks, batch_results):
+        html = batch_result["html"]
+        meta = batch_result.get("meta") or {}
+        out_path = Path(task["html_out_path"])
+        out_path.parent.mkdir(exist_ok=True, parents=True)
+        atomic_write_text(out_path, html, encoding="utf-8")
+        generated_results.append({
+            "test_name": task["test_name"],
+            "base_test_name": task["base_test_name"],
+            "prompt_case_id": task["prompt_case_id"],
+            "prompt_dimensions": task.get("prompt_dimensions") or [],
+            "model": task["model"],
+            "sample_index": task["sample_index"],
+            "prompt_text": task["prompt_text"],
+            "meta": meta,
+            "html_path": str(out_path),
+            "prompt_variant_id": task.get("prompt_variant_id"),
+        })
+    return generated_results
+
+
 def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[dict]:
     """Load instruction sets YAML.
 
@@ -539,24 +624,56 @@ def run(
                 )
                 results.append(json.loads(rec.model_dump_json()))
 
-        if pool_size == 1:
-            try:
-                _consume_generation_results(map(_generate_worker, gen_tasks))
-            except generator.OutputTokenLimitHit as exc:
-                typer.echo("")
-                typer.secho(str(exc), fg=typer.colors.RED, err=True)
-                raise typer.Exit(code=2)
+        batch_supported = hasattr(generator, "generate_html_batch_with_meta") and hasattr(generator.litellm, "batch_completion")
+        indexed_tasks = list(enumerate(gen_tasks))
+        batched_groups: list[list[tuple[int, dict[str, Any]]]] = []
+        single_indexed_tasks: list[tuple[int, dict[str, Any]]] = []
+
+        if batch_supported:
+            grouped_tasks: dict[tuple[Any, ...], list[tuple[int, dict[str, Any]]]] = {}
+            for indexed_task in indexed_tasks:
+                task = indexed_task[1]
+                if _provider_batch_enabled(task.get("provider_config")):
+                    grouped_tasks.setdefault(_batch_group_key(task), []).append(indexed_task)
+                else:
+                    single_indexed_tasks.append(indexed_task)
+
+            for group in grouped_tasks.values():
+                if len(group) > 1:
+                    batched_groups.append(sorted(group, key=lambda item: item[0]))
+                else:
+                    single_indexed_tasks.extend(group)
+            batched_groups.sort(key=lambda group: group[0][0])
         else:
+            single_indexed_tasks = indexed_tasks
+
+        single_indexed_tasks.sort(key=lambda item: item[0])
+        single_tasks = [task for _, task in single_indexed_tasks]
+
+        def _iter_generation_results():
+            for group in batched_groups:
+                for gen_result in _generate_batch_group(group):
+                    yield gen_result
+
+            if not single_tasks:
+                return
+
+            if pool_size == 1:
+                for gen_result in map(_generate_worker, single_tasks):
+                    yield gen_result
+                return
+
             typer.echo(f"Generating with {pool_size} processes...")
             with multiprocessing.Pool(processes=pool_size) as pool:
-                try:
-                    _consume_generation_results(pool.imap(_generate_worker, gen_tasks))
-                except generator.OutputTokenLimitHit as exc:
-                    pool.terminate()
-                    pool.join()
-                    typer.echo("")
-                    typer.secho(str(exc), fg=typer.colors.RED, err=True)
-                    raise typer.Exit(code=2)
+                for gen_result in pool.imap(_generate_worker, single_tasks):
+                    yield gen_result
+
+        try:
+            _consume_generation_results(_iter_generation_results())
+        except generator.OutputTokenLimitHit as exc:
+            typer.echo("")
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=2)
 
         if debug_truncated_cache:
             typer.echo("")

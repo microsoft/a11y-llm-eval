@@ -260,3 +260,93 @@ def test_debug_truncated_cache_preserves_file_and_reports(tmp_path, monkeypatch)
     # Preserve truncated cache entry for inspection (do not overwrite)
     assert cache_file.read_text(encoding="utf-8") == "<html><body><h1>cut off"
     assert "</html>" in html.lower()
+
+
+def test_batch_generation_skips_cache_hits(tmp_path, monkeypatch):
+    monkeypatch.setattr(generator, "CACHE_DIR", tmp_path / "generations")
+    generator.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    model = "fake-model"
+    cached_prompt = "cached prompt"
+    miss_prompt = "miss prompt"
+
+    cached_file = _cache_path(tmp_path, model, cached_prompt, 0)
+    cached_file.parent.mkdir(parents=True, exist_ok=True)
+    cached_html = (
+        "<html><head><title>cached</title></head><body>"
+        + ("cached " * 30)
+        + "</body></html>"
+    )
+    cached_file.write_text(cached_html, encoding="utf-8")
+    cached_checksum = cached_file.with_suffix(cached_file.suffix + ".sha256")
+    cached_checksum.write_text(sha256_hex(cached_html.encode("utf-8")) + "\n", encoding="utf-8")
+
+    captured = {}
+    generated_html = (
+        "<html><head><title>fresh</title></head><body>"
+        + ("fresh " * 30)
+        + "</body></html>"
+    )
+
+    def _batch_completion(**kwargs):
+        captured.update(kwargs)
+        return [_FakeResp(generated_html)]
+
+    def _boom(**kwargs):
+        raise AssertionError("litellm.completion should not be called when batch succeeds")
+
+    monkeypatch.setattr(generator.litellm, "batch_completion", _batch_completion)
+    monkeypatch.setattr(generator.litellm, "completion", _boom)
+
+    results = generator.generate_html_batch_with_meta(
+        model=model,
+        requests=[
+            {"user_prompt": cached_prompt, "iteration": 0},
+            {"user_prompt": miss_prompt, "iteration": 1},
+        ],
+        disable_cache=False,
+    )
+
+    assert len(results) == 2
+    assert results[0]["meta"]["cached"] is True
+    assert results[0]["html"] == cached_html
+    assert results[1]["meta"]["cached"] is False
+    assert results[1]["html"] == generated_html
+    assert len(captured["messages"]) == 1
+    assert captured["messages"][0][1]["content"] == miss_prompt
+
+
+def test_batch_generation_falls_back_to_single_on_item_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(generator, "CACHE_DIR", tmp_path / "generations")
+    generator.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    model = "fake-model"
+    prompt = "make a page"
+    calls = {"single": 0, "batch": 0}
+    fallback_html = (
+        "<html><head><title>fallback</title></head><body>"
+        + ("fallback " * 30)
+        + "</body></html>"
+    )
+
+    def _batch_completion(**kwargs):
+        calls["batch"] += 1
+        return [RuntimeError("batch item failed")]
+
+    def _completion(**kwargs):
+        calls["single"] += 1
+        return _FakeResp(fallback_html)
+
+    monkeypatch.setattr(generator.litellm, "batch_completion", _batch_completion)
+    monkeypatch.setattr(generator.litellm, "completion", _completion)
+
+    results = generator.generate_html_batch_with_meta(
+        model=model,
+        requests=[{"user_prompt": prompt, "iteration": 0}],
+        disable_cache=True,
+    )
+
+    assert len(results) == 1
+    assert calls == {"single": 1, "batch": 1}
+    assert results[0]["meta"]["cached"] is False
+    assert results[0]["html"] == fallback_html

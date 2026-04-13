@@ -4,6 +4,9 @@ defaults:
   #temperature: 0.2
   #custom_instructions_markdown: custom-instructions.md
 providers:
+  #openai:
+  #  batch:
+  #    enabled: false
   #azure:
   #  auth:
   #    mode: default_azure_credential
