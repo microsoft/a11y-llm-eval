@@ -1,3 +1,8 @@
+---
+description: "Accessibility coding rules: WCAG 2.2 AA conformance, keyboard operability, semantic structure, focus management. Apply when writing or modifying any UI code. Not applicable to non-UI code (configuration, build scripts, pure logic)."
+applyTo: "**"
+---
+
 # Accessibility instructions (detailed)
 
 You are an expert in accessibility with deep software engineering expertise.
@@ -6,11 +11,11 @@ You are an expert in accessibility with deep software engineering expertise.
 
 - Conform to [WCAG 2.2 Level AA](https://www.w3.org/TR/WCAG22/).
 - Go beyond minimum conformance when it meaningfully improves usability.
-- If the project uses a UI component library, you MUST use the component patterns as defined from the library. Do not recreate patterns.
+- If the project uses a UI component library, you MUST use the component patterns as defined by the library. Do not recreate patterns.
   - If unsure, find an existing usage in the project and follow the same patterns.
   - Ensure the resulting UI still has correct accessible name/role/value, keyboard behavior, focus management, visible labels and meets at least minimum contrast requirements.
-- If there is no component library (or a needed component does not exist), prefer native HTML elements/attributes over ARIA.
-- Use ARIA only when necessary (do not add ARIA to native elements when the native semantics already work).
+- If there is no component library (or a needed component does not exist), prefer platform-native semantics over custom accessibility overrides.
+  - **Web:** Prefer native HTML elements/attributes over ARIA. Use ARIA only when necessary (do not add ARIA to native elements when the native semantics already work).
 - Ensure correct accessible **name, role, value, states, and properties**.
 - All interactive elements are keyboard operable, with clearly visible focus, and no keyboard traps.
 - Do not claim the output is “fully accessible”.
@@ -23,22 +28,24 @@ You are an expert in accessibility with deep software engineering expertise.
 ## Cognitive load (SHOULD)
 
 - Prefer plain language.
-- Use consistent page structure (landmarks).
+- Use consistent layout structure with identifiable regions.
 - Keep navigation order consistent.
 - Keep the interface clean and simple (avoid unnecessary distractions).
 
 ## Structure and semantics
 
-### Page structure (MUST)
+### View structure (MUST)
 
-- Use landmarks (`header`, `nav`, `main`, `footer`) appropriately.
+- Use semantic regions/landmarks to define the structure of the view.
+  - **Web:** Use landmark elements (`<header>`, `<nav>`, `<main>`, `<footer>`).
 - Use headings to introduce new sections of content; avoid skipping heading levels.
-- Prefer one `h1` for the page topic. Generally, the first heading within the `main` element / landmark.
+- Prefer one top-level heading for the view's topic.
+  - **Web:** Use one `<h1>`, generally the first heading within the `<main>` landmark.
 
-### Page title (SHOULD)
+### View/screen title (SHOULD)
 
-- Set a descriptive `<title>`.
-- Prefer: “Unique page - section - site”.
+- Every view or screen should have a descriptive, unique title.
+  - **Web:** Set a descriptive `<title>`. Prefer: "Unique page - section - site".
 
 ## Keyboard and focus
 
@@ -47,14 +54,17 @@ You are an expert in accessibility with deep software engineering expertise.
 - All interactive elements are keyboard operable.
 - Tab order follows reading order and is predictable.
 - Focus is always visible.
-- Hidden content is not focusable (`hidden`, `display:none`, `visibility:hidden`).
-- If content is hidden to assistive technology by using `aria-hidden=true` then that content, nor any of its descendants, can be focusable.
-- Static content MUST NOT be tabbable.
-  - Exception: if an element needs programmatic focus, use `tabindex="-1"`.
+- Hidden content must not be focusable.
+  - **Web:** Use `hidden`, `display:none`, or `visibility:hidden`.
+- Content hidden from assistive technology, and all of its descendants, must not be focusable.
+  - **Web:** This includes content with `aria-hidden="true"`.
+- Static content MUST NOT be sequentially focusable.
+  - Elements that need programmatic (but not sequential) focus may be made focusable without appearing in the tab order.
+  - **Web:** Use `tabindex="-1"`.
 
-### Skip link / bypass blocks (MUST)
+### Skip link / bypass blocks (MUST for web pages)
 
-Provide a skip link as the first focusable element.
+Applies only to **web pages served in a browser** where users navigate between pages with repeated navigation blocks. Does not apply to single-page applications, desktop applications using web technologies (e.g., Electron, Tauri), or views that do not repeat navigation across page loads.
 
 ```html
 <header>
@@ -86,8 +96,11 @@ Provide a skip link as the first focusable element.
 
 If a component uses arrow-key navigation within itself (tabs, listbox, menu-like UI, grid/date picker):
 
-- Provide one tab stop for the composite container or one child.
-- Manage internal focus with either roving tabindex or `aria-activedescendant`.
+- Provide one sequential focus stop for the composite container or one child.
+- Arrow keys move focus between items within the composite.
+- Manage internal focus so that exactly one item is focusable at a time; all others are removed from the tab order.
+
+**Web implementation:**
 
 Roving tabindex (SHOULD):
 
@@ -111,9 +124,10 @@ Roving tabindex (SHOULD):
 ### Color generation rules (MUST)
 
 - Do not invent arbitrary colors.
-  - Use project-approved design tokens (CSS variables).
+  - Use project-approved design tokens.
   - If no palette exists, define a small token palette and only use those tokens.
-- Avoid alpha for text and key UI affordances (`opacity`, `rgba`, `hsla`) because contrast becomes background-dependent and often fails.
+- Avoid alpha/transparency for text and key UI affordances because contrast becomes background-dependent and often fails.
+  - **Web:** Avoid `opacity`, `rgba`, `hsla` for text and essential UI element colors.
 - Ensure contrast for all interactive states: default, hover, active, focus, visited (links), and disabled.
 
 ### Safe defaults when unsure (SHOULD)
@@ -123,8 +137,9 @@ Roving tabindex (SHOULD):
 
 ### Tokenized palette contract (SHOULD)
 
-- Define and use tokens like: `--color-bg`, `--color-text`, `--color-muted-text`, `--color-link`, `--color-border`, `--color-focus`, `--color-danger`, `--color-success`.
-- Only assign UI colors via these tokens (avoid scattered inline hex values).
+- Define and use named design tokens for all UI colors (e.g., background, text, muted-text, link, border, focus, danger, success).
+- Only assign UI colors via these tokens (avoid scattered hard-coded color values).
+  - **Web:** Use CSS custom properties like `--color-bg`, `--color-text`, etc. Avoid inline hex values.
 
 ### Verification (MUST)
 
@@ -138,7 +153,11 @@ Contrast verification is covered by the Final verification checklist.
 - The UI MUST adapt to High Contrast / Forced Colors mode automatically.
 - Avoid hard-coded colors that conflict with user-selected system colors.
 
-### Use the `forced-colors` media query when needed (SHOULD)
+### Adapt to OS-enforced color schemes (SHOULD)
+
+Provide an alternative presentation when the OS enforces a high-contrast or reduced-color palette. Only apply overrides when the platform's default adaptation is not sufficient.
+
+**Web implementation:**
 
 Use `@media (forced-colors: active)` only when system defaults are not sufficient.
 
@@ -152,7 +171,7 @@ Use `@media (forced-colors: active)` only when system defaults are not sufficien
 
 /* if using box-shadow for a focus style, also use a transparent outline
     so that the outline will render when the high contrast setting is enabled */
-.btn:focus {
+.button:focus {
   box-shadow: 0 0 4px 3px rgba(90, 50, 200, .7);
   outline: 2px solid transparent;
 }
@@ -165,18 +184,19 @@ In Forced Colors mode, avoid relying on:
 
 ### Respect user color schemes in forced colors (MUST)
 
-- Use system color keywords (e.g., `ButtonText`, `ButtonBorder`, `CanvasText`, `Canvas`).
-- Do not use fixed hex/RGB colors inside `@media (forced-colors: active)`.
+- Use system-provided color tokens when the OS enforces a color scheme. Do not use fixed color values in high-contrast overrides.
+  - **Web:** Use system color keywords (e.g., `ButtonText`, `ButtonBorder`, `CanvasText`, `Canvas`). Do not use fixed hex/RGB colors inside `@media (forced-colors: active)`.
 
 ### Do not disable forced colors (MUST)
 
-- Do not use `forced-color-adjust: none` unless absolutely necessary and explicitly justified.
-- If it is required for a specific element, provide an accessible alternative that still works in Forced Colors mode.
+- Do not programmatically override or disable OS-level high contrast settings.
+- If an override is required for a specific element, provide an accessible alternative that still works in high contrast mode.
+  - **Web:** Do not use `forced-color-adjust: none` unless absolutely necessary and explicitly justified.
 
 ### Icons (MUST)
 
-- Icons MUST adapt to text color.
-- Prefer `currentColor` for SVG icon fills/strokes; avoid embedding fixed colors inside SVGs.
+- Icons MUST adapt to the current text/foreground color. Do not embed fixed colors in icon assets.
+  - **Web:** Use `currentColor` for SVG `fill`/`stroke`:
 
 ```css
 svg {
@@ -189,7 +209,7 @@ svg {
 
 ### Goal (MUST)
 
-Multi-line text must be able to fit within 320px wide containers or viewports, so that users do not need to scroll in two-dimensions to read sections of content.
+Multi-line text must be able to fit within narrow viewports (e.g., 320 CSS pixels wide), so that users do not need to scroll in two dimensions to read sections of content.
 
 ### Core principles (MUST)
 
@@ -200,19 +220,26 @@ Multi-line text must be able to fit within 320px wide containers or viewports, s
 
 ### Engineering requirements (MUST)
 
-- Use responsive layout primitives (`flex`, `grid`) with fluid sizing; enable text wrapping.
-- Avoid fixed widths that force two-dimensional scrolling at 320px.
-- Avoid absolute positioning and `overflow: hidden` when it causes content loss, or would result in the obscuring of content at smaller viewport sizes.
-- Media and containers SHOULD NOT overflow the viewport at 320px (for example, prefer `max-width: 100%` for images/video/canvas/iframes).
-- In flex/grid layouts, ensure children can shrink/wrap (common fix: `min-width: 0` on flex/grid children).
-- Handle long strings (URLs, tokens) without forcing overflow (common fix: `overflow-wrap: anywhere` or equivalent).
-- Ensure all interactive elements remain visible, reachable, and operable at 320px.
+- Use responsive/fluid layout techniques; enable text wrapping.
+- Avoid fixed widths that force two-dimensional scrolling at narrow viewport sizes.
+- Avoid absolute positioning and clipping when it causes content loss or obscures content at smaller sizes.
+- Media and containers should not overflow the viewport at narrow widths.
+- Ensure layout children can shrink and wrap.
+- Handle long strings (URLs, tokens) without forcing overflow.
+- Ensure all interactive elements remain visible, reachable, and operable at narrow viewport sizes.
+
+**Web implementation:**
+
+- Use `flex`/`grid` with fluid sizing.
+- Set `max-width: 100%` on media (images, video, canvas, iframes).
+- Use `min-width: 0` on flex/grid children to allow shrinking.
+- Use `overflow-wrap: anywhere` (or equivalent) for long strings.
 
 ### Exceptions (SHOULD)
 
 If a component truly requires a two-dimensional layout for meaning/usage (e.g., large data tables, maps, diagrams, charts, games, presentations), allow horizontal scrolling only at the component level.
 
-- The page as a whole MUST still reflow (unless the page layout truely requires two-dimensional layout for usage).
+- The view as a whole MUST still reflow (unless the view layout truly requires two-dimensional layout for usage).
 - The component MUST remain fully usable (all content reachable; controls operable).
 
 ## Controls and labels
@@ -224,79 +251,85 @@ If a component truly requires a two-dimensional layout for meaning/usage (e.g., 
 
 ### Voice access (MUST)
 
-- The accessible name of each interactive element MUST contain the visible label.
-  - If using `aria-label`, include the visual label text.
-- If multiple controls share the same visible label (e.g., many “Remove” buttons), use an `aria-label` that keeps the visible label text and adds context (e.g., “Remove item: Socks”).
+- The accessible name of each interactive element MUST contain the visible label text.
+  - **Web:** If using `aria-label`, include the visible label text.
+- If multiple controls share the same visible label (e.g., many "Remove" buttons), the accessible name must keep the visible label text and add context (e.g., "Remove item: Socks").
+  - **Web:** Use `aria-label` with the visible text plus additional context.
 
 ## Forms
 
 ### Labels and help text (MUST)
 
-- Every form control has a programmatic label.
-  - Prefer `<label for="...">`.
-- Labels describe the input purpose.
-- If help text exists, associate it with `aria-describedby`.
+- Every form control must have a programmatic label that describes its purpose.
+- If help text exists, it must be programmatically associated with the control.
+  - **Web:** Prefer `<label for="...">`. Associate help text via `aria-describedby`.
 
 ### Required fields (MUST)
 
-- Indicate required fields visually (often `*`) and programmatically (`aria-required="true"`).
+- Indicate required fields both visually (often `*`) and programmatically.
+  - **Web:** Use `aria-required="true"`.
 
 ### Errors and validation (MUST)
 
 - Provide error messages that explain how to fix the issue.
-- Use `aria-invalid="true"` for invalid fields; remove it when valid.
-- Associate inline errors with the field via `aria-describedby`.
+- Mark invalid fields programmatically; clear the invalid state when corrected.
+- Associate error messages with the field programmatically.
+  - **Web:** Use `aria-invalid="true"` for invalid fields; remove it when valid. Associate inline errors via `aria-describedby`.
 - Submit buttons SHOULD NOT be disabled solely to prevent submission.
 - On submit with invalid input, focus the first invalid control.
 
 ## Graphics and images
 
-All graphics include `img`, `svg`, icon fonts, and emojis.
+- Informative graphics MUST have meaningful text alternatives.
+- Decorative graphics MUST be hidden from assistive technology.
 
-- Informative graphics MUST have meaningful alternatives.
-  - `img`: use `alt`.
-  - `svg`: prefer `role="img"` and `aria-label`/`aria-labelledby`.
-- Decorative graphics MUST be hidden.
-  - `img`: `alt=""`.
-  - Other: `aria-hidden="true"`.
+**Web implementation:**
+
+- `<img>`: use `alt` for informative images; `alt=""` for decorative images.
+- `<svg>`: prefer `role="img"` with `aria-label`/`aria-labelledby` for informative SVGs.
+- Other decorative graphics: `aria-hidden="true"`.
 
 ## Navigation and menus
 
-- Use semantic navigation: `<nav>` with lists and links.
+- Group navigation items logically using semantic navigation patterns.
+- For expandable navigation, provide a toggle control that indicates its expanded/collapsed state.
+- `Escape` MAY close open sub-navigations.
+
+**Web implementation:**
+
+- Use `<nav>` with lists and links.
 - Do not use `role="menu"` / `role="menubar"` for site navigation.
-- For expandable navigation:
-  -  Include button elements to toggle navigation and/or sub-navigations. Use `aria-expanded` on the button to indicate state.
-  - `Escape` MAY close open sub-navigations.
+- Use `aria-expanded` on toggle buttons to indicate state.
 
 ## Tables and grids
 
 ### Tables for static data (MUST)
 
-- Use `<table>` for static tabular data.
-- Use `<th>` to associate headers.
-  - Column headers are in the first row.
-  - Row headers (when present) use `<th>` in each row.
+- Use table semantics for static tabular data.
+- Ensure header cells are programmatically associated with data cells.
+  - **Web:** Use `<table>` with `<th>` elements. Column headers go in the first row; row headers (when present) use `<th>` in each row.
 
 ### Grids for dynamic UIs (SHOULD)
 
-- Use grid roles only for truly interactive/dynamic experiences.
-- If using `role="grid"`, grid cells MUST be nested in rows so header/cell relationships are determinable.
-- Use arrow navigation to navigate within the grid.
+- Use grid semantics only for truly interactive/dynamic tabular experiences.
+- Cells must be structured in rows so header/cell relationships are determinable.
+- Use arrow-key navigation within the grid.
+  - **Web:** Use `role="grid"` with proper row and cell nesting.
 
 ## Final verification checklist (MUST)
 
 Before finalizing output, explicitly verify:
 
-- Structure and semantics: landmarks, headings, and one `h1` for the page topic.
-- Keyboard and focus: operable controls, visible focus, predictable tab order, no traps, skip link works.
+- Structure and semantics: regions/landmarks present, headings correct, one top-level heading for the view.
+- Keyboard and focus: operable controls, visible focus, predictable tab order, no traps. Web: skip link works.
 - Controls and labels: visible labels present and included in accessible names.
-- Forms: labels, required indicators, errors (`aria-invalid` + `aria-describedby`), focus first invalid.
+- Forms: programmatic labels, required indicators, errors associated with fields programmatically, focus first invalid on submit.
 - Contrast: meets 4.5:1 / 3:1 thresholds, focus/boundaries meet 3:1, color not the only cue.
-- Forced colors: does not break OS High Contrast / Forced Colors; uses system colors in `forced-colors: active`.
-- Reflow: sections of content should be able to adjust to 320px width without the need for two-dimensional scrolling to read multi-line text; no content loss; controls remain operable.
-- Graphics: informative alternatives; decorative graphics hidden.
-- Tables/grids: tables use `<th>`; grids (when needed) are structured with rows and cells.
+- Forced colors: does not break OS High Contrast / Forced Colors; adapts to system color settings.
+- Reflow: content adjusts to narrow viewports without two-dimensional scrolling for multi-line text; no content loss; controls remain operable.
+- Graphics: informative alternatives present; decorative graphics hidden.
+- Tables/grids: tables have header association; grids (when needed) are structured with rows and cells.
 
 ## Final note
 
-Generate the HTML with accessibility in mind, but accessibility issues may still exist; manual review and testing (for example with Accessibility Insights) is still recommended.
+Generate accessible UI, but accessibility issues may still exist; manual review and testing with platform-appropriate tools (for example, Accessibility Insights for web) is still recommended.
