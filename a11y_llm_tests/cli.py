@@ -9,6 +9,7 @@ import yaml
 from typing import Any, List
 
 from . import generator, node_bridge
+from .model_config import get_model_provider, load_models_config, normalize_models_config
 from .prompt_specs import load_prompt_specs
 from .schema import (
     ResultRecord,
@@ -160,9 +161,11 @@ def _generate_worker(task):
     html_out_path = task["html_out_path"]
     model_display_name = task.get("model_display_name")
     provider_config = task.get("provider_config")
+    runtime_log_dir = task.get("runtime_log_dir")
 
     # Configure prompts within this worker process for the specific variant.
     generator.configure_prompts(system_prompt_override, custom_instructions_text)
+    generator.configure_runtime(runtime_log_dir)
 
     kwargs = {
         "temperature": temperature,
@@ -175,6 +178,8 @@ def _generate_worker(task):
             kwargs["model_display_name"] = model_display_name
         if "provider_config" in generate_signature.parameters:
             kwargs["provider_config"] = provider_config
+        if "runtime_log_dir" in generate_signature.parameters:
+            kwargs["runtime_log_dir"] = runtime_log_dir
     except (TypeError, ValueError):
         pass
 
@@ -237,14 +242,6 @@ def _resolve_cli_path(path_value: str, base_dir: Path) -> Path:
 
     return base_dir / candidate
 
-
-def _get_model_provider(model: str) -> str:
-    value = (model or "").strip()
-    if "/" in value:
-        return value.split("/", 1)[0].strip().lower() or "unknown"
-    return "unknown"
-
-
 def _provider_batch_enabled(provider_config: Any) -> bool:
     if not isinstance(provider_config, dict):
         return True
@@ -277,6 +274,7 @@ def _generate_batch_group(indexed_tasks: list[tuple[int, dict[str, Any]]]) -> li
         first_task.get("system_prompt_override"),
         first_task.get("custom_instructions_text"),
     )
+    generator.configure_runtime(first_task.get("runtime_log_dir"))
 
     requests = []
     for _, task in indexed_tasks:
@@ -301,6 +299,8 @@ def _generate_batch_group(indexed_tasks: list[tuple[int, dict[str, Any]]]) -> li
             kwargs["model_display_name"] = first_task.get("model_display_name")
         if "provider_config" in batch_signature.parameters:
             kwargs["provider_config"] = first_task.get("provider_config")
+        if "runtime_log_dir" in batch_signature.parameters:
+            kwargs["runtime_log_dir"] = first_task.get("runtime_log_dir")
     except (TypeError, ValueError):
         pass
 
@@ -403,10 +403,13 @@ def run(
     (out_dir / "raw").mkdir(parents=True, exist_ok=True)
     # Prepare screenshots directory (will be populated during evaluation phase)
     (out_dir / "screenshots").mkdir(parents=True, exist_ok=True)
+    inspect_logs_dir = out_dir / "inspect_logs"
+    inspect_logs_dir.mkdir(parents=True, exist_ok=True)
 
-    models_cfg = yaml.safe_load(open(models_file))
-    defaults_cfg = models_cfg.get("defaults") or {}
-    config_dir = Path(models_file).resolve().parent
+    models_cfg, models_file_path = load_models_config(models_file)
+    normalized_models = normalize_models_config(models_cfg)
+    defaults_cfg = normalized_models["defaults"]
+    config_dir = models_file_path.parent
     system_prompt_override = defaults_cfg.get("system_prompt")
 
     # Temperature precedence:
@@ -447,18 +450,10 @@ def run(
     base_prompting_system_prompt = generator.get_base_system_prompt()
     base_prompting_effective_system_prompt = generator.get_effective_system_prompt()
     base_prompting_custom_instructions = generator.get_custom_instructions()
-    providers_cfg = models_cfg.get("providers") or {}
-    model_names = [m["name"] for m in models_cfg.get("models", [])]
-    model_display_lookup = {}
-    model_provider_lookup = {}
-    models_info = []
-    for m in models_cfg.get("models", []):
-        name = m.get("name")
-        display_name = m.get("display_name") or (name.split('/')[-1] if isinstance(name, str) else name)
-        provider_name = _get_model_provider(name) if isinstance(name, str) else "unknown"
-        model_display_lookup[name] = display_name
-        model_provider_lookup[name] = providers_cfg.get(provider_name) if isinstance(providers_cfg, dict) else None
-        models_info.append({"name": name, "display_name": display_name})
+    model_names = normalized_models["model_names"]
+    model_display_lookup = normalized_models["model_display_lookup"]
+    model_provider_lookup = normalized_models["model_provider_lookup"]
+    models_info = normalized_models["models_info"]
     tcd = Path(test_cases_dir)
     prompt_dimensions_path = _resolve_cli_path(prompt_dimensions_file, config_dir)
     try:
@@ -544,6 +539,7 @@ def run(
                         "debug_truncated_cache": debug_truncated_cache,
                         "html_out_path": str(html_file),
                         "model_display_name": model_display_lookup.get(model),
+                        "runtime_log_dir": str(inspect_logs_dir),
                         "provider_config": model_provider_lookup.get(model),
                     })
 
@@ -624,7 +620,7 @@ def run(
                 )
                 results.append(json.loads(rec.model_dump_json()))
 
-        batch_supported = hasattr(generator, "generate_html_batch_with_meta") and hasattr(generator.litellm, "batch_completion")
+        batch_supported = hasattr(generator, "generate_html_batch_with_meta") and generator.supports_batch_generation()
         indexed_tasks = list(enumerate(gen_tasks))
         batched_groups: list[list[tuple[int, dict[str, Any]]]] = []
         single_indexed_tasks: list[tuple[int, dict[str, Any]]] = []
@@ -721,6 +717,11 @@ def run(
                 prompt_dimensions=pc.get("prompt_dimensions") or [],
             ).model_dump_json()) for pc in prompt_spec_set.prompt_cases_meta],
             "models_info": models_info,
+            "runtime": {
+                "engine": "inspect_ai",
+                "log_dir": str(inspect_logs_dir.resolve()),
+                "models_config_path": str(models_file_path),
+            },
             "status": "GENERATED_ONLY",
         },
     }
@@ -979,7 +980,7 @@ def report(
     models_file: str = typer.Option("config/models.yaml", help="Models config YAML")
     ):
     """Regenerate HTML report for an existing run directory."""
-    models_cfg = yaml.safe_load(open(models_file))
+    models_cfg, _ = load_models_config(models_file)
     rd = Path(run_dir)
     from .report import render_report
     render_report(rd / "results.json", rd / "index.html", models_cfg)

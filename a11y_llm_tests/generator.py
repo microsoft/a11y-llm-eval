@@ -4,8 +4,8 @@ import hashlib, os, time, random
 from pathlib import Path
 from typing import Tuple, Dict, Any, Optional
 import json
-import litellm
 
+from .inspect_runtime import GenerationRequest, InspectGenerationRuntime
 from .utils import (
     atomic_write_bytes,
     atomic_write_text,
@@ -17,7 +17,9 @@ from .utils import (
 CACHE_DIR = Path(".cache/generations")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-# Retry policy for litellm calls
+generation_runtime = InspectGenerationRuntime()
+
+# Retry policy for generation calls
 RETRY_MAX_ATTEMPTS = 5
 RETRY_BASE_DELAY = 1.0  # seconds
 RETRY_MAX_DELAY = 60.0  # seconds
@@ -32,6 +34,7 @@ DEFAULT_MAX_TOKENS = 32768
 _PROVIDER_ENV_DEBUG_VARS: dict[str, tuple[str, ...]] = {
     "azure": ("AZURE_API_BASE", "AZURE_API_KEY", "AZURE_API_VERSION"),
     "azure_ai": ("AZURE_AI_API_BASE", "AZURE_AI_API_KEY", "AZURE_AI_API_VERSION"),
+    "azureai": ("AZUREAI_BASE_URL", "AZUREAI_API_KEY", "AZUREAI_AUDIENCE"),
     "anthropic": ("ANTHROPIC_API_KEY",),
     "vertex_ai": ("VERTEXAI_PROJECT", "VERTEXAI_LOCATION", "GOOGLE_APPLICATION_CREDENTIALS"),
     "openai": ("OPENAI_API_KEY",),
@@ -51,11 +54,7 @@ def _load_optional_env(env_name: str) -> Optional[str]:
 
 
 def _is_anthropic_model(model: str) -> bool:
-    """Heuristic for whether a LiteLLM model routes to Anthropic.
-
-    In this repo, Anthropic models are typically configured as `claude-*` in
-    config/models.yaml, but LiteLLM also supports explicit provider prefixes.
-    """
+    """Heuristic for whether a configured model routes to Anthropic."""
 
     m = (model or "").strip().lower()
     return (
@@ -69,7 +68,7 @@ def _is_anthropic_model(model: str) -> bool:
 
 
 def _is_codex_model(model: str) -> bool:
-    """Heuristic for whether a LiteLLM model is a Codex-style deployment.
+    """Heuristic for whether a model is a Codex-style deployment.
 
     Some Codex / code-agent deployments (notably certain Azure GPT-* Codex models)
     reject sampling parameters like `temperature`. We omit those parameters to
@@ -111,10 +110,21 @@ class OutputTokenLimitHit(RuntimeError):
 
 
 def _get_model_provider(model: str) -> str:
-    m = (model or "").strip()
-    if "/" in m:
-        return m.split("/", 1)[0].strip().lower() or "unknown"
+    parts = [part.strip().lower() for part in (model or "").split("/") if part.strip()]
+    if len(parts) >= 2 and parts[1] == "azure":
+        return "azure"
+    if len(parts) >= 2:
+        return parts[0] or "unknown"
     return "unknown"
+
+
+def _is_azure_ai_provider(provider: str) -> bool:
+    return provider in {"azure_ai", "azureai"}
+
+
+def _is_openai_azure_model(model: str) -> bool:
+    parts = [part.strip().lower() for part in (model or "").split("/") if part.strip()]
+    return len(parts) >= 2 and parts[0] == "openai" and parts[1] == "azure"
 
 
 def _format_model_debug_label(model: str, model_display_name: Optional[str] = None) -> str:
@@ -149,10 +159,48 @@ def _build_provider_completion_kwargs(model: str, provider_config: Optional[Dict
     if mode != "default_azure_credential":
         raise RuntimeError(f"Unsupported auth mode for provider '{provider}': {mode}")
 
-    if provider not in {"azure", "azure_ai"}:
+    if provider != "azure" and not _is_azure_ai_provider(provider):
         raise RuntimeError(
             f"auth.mode=default_azure_credential is only supported for Azure providers, got '{provider}'"
         )
+
+    if _is_azure_ai_provider(provider):
+        try:
+            import azure.identity  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError(
+                "Model provider is configured with auth.mode=default_azure_credential, but azure-identity is not installed"
+            ) from exc
+
+        api_base_env = str(auth_cfg.get("api_base_env") or "AZUREAI_BASE_URL")
+        audience_env = str(auth_cfg.get("audience_env") or "AZUREAI_AUDIENCE")
+        scope = str(auth_cfg.get("scope") or "https://cognitiveservices.azure.com/.default")
+        os.environ[audience_env] = scope
+        return {
+            "api_base": _load_required_env(api_base_env),
+        }
+
+    if provider == "azure" and _is_openai_azure_model(model):
+        try:
+            import azure.identity  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError(
+                "Model provider is configured with auth.mode=default_azure_credential, but azure-identity is not installed"
+            ) from exc
+
+        api_base_env = str(auth_cfg.get("api_base_env") or "AZUREAI_OPENAI_BASE_URL")
+        api_version_env = str(auth_cfg.get("api_version_env") or "AZUREAI_OPENAI_API_VERSION")
+        audience_env = str(auth_cfg.get("audience_env") or "AZUREAI_AUDIENCE")
+        scope = str(auth_cfg.get("scope") or "https://cognitiveservices.azure.com/.default")
+        os.environ[audience_env] = scope
+
+        kwargs = {
+            "api_base": _load_required_env(api_base_env),
+        }
+        api_version = _load_optional_env(api_version_env)
+        if api_version is not None:
+            kwargs["api_version"] = api_version
+        return kwargs
 
     try:
         from azure.identity import DefaultAzureCredential, get_bearer_token_provider
@@ -161,13 +209,8 @@ def _build_provider_completion_kwargs(model: str, provider_config: Optional[Dict
             "Model provider is configured with auth.mode=default_azure_credential, but azure-identity is not installed"
         ) from exc
 
-    if provider == "azure_ai":
-        default_api_base_env = "AZURE_AI_API_BASE"
-        default_api_version_env = "AZURE_AI_API_VERSION"
-    else:
-        default_api_base_env = "AZURE_API_BASE"
-        default_api_version_env = "AZURE_API_VERSION"
-
+    default_api_base_env = "AZURE_API_BASE"
+    default_api_version_env = "AZURE_API_VERSION"
     api_base_env = str(auth_cfg.get("api_base_env") or default_api_base_env)
     api_version_env = str(auth_cfg.get("api_version_env") or default_api_version_env)
     scope = str(auth_cfg.get("scope") or "https://cognitiveservices.azure.com/.default")
@@ -182,6 +225,14 @@ def _build_provider_completion_kwargs(model: str, provider_config: Optional[Dict
     if api_version is not None:
         kwargs["api_version"] = api_version
     return kwargs
+
+
+def supports_batch_generation() -> bool:
+    return bool(getattr(generation_runtime, "supports_batch_generation", lambda: False)())
+
+
+def configure_runtime(log_dir: Optional[str] = None) -> None:
+    generation_runtime.set_log_dir(log_dir)
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are generating a single standalone HTML document. "
@@ -356,7 +407,7 @@ def _effective_max_tokens_for_model(model: str) -> Optional[int]:
     return DEFAULT_MAX_TOKENS if _is_anthropic_model(model) else None
 
 
-def _build_completion_kwargs(
+def _build_generation_request(
     *,
     model: str,
     messages: Any,
@@ -364,18 +415,20 @@ def _build_completion_kwargs(
     seed: Optional[int],
     effective_max_tokens: Optional[int],
     provider_config: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
-    kwargs: Dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "seed": seed,
-    }
-    if temperature is not None and not _is_codex_model(model):
-        kwargs["temperature"] = temperature
-    if effective_max_tokens is not None:
-        kwargs["max_tokens"] = effective_max_tokens
-    kwargs.update(_build_provider_completion_kwargs(model, provider_config))
-    return kwargs
+    max_workers: Optional[int] = None,
+) -> GenerationRequest:
+    provider_kwargs = _build_provider_completion_kwargs(model, provider_config)
+    return GenerationRequest(
+        model=model,
+        messages=messages,
+        seed=seed,
+        temperature=(None if temperature is None or _is_codex_model(model) else temperature),
+        max_tokens=effective_max_tokens,
+        api_base=provider_kwargs.get("api_base"),
+        api_version=provider_kwargs.get("api_version"),
+        azure_ad_token_provider=provider_kwargs.get("azure_ad_token_provider"),
+        max_workers=max_workers,
+    )
 
 
 def _extract_finish_and_stop_reason(resp) -> tuple[Optional[str], Optional[str]]:
@@ -522,11 +575,12 @@ def generate_html_batch_with_meta(
     debug_truncated_cache: bool = False,
     model_display_name: Optional[str] = None,
     provider_config: Optional[Dict[str, Any]] = None,
+    runtime_log_dir: Optional[str] = None,
 ) -> list[Dict[str, Any]]:
-    """Generate multiple prompts for the same model using LiteLLM batch completion.
+    """Generate multiple prompts for the same model using the Inspect runtime batch path.
 
     Each request must include `user_prompt` and `iteration`. Cache hits are returned
-    immediately and only cache misses are submitted through LiteLLM batching.
+    immediately and only cache misses are submitted through grouped batch generation.
     Individual item failures fall back to `generate_html_with_meta`.
     """
     if not requests:
@@ -535,8 +589,9 @@ def generate_html_batch_with_meta(
     base_system_prompt = get_base_system_prompt()
     custom_instructions = get_custom_instructions()
     effective_system_prompt = get_effective_system_prompt()
+    configure_runtime(runtime_log_dir)
     effective_max_tokens = _effective_max_tokens_for_model(model)
-    litellm.drop_params = True
+    generation_runtime.drop_params = True
     model_debug_label = _format_model_debug_label(model, model_display_name)
     provider_auth_debug = _format_provider_auth_debug(model)
 
@@ -604,6 +659,7 @@ def generate_html_batch_with_meta(
             debug_truncated_cache=item["debug_truncated_cache"],
             model_display_name=model_display_name,
             provider_config=provider_config,
+            runtime_log_dir=runtime_log_dir,
         )
         return {"html": html, "meta": meta}
 
@@ -619,19 +675,32 @@ def generate_html_batch_with_meta(
         ]
         for item in misses
     ]
-    batch_kwargs = _build_completion_kwargs(
+    batch_request = _build_generation_request(
         model=model,
         messages=batch_messages,
         temperature=temperature,
         seed=seed,
         effective_max_tokens=effective_max_tokens,
         provider_config=provider_config,
+        max_workers=min(100, len(misses)),
     )
-    batch_kwargs["max_workers"] = min(100, len(misses))
 
     batch_start = time.time()
     try:
-        batch_responses = litellm.batch_completion(**batch_kwargs)
+        batch_responses = generation_runtime.generate_batch([
+            GenerationRequest(
+                model=batch_request.model,
+                messages=messages,
+                seed=batch_request.seed,
+                temperature=batch_request.temperature,
+                max_tokens=batch_request.max_tokens,
+                api_base=batch_request.api_base,
+                api_version=batch_request.api_version,
+                azure_ad_token_provider=batch_request.azure_ad_token_provider,
+                max_workers=batch_request.max_workers,
+            )
+            for messages in batch_messages
+        ])
     except Exception:
         batch_responses = None
     batch_elapsed = time.time() - batch_start
@@ -702,6 +771,7 @@ def generate_html_with_meta(
     debug_truncated_cache: bool = False,
     model_display_name: Optional[str] = None,
     provider_config: Optional[Dict[str, Any]] = None,
+    runtime_log_dir: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Generate (or load cached) HTML plus metadata including token usage & cost.
 
@@ -720,6 +790,7 @@ def generate_html_with_meta(
     base_system_prompt = get_base_system_prompt()
     custom_instructions = get_custom_instructions()
     effective_system_prompt = get_effective_system_prompt()
+    configure_runtime(runtime_log_dir)
     h, cache_file, meta_file = _cache_artifacts(model, user_prompt, iteration, seed)
 
     truncated_cache_files: list[str] = []
@@ -747,7 +818,7 @@ def generate_html_with_meta(
             _invalidate_cache_entry(cache_file)
 
     start = time.time()
-    litellm.drop_params = True
+    generation_runtime.drop_params = True
     model_debug_label = _format_model_debug_label(model, model_display_name)
     provider_auth_debug = _format_provider_auth_debug(model)
     print(
@@ -757,30 +828,27 @@ def generate_html_with_meta(
 
     effective_max_tokens = _effective_max_tokens_for_model(model)
 
-    def _call_litellm_with_retries():
+    def _call_generation_runtime_with_retries():
         resp = None
         last_exc: Optional[BaseException] = None
         for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
             try:
-                kwargs: Dict[str, Any] = {
-                    "messages": [
+                request = _build_generation_request(
+                    model=model,
+                    messages=[
                         {"role": "system", "content": effective_system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                }
-                kwargs = _build_completion_kwargs(
-                    model=model,
-                    messages=kwargs["messages"],
                     temperature=temperature,
                     seed=seed,
                     effective_max_tokens=effective_max_tokens,
                     provider_config=provider_config,
                 )
 
-                resp = litellm.completion(**kwargs)
+                resp = generation_runtime.generate(request)
                 if resp and getattr(resp, "choices", None) and len(resp.choices) > 0:
                     return resp
-                last_exc = RuntimeError("litellm returned no choices")
+                last_exc = RuntimeError("generation runtime returned no choices")
             except Exception as e:
                 last_exc = e
 
@@ -790,7 +858,7 @@ def generate_html_with_meta(
             jitter = random.uniform(0, delay * 0.1)
             sleep_for = delay + jitter
             print(
-                f"litellm call failed for model={model_debug_label} ({provider_auth_debug}) "
+                f"generation call failed for model={model_debug_label} ({provider_auth_debug}) "
                 f"(attempt {attempt}/{RETRY_MAX_ATTEMPTS}): {last_exc}; "
                 f"retrying in {sleep_for:.1f}s..."
             )
@@ -798,7 +866,7 @@ def generate_html_with_meta(
 
         if last_exc:
             raise last_exc
-        raise RuntimeError("litellm.completion failed with no response")
+        raise RuntimeError("generation failed with no response")
 
     resp = None
     html = None
@@ -815,7 +883,7 @@ def generate_html_with_meta(
     )
 
     for trunc_attempt in range(TRUNCATION_RETRY_MAX + 1):
-        resp = _call_litellm_with_retries()
+        resp = _call_generation_runtime_with_retries()
         html, meta = _response_to_generation_result(
             resp=resp,
             model=model,

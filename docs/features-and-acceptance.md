@@ -23,6 +23,8 @@ This document covers:
 
 It does **not** attempt to specify the internal HTML report layout pixel-perfect; instead it specifies the report output location and key data it summarizes.
 
+Inspect runtime logs may be written as additive metadata and files under the run directory. Current implementations may write structured JSONL generation logs under `inspect_logs/`. These logs are not part of the compatibility-critical artifact contract unless explicitly documented otherwise.
+
 ---
 
 ## Glossary
@@ -97,12 +99,12 @@ During evaluation, `test.js` is loaded and executed by the Node runner.
 
 ### Behavior
 
-Generation uses `litellm.completion(...)` with:
+Generation uses the Inspect-backed harness runtime with:
 
 - A system message that is the **effective system prompt**.
 - A user message that is the composed prompt case text built from `prompt.yaml` plus the configured global prompt dimensions.
 
-For providers that do not opt out, generation may use LiteLLM's same-model batch completion helper to submit multiple uncached prompts together when their effective request settings match.
+For providers that do not opt out, generation may submit multiple uncached prompts together for the same model when their effective request settings match.
 
 The effective system prompt is:
 
@@ -117,17 +119,18 @@ The effective system prompt is:
 
 `config/models.yaml` may also define provider-level configuration under `providers.<provider>`.
 
-- `providers.<provider>.auth.mode` may be omitted or set to `env` to preserve LiteLLM's existing environment-based behavior.
-- `providers.<provider>.batch.enabled` may be omitted or set to `true` to allow LiteLLM batch submission for eligible generation groups; set it to `false` to force per-request generation for that provider.
-- `providers.azure.auth.mode` and `providers.azure_ai.auth.mode` may be set to `default_azure_credential` to pass an Azure bearer token provider from `azure.identity.DefaultAzureCredential()` into LiteLLM.
-- For `default_azure_credential`, the harness reads `api_base` from `api_base_env` and optionally reads `api_version` from `api_version_env`, defaulting to `AZURE_API_BASE` / `AZURE_API_VERSION` for `azure` and `AZURE_AI_API_BASE` / `AZURE_AI_API_VERSION` for `azure_ai`.
+- `providers.<provider>.auth.mode` may be omitted or set to `env` to preserve the runtime's existing environment-based behavior.
+- `providers.<provider>.batch.enabled` may be omitted or set to `true` to allow grouped batch submission for eligible generation groups; set it to `false` to force per-request generation for that provider.
+- `providers.azure.auth.mode`, `providers.azure_ai.auth.mode`, and `providers.azureai.auth.mode` may be set to `default_azure_credential`.
+- For `azure`, the harness reads `api_base` from `api_base_env` and optionally reads `api_version` from `api_version_env`, defaulting to `AZURE_API_BASE` / `AZURE_API_VERSION`, and passes an Azure bearer token provider into the runtime.
+- For `azure_ai` and `azureai`, the harness reads the base URL from `api_base_env`, defaulting to `AZUREAI_BASE_URL`, and sets the Inspect Azure AI managed-identity audience via `audience_env`, defaulting to `AZUREAI_AUDIENCE`.
 - When `default_azure_credential` is configured, `azure-identity` must be installed; otherwise generation fails with a clear error.
 
 If `run --temperature` is not provided, the effective temperature defaults to `defaults.temperature` if present.
 
-If neither `run --temperature` nor `defaults.temperature` is provided, the harness omits `temperature` from the LiteLLM request so the provider/model default temperature is used.
+If neither `run --temperature` nor `defaults.temperature` is provided, the harness omits `temperature` from the generation request so the provider/model default temperature is used.
 
-Note: some Codex-style deployments (e.g., certain `*-codex` models) do not accept sampling parameters like `temperature`. For these models, the harness omits `temperature` from the LiteLLM request to avoid provider errors.
+Note: some Codex-style deployments (e.g., certain `*-codex` models) do not accept sampling parameters like `temperature`. For these models, the harness omits `temperature` from the generation request to avoid provider errors.
 
 ### Acceptance criteria
 
@@ -157,7 +160,7 @@ Cache identity includes:
 
 On cache hits, the generator returns `cached: True` and can optionally load token/cost metadata from a `.meta.json` file.
 
-When LiteLLM batching is enabled for a provider, cache identity and cache validation remain per request. Cached requests are not submitted to LiteLLM batching; only cache misses are sent.
+When batch generation is enabled for a provider, cache identity and cache validation remain per request. Cached requests are not submitted to grouped batch generation; only cache misses are sent.
 
 ### Acceptance criteria
 
@@ -168,7 +171,7 @@ When LiteLLM batching is enabled for a provider, cache identity and cache valida
 - If a cached HTML file is incomplete/corrupted, it is treated as a cache miss and a fresh generation is performed.
 - Debugging: `run --debug-truncated-cache` prints a list of truncated/corrupted cached HTML files at the end of generation and preserves them for inspection.
 - The `--disable-cache` flag forces fresh generation even if a cache entry exists.
-- If LiteLLM batching is attempted for a group and the batch call or an individual item fails, the harness falls back to the existing per-request generation path for the affected requests.
+- If grouped batch generation is attempted for a group and the batch call or an individual item fails, the harness falls back to the existing per-request generation path for the affected requests.
 
 ---
 

@@ -1,3 +1,4 @@
+from pathlib import Path
 import json
 
 from typer.testing import CliRunner
@@ -68,6 +69,45 @@ def test_cli_uses_batch_generation_by_default(monkeypatch, tmp_path):
     latest = sorted((tmp_path / "runs").iterdir())[-1]
     data = json.loads((latest / "results.json").read_text(encoding="utf-8"))
     assert len(data["results"]) == 2
+    assert data["meta"]["runtime"]["engine"] == "inspect_ai"
+    assert (latest / "inspect_logs").exists()
+
+
+def test_cli_writes_runtime_log_artifact(monkeypatch, tmp_path):
+    def fake_generate_html_with_meta(model, prompt, iteration, temperature=None, seed=None, disable_cache=False, runtime_log_dir=None, **kwargs):
+        if runtime_log_dir:
+            log_path = tmp_path / "runs-log-observed.txt"
+            log_path.write_text(runtime_log_dir, encoding="utf-8")
+            artifact = Path(runtime_log_dir) / "generation-test.jsonl"
+            artifact.write_text('{"status":"ok"}\n', encoding="utf-8")
+        return "<html><body>ok</body></html>", {
+            "cached": False,
+            "latency_s": 0.01,
+            "prompt_hash": "hash-1",
+        }
+
+    monkeypatch.setattr("a11y_llm_tests.generator.generate_html_with_meta", fake_generate_html_with_meta)
+
+    _write_basic_test_case(tmp_path, "case-one")
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "models.yaml").write_text("models:\n  - name: openai/test-model\n", encoding="utf-8")
+    (config_dir / "prompt_dimensions.yaml").write_text("dimensions: {}\n", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(app, [
+        "run",
+        "--models-file", str(config_dir / "models.yaml"),
+        "--prompt-dimensions-file", str(config_dir / "prompt_dimensions.yaml"),
+        "--out", str(tmp_path / "runs"),
+        "--test-cases-dir", str(tmp_path / "test_cases"),
+        "--samples", "1",
+        "--processes", "1",
+    ])
+
+    assert result.exit_code == 0, result.output
+    latest = sorted((tmp_path / "runs").iterdir())[-1]
+    assert (latest / "inspect_logs" / "generation-test.jsonl").exists()
 
 
 def test_cli_provider_batch_opt_out_uses_single_generation(monkeypatch, tmp_path):

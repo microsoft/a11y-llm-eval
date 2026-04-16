@@ -16,12 +16,13 @@ Create a public test suite which can be used to benchmark how well various LLMs 
 - Tests only pass if zero axe-core failures are found AND all *requirement* assertions pass. Best Practice (BP) assertion failures do not fail the test but are tracked separately.
 
 ## Features
-- Python orchestrator (generation, execution, reporting)
+- Python orchestrator with Inspect AI-backed generation
 - Node.js Playwright + axe-core evaluation
 - Per-test prompts & injected JS assertions
 - HTML report summarizing performance
 - Token + cost tracking (tokens in/out/total, per-generation cost, aggregated per model)
 - Multi-sample generation with pass@k metrics (probability at least one passing generation in k draws)
+- Additive Inspect runtime JSONL logs under each run directory
 
 ## Sampling & pass@k Metrics
 You can request multiple independent generations ("samples") per (test, model). This enables computation of pass@k metrics similar to code evaluation benchmarks.

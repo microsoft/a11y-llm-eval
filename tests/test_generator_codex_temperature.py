@@ -39,7 +39,7 @@ def test_temperature_omitted_for_codex_models(monkeypatch, tmp_path):
         captured.update(kwargs)
         return _FakeResp("<html><head></head><body>ok</body></html>")
 
-    monkeypatch.setattr(generator.litellm, "completion", _completion)
+    monkeypatch.setattr(generator.generation_runtime, "completion", _completion)
 
     html, meta = generator.generate_html_with_meta(
         model="azure/gpt-5.2-codex",
@@ -65,7 +65,7 @@ def test_temperature_omitted_when_none_for_non_codex_models(monkeypatch, tmp_pat
         captured.update(kwargs)
         return _FakeResp("<html><head></head><body>ok</body></html>")
 
-    monkeypatch.setattr(generator.litellm, "completion", _completion)
+    monkeypatch.setattr(generator.generation_runtime, "completion", _completion)
 
     generator.generate_html_with_meta(
         model="azure/gpt-5.2",
@@ -89,7 +89,7 @@ def test_temperature_sent_for_non_codex_models_when_set(monkeypatch, tmp_path):
         captured.update(kwargs)
         return _FakeResp("<html><head></head><body>ok</body></html>")
 
-    monkeypatch.setattr(generator.litellm, "completion", _completion)
+    monkeypatch.setattr(generator.generation_runtime, "completion", _completion)
 
     generator.generate_html_with_meta(
         model="azure/gpt-5.2",
@@ -120,7 +120,7 @@ def test_retry_log_includes_model_display_name_and_provider_env_status(monkeypat
         calls["n"] += 1
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(generator.litellm, "completion", _completion)
+    monkeypatch.setattr(generator.generation_runtime, "completion", _completion)
 
     with pytest.raises(RuntimeError, match="boom"):
         generator.generate_html_with_meta(
