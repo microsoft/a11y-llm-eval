@@ -7,7 +7,7 @@ from a11y_llm_tests import node_bridge
 FORM_CONTROLS_HELPER_PATH = str((Path(__file__).resolve().parents[1] / 'node_runner' / 'helpers' / 'test-form-controls.js').resolve())
 
 
-def test_helper_text_associated_message_deduplicates_repeated_group_helper(tmp_path):
+def test_helper_text_associated_message_uses_group_context_for_repeated_group_helper(tmp_path):
     html = '''<!doctype html>
 <html><body>
   <form>
@@ -56,8 +56,8 @@ module.exports.run = async ({{page, assert}}) => {{
     assert found.get('status') == 'fail'
 
     message = found.get('message') or ''
-    expected_fragment = 'Found `Select all planets primarily composed of hydrogen and helium.`'
-    assert message.count(expected_fragment) == 1, message
+    assert 'checkbox group "Which planets in our solar system are considered gas giants?" has helper text "Select all planets primarily composed of hydrogen and helium." that is not programmatically associated' in message
+    assert 'text input "Mercury" has helper text' not in message
 
 
 def test_helper_text_associated_group_requires_real_programmatic_description(tmp_path):
@@ -106,4 +106,197 @@ module.exports.run = async ({{page, assert}}) => {{
     assert found.get('status') == 'fail'
 
     message = found.get('message') or ''
-    assert 'Found `Choose all fruits you like.`' in message
+    assert 'checkbox group "Which fruits do you like?" has helper text "Choose all fruits you like." that is not programmatically associated' in message
+
+
+def test_helper_text_associated_group_splits_visual_label_from_helper_text(tmp_path):
+    html = '''<!doctype html>
+<html><body>
+  <form>
+    <div class="form-field">
+      <div class="question-row">
+        <div>
+          <p class="question-text">Which of the following are programming languages?</p>
+          <p class="help-text">Select all that apply.</p>
+        </div>
+      </div>
+      <div role="group" aria-labelledby="missing-label">
+        <label><input type="checkbox" id="lang-a"><span>Python</span></label>
+        <label><input type="checkbox" id="lang-b"><span>HTML</span></label>
+      </div>
+    </div>
+  </form>
+</body></html>'''
+
+    helper_path_js = json.dumps(FORM_CONTROLS_HELPER_PATH)
+
+    test_js = f'''
+const testFormControls = require({helper_path_js});
+module.exports.run = async ({{page, assert}}) => {{
+    const discovery = await testFormControls.discoverCheckboxes(page);
+    const results = await testFormControls.testHelperTextAssociated(page, discovery);
+    await assert('helper-text-associated', () => {{
+        const status = results && typeof results.status === 'function' ? results.status() : 'fail';
+        const message = results && typeof results.getMessage === 'function' ? results.getMessage() : '';
+        return {{ status, message }};
+    }});
+}};
+'''
+    test_js_path = tmp_path / 'test.js'
+    test_js_path.write_text(test_js, encoding='utf-8')
+
+    screenshot_dir = Path('runs') / 'pytest_screenshots'
+    screenshot_dir.mkdir(parents=True, exist_ok=True)
+    screenshot_file = str(screenshot_dir / 'helper_text_associated_group_visual_label_split.png')
+
+    result = node_bridge.run(html, str(test_js_path), screenshot_file)
+
+    assert 'testFunctionResult' in result, f"Runner failed or returned unexpected output: {result}"
+    assertions = result['testFunctionResult'].get('assertions', [])
+    found = next((assertion for assertion in assertions if assertion.get('name') == 'helper-text-associated'), None)
+
+    assert found is not None, f"No 'helper-text-associated' assertion in runner output: {result}"
+    assert found.get('status') == 'fail'
+
+    message = found.get('message') or ''
+    assert 'checkbox group "Which of the following are programming languages?" has helper text "Select all that apply." that is not programmatically associated' in message
+    assert 'Which of the following are programming languages? Select all that apply.' not in message
+
+
+def test_helper_text_associated_wrapper_checkbox_group_uses_shared_group_context(tmp_path):
+    html = '''<!doctype html>
+<html><body>
+  <form>
+    <div class="form-field">
+      <div class="question-header">
+        <h2 class="question-title">1. Which of these are programming languages?</h2>
+        <p class="help-text">Choose every item that is a computer programming language.</p>
+      </div>
+      <div class="choices">
+        <label class="choice"><input type="checkbox" id="lang-a" name="q1"><span>Python</span></label>
+        <label class="choice"><input type="checkbox" id="lang-b" name="q1"><span>HTML</span></label>
+        <label class="choice"><input type="checkbox" id="lang-c" name="q1"><span>JavaScript</span></label>
+        <label class="choice"><input type="checkbox" id="lang-d" name="q1"><span>CSS</span></label>
+      </div>
+    </div>
+  </form>
+</body></html>'''
+
+    helper_path_js = json.dumps(FORM_CONTROLS_HELPER_PATH)
+
+    test_js = f'''
+const testFormControls = require({helper_path_js});
+module.exports.run = async ({{page, assert}}) => {{
+    const discovery = await testFormControls.discoverCheckboxes(page);
+    const results = await testFormControls.testHelperTextAssociated(page, discovery);
+    await assert('helper-text-associated', () => {{
+        const status = results && typeof results.status === 'function' ? results.status() : 'fail';
+        const message = results && typeof results.getMessage === 'function' ? results.getMessage() : '';
+        return {{ status, message }};
+    }});
+}};
+'''
+    test_js_path = tmp_path / 'test.js'
+    test_js_path.write_text(test_js, encoding='utf-8')
+
+    screenshot_dir = Path('runs') / 'pytest_screenshots'
+    screenshot_dir.mkdir(parents=True, exist_ok=True)
+    screenshot_file = str(screenshot_dir / 'helper_text_associated_wrapper_checkbox_group.png')
+
+    result = node_bridge.run(html, str(test_js_path), screenshot_file)
+
+    assert 'testFunctionResult' in result, f"Runner failed or returned unexpected output: {result}"
+    assertions = result['testFunctionResult'].get('assertions', [])
+    found = next((assertion for assertion in assertions if assertion.get('name') == 'helper-text-associated'), None)
+
+    assert found is not None, f"No 'helper-text-associated' assertion in runner output: {result}"
+    assert found.get('status') == 'fail'
+
+    message = found.get('message') or ''
+    assert 'checkbox group "1. Which of these are programming languages?" has helper text "Choose every item that is a computer programming language." that is not programmatically associated' in message
+    assert 'text input "Python" has helper text' not in message
+
+
+def test_helper_text_associated_react_checkbox_sample_treats_question_text_as_group_label(tmp_path):
+    html = (Path(__file__).resolve().parent / 'fixtures' / 'checkbox_group_react_dark_sample.html').read_text(encoding='utf-8')
+
+    helper_path_js = json.dumps(FORM_CONTROLS_HELPER_PATH)
+
+    test_js = f'''
+const testFormControls = require({helper_path_js});
+module.exports.run = async ({{page, assert}}) => {{
+    const discovery = await testFormControls.discoverCheckboxes(page);
+    const results = await testFormControls.testHelperTextAssociated(page, discovery);
+    await assert('helper-text-associated', () => {{
+        const status = results && typeof results.status === 'function' ? results.status() : 'fail';
+        const message = results && typeof results.getMessage === 'function' ? results.getMessage() : '';
+        return {{ status, message }};
+    }});
+}};
+'''
+    test_js_path = tmp_path / 'test.js'
+    test_js_path.write_text(test_js, encoding='utf-8')
+
+    screenshot_dir = Path('runs') / 'pytest_screenshots'
+    screenshot_dir.mkdir(parents=True, exist_ok=True)
+    screenshot_file = str(screenshot_dir / 'helper_text_associated_react_checkbox_sample.png')
+
+    result = node_bridge.run(html, str(test_js_path), screenshot_file)
+
+    assert 'testFunctionResult' in result, f"Runner failed or returned unexpected output: {result}"
+    assertions = result['testFunctionResult'].get('assertions', [])
+    found = next((assertion for assertion in assertions if assertion.get('name') == 'helper-text-associated'), None)
+
+    assert found is not None, f"No 'helper-text-associated' assertion in runner output: {result}"
+    assert found.get('status') == 'fail'
+
+    message = found.get('message') or ''
+    assert 'checkbox group "Which of the following are statically typed languages?" has helper text "Statically typed languages perform type checking at compile-time rather than run-time." that is not programmatically associated' in message
+    assert 'checkbox group "Which languages are officially supported for Android app development?" has helper text' not in message
+    assert 'checkbox group "Select the languages primarily used for Web Development (Frontend or Backend):" has helper text' not in message
+    assert 'text input "Java" has helper text' not in message
+    assert 'text input "Python" has helper text' not in message
+    assert 'text input "Kotlin" has helper text' not in message
+    assert 'text input "PHP" has helper text' not in message
+
+
+def test_helper_text_associated_react_modern_checkbox_sample_strips_group_label_fragments(tmp_path):
+    html = (Path(__file__).resolve().parent / 'fixtures' / 'checkbox_group_react_modern_sample.html').read_text(encoding='utf-8')
+
+    helper_path_js = json.dumps(FORM_CONTROLS_HELPER_PATH)
+
+    test_js = f'''
+const testFormControls = require({helper_path_js});
+module.exports.run = async ({{page, assert}}) => {{
+    const discovery = await testFormControls.discoverCheckboxes(page);
+    const results = await testFormControls.testHelperTextAssociated(page, discovery);
+    await assert('helper-text-associated', () => {{
+        const status = results && typeof results.status === 'function' ? results.status() : 'fail';
+        const message = results && typeof results.getMessage === 'function' ? results.getMessage() : '';
+        return {{ status, message }};
+    }});
+}};
+'''
+    test_js_path = tmp_path / 'test.js'
+    test_js_path.write_text(test_js, encoding='utf-8')
+
+    screenshot_dir = Path('runs') / 'pytest_screenshots'
+    screenshot_dir.mkdir(parents=True, exist_ok=True)
+    screenshot_file = str(screenshot_dir / 'helper_text_associated_react_modern_checkbox_sample.png')
+
+    result = node_bridge.run(html, str(test_js_path), screenshot_file)
+
+    assert 'testFunctionResult' in result, f"Runner failed or returned unexpected output: {result}"
+    assertions = result['testFunctionResult'].get('assertions', [])
+    found = next((assertion for assertion in assertions if assertion.get('name') == 'helper-text-associated'), None)
+
+    assert found is not None, f"No 'helper-text-associated' assertion in runner output: {result}"
+    assert found.get('status') == 'fail'
+
+    message = found.get('message') or ''
+    assert 'checkbox group "1 . Which of the following are statically typed languages?" has helper text "Hint: These languages typically require you to declare the data type of a variable before using it." that is not programmatically associated' in message
+    assert 'checkbox group "2 . Which of these are commonly used for server-side web development?" has helper text' not in message
+    assert 'checkbox group "3 . Select the languages that were created before the year 2000:" has helper text' not in message
+    assert 'Which of the following are statically typed languages? Hint:' not in message
+    assert 'text input "C++" has helper text' not in message
+    assert 'text input "Node.js" has helper text' not in message

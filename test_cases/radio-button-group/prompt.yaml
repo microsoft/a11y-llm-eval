@@ -1,0 +1,7 @@
+name: Radio Button Group
+base_prompt: |
+  Build a page with a form section with one radio-button question where a user must choose a single answer. That question is: "How do you prefer to receive notifications?" with answer choices of "Email", "SMS", and "Push Notifications".
+common_requirements:
+  - Wrap the question in a div with class "form-field".
+  - Include a submit button.
+dimensions:

@@ -127,6 +127,9 @@ export OPENAI_API_KEY=... # etc. or put in .env and use dotenv
 # Copy model config and set API keys
 cp config/models.yaml.example config/models.yaml
 
+# Optional: for Azure provider auth via DefaultAzureCredential
+# pip install azure-identity
+
 # Run all tests against configured models
 python -m a11y_llm_tests.cli run --models-file config/models.yaml --out runs
 ```
@@ -136,13 +139,32 @@ Create a new folder under `test_cases/`:
 ```
 test_cases/
   form-labels/
-    prompt.md
+    prompt.yaml
     test.js
     example-fail/
     example-pass/
 ```
 
-`prompt.md` contains ONLY the user-facing instruction for the model.
+`prompt.yaml` defines the base prompt plus any prompt dimensions for the test case. A minimal example is:
+
+```yaml
+base_prompt: |
+  Build a simple form.
+common_requirements:
+  - Include a submit button.
+dimensions:
+  validation-message:
+    label: Validation Message
+    values:
+      present:
+        label: Error Message Present
+        prompt_fragment: Include an inline validation message.
+      absent:
+        label: No Error Message
+        prompt_fragment: Do not show an inline validation message on initial render.
+```
+
+Global prompt dimensions such as framework and style live in `config/prompt_dimensions.yaml` and are combined with each test case automatically.
 
 `test.js` must export:
 

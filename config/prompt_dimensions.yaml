@@ -1,0 +1,19 @@
+dimensions:
+  framework:
+    label: Framework
+    values:
+      vanilla-js:
+        label: Vanilla JS
+        prompt_fragment: Use plain HTML, CSS, and vanilla JavaScript.
+      react:
+        label: React
+        prompt_fragment: Use a React-style component structure, but still return a single standalone HTML document.
+  style:
+    label: Style
+    values:
+      dark:
+        label: Dark
+        prompt_fragment: Use a polished dark visual style.
+      modern:
+        label: Modern
+        prompt_fragment: Give the page a clean, modern product design.

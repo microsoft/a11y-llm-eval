@@ -1,0 +1,168 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Computer Languages Quiz</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+        }
+        .form-field {
+            margin-bottom: 2rem;
+            padding: 1.5rem;
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.75rem;
+            transition: all 0.2s ease;
+        }
+        .form-field:hover {
+            border-color: #cbd5e1;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        }
+        .help-text {
+            font-size: 0.875rem;
+            color: #64748b;
+            margin-top: 0.25rem;
+            margin-bottom: 1rem;
+        }
+        .checkbox-custom {
+            accent-color: #2563eb;
+            width: 1.15rem;
+            height: 1.15rem;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        const Quiz = () => {
+            const [selections, setSelections] = useState({
+                q1: [],
+                q2: [],
+                q3: []
+            });
+            const [submitted, setSubmitted] = useState(false);
+
+            const questions = [
+                {
+                    id: 'q1',
+                    text: "Which of the following are statically typed languages?",
+                    helpText: "Hint: These languages typically require you to declare the data type of a variable before using it.",
+                    options: ["C++", "Python", "Java", "Ruby"]
+                },
+                {
+                    id: 'q2',
+                    text: "Which of these are commonly used for server-side web development?",
+                    options: ["Node.js", "PHP", "CSS", "Python"]
+                },
+                {
+                    id: 'q3',
+                    text: "Select the languages that were created before the year 2000:",
+                    options: ["Swift", "C", "JavaScript", "Rust"]
+                }
+            ];
+
+            const handleToggle = (questionId, option) => {
+                setSelections(prev => {
+                    const current = prev[questionId];
+                    if (current.includes(option)) {
+                        return { ...prev, [questionId]: current.filter(item => item !== option) };
+                    } else {
+                        return { ...prev, [questionId]: [...current, option] };
+                    }
+                });
+            };
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                setSubmitted(true);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            };
+
+            return (
+                <div className="max-w-2xl mx-auto py-12 px-4">
+                    <header className="mb-10 text-center">
+                        <h1 className="text-3xl font-bold text-slate-900 mb-2">Language Proficiency Quiz</h1>
+                        <p className="text-slate-600">Test your knowledge of programming paradigms and history.</p>
+                    </header>
+
+                    {submitted ? (
+                        <div className="bg-blue-50 border border-blue-200 rounded-xl p-8 text-center animate-in fade-in duration-500">
+                            <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                            </div>
+                            <h2 className="text-2xl font-bold text-slate-900 mb-2">Quiz Submitted!</h2>
+                            <p className="text-slate-600 mb-6">Thank you for completing the assessment. Your responses have been recorded.</p>
+                            <button 
+                                onClick={() => { setSubmitted(false); setSelections({q1:[], q2:[], q3:[]}); }}
+                                className="text-blue-600 font-medium hover:underline"
+                            >
+                                Try Again
+                            </button>
+                        </div>
+                    ) : (
+                        <form onSubmit={handleSubmit}>
+                            {questions.map((q, idx) => (
+                                <div key={q.id} className="form-field">
+                                    <h3 className="text-lg font-semibold text-slate-800 mb-1">
+                                        {idx + 1}. {q.text}
+                                    </h3>
+                                    {q.helpText && <p className="help-text">{q.helpText}</p>}
+                                    
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+                                        {q.options.map(option => (
+                                            <label 
+                                                key={option} 
+                                                className={`flex items-center p-3 rounded-lg border cursor-pointer transition-colors ${
+                                                    selections[q.id].includes(option) 
+                                                    ? 'bg-blue-50 border-blue-200' 
+                                                    : 'bg-white border-slate-200 hover:bg-slate-50'
+                                                }`}
+                                            >
+                                                <input 
+                                                    type="checkbox"
+                                                    className="checkbox-custom mr-3"
+                                                    checked={selections[q.id].includes(option)}
+                                                    onChange={() => handleToggle(q.id, option)}
+                                                />
+                                                <span className="text-slate-700 font-medium">{option}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+
+                            <div className="flex justify-end mt-8">
+                                <button 
+                                    type="submit"
+                                    className="px-8 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all transform active:scale-95"
+                                >
+                                    Submit Answers
+                                </button>
+                            </div>
+                        </form>
+                    )}
+
+                    <footer className="mt-16 text-center text-slate-400 text-sm">
+                        &copy; 2023 DevQuiz Systems. Built with React.
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<Quiz />);
+    </script>
+</body>
+</html>

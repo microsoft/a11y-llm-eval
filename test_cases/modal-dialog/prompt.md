@@ -1,1 +1,0 @@
-Create an example of a modal dialog component. It is closed by default, and the button to open it has a `trigger` class.

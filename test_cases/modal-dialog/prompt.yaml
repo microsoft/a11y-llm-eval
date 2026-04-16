@@ -1,0 +1,7 @@
+name: Modal Dialog
+base_prompt: |
+  Build a modal dialog for an image preview page. The dialog will display when the user clicks the delete button under the image, asking them to confirm that they want to delete the image from their library.
+common_requirements:
+  - The dialog MUST be closed by default.
+  - The control that opens the dialog MUST have a class of "trigger".
+dimensions:

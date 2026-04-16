@@ -1,5 +1,6 @@
 """HTML reporting for evaluation runs."""
 from pathlib import Path
+import re
 import orjson
 from jinja2 import Template
 from collections import OrderedDict
@@ -294,6 +295,9 @@ footer {
 footer a { color: var(--link-text); }
 details ul { margin: 0.5rem 0 0.25rem; padding-left: 1.15rem; }
 details li { margin-bottom: 0.35rem; }
+.assertion-message-block { margin-top: 0.2rem; }
+.assertion-message-list { margin-top: 0.35rem; }
+.assertion-message-list li { margin-bottom: 0.2rem; }
 @media (max-width: 768px) {
   header, main, footer { padding: 0 1rem; }
   header h1 { font-size: 1.75rem; }
@@ -918,6 +922,17 @@ details li { margin-bottom: 0.35rem; }
 <section>
   <details>
     <summary><h3>{{ test_name }}</h3></summary>
+    {% if test_data.base_test_name %}
+    <p><strong>Base test:</strong> {{ test_data.base_test_name }}</p>
+    {% endif %}
+    {% if test_data.prompt_dimensions %}
+    <p>
+      <strong>Prompt dimensions:</strong>
+      {% for dim in test_data.prompt_dimensions %}
+        {{ dim.label }}: {{ dim.value_label }}{% if not loop.last %} | {% endif %}
+      {% endfor %}
+    </p>
+    {% endif %}
     {% set assertion_names = assertion_names_by_test.get(test_name) %}
     {% if assertion_names %}
     <div class="filters assertion-filters" role="region" aria-label="Filters for assertions in {{ test_name }} test case">
@@ -1031,7 +1046,22 @@ details li { margin-bottom: 0.35rem; }
                   <span role="img" aria-label="Pass">✅</span>:
                 {% endif %}
                 {{ a.name|e }} ({{ a.type if a.type else 'R' }}): {{ a.status|e }}
-                {% if a.message %} - {{ a.message|e }}{% endif %}
+                {% if a.message_parts %}
+                  {% if a.message_parts['title'] %}
+                  - <span>{{ a.message_parts['title']|e }}</span>
+                  {% else %}
+                  -
+                  {% endif %}
+                  <div class="assertion-message-block">
+                    <ul class="assertion-message-list">
+                      {% for item in a.message_parts['items'] %}
+                        <li>{{ item|e }}</li>
+                      {% endfor %}
+                    </ul>
+                  </div>
+                {% elif a.message %}
+                  - {{ a.message|e }}
+                {% endif %}
               </li>
               {% endfor %}
             </ul>
@@ -1417,6 +1447,139 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
 
   all_results = data.get("results", []) or []
 
+  def _split_message_items(text: str) -> list[str]:
+    items = []
+    current = []
+    quote_char = None
+    bracket_depth = 0
+
+    for char in text:
+      if quote_char:
+        current.append(char)
+        if char == quote_char:
+          quote_char = None
+        continue
+
+      if char in {'"', "'"}:
+        quote_char = char
+        current.append(char)
+        continue
+
+      if char in "([{":
+        bracket_depth += 1
+        current.append(char)
+        continue
+
+      if char in ")]}":
+        if bracket_depth > 0:
+          bracket_depth -= 1
+        current.append(char)
+        continue
+
+      if char == "," and bracket_depth == 0:
+        item = "".join(current).strip()
+        if item:
+          items.append(item)
+        current = []
+        continue
+
+      current.append(char)
+
+    tail = "".join(current).strip()
+    if tail:
+      items.append(tail)
+
+    return items
+
+  def _split_repeated_entity_items(text: str) -> list[str]:
+    pattern = re.compile(r'(?i)\b(?:text input|checkbox group|radio group|checkbox|radio|input)\b\s')
+    matches = list(pattern.finditer(text))
+    if len(matches) < 2:
+      return []
+
+    items = []
+    for index, match in enumerate(matches):
+      start = match.start()
+      end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+      item = text[start:end].strip()
+      if item:
+        items.append(item)
+    return items
+
+  def _split_message_title(message: str) -> tuple[str, str] | None:
+    current = []
+    quote_char = None
+    bracket_depth = 0
+
+    for index, char in enumerate(message):
+      if quote_char:
+        if char == quote_char:
+          quote_char = None
+        continue
+
+      if char in {'"', "'"}:
+        quote_char = char
+        continue
+
+      if char in "([{" :
+        bracket_depth += 1
+        continue
+
+      if char in ")]}":
+        if bracket_depth > 0:
+          bracket_depth -= 1
+        continue
+
+      if char == ":" and bracket_depth == 0:
+        title = message[:index].strip()
+        remainder = message[index + 1:].strip()
+        if title and remainder:
+          return title, remainder
+        return None
+
+    return None
+
+  def _format_assertion_message(message: str | None) -> dict | None:
+    if not message:
+      return None
+
+    message = str(message).strip()
+    if not message:
+      return None
+
+    split_message = _split_message_title(message)
+    if not split_message:
+      repeated_items = _split_repeated_entity_items(message)
+      if repeated_items:
+        return {
+          "title": None,
+          "items": repeated_items,
+        }
+      return None
+
+    title, remainder = split_message
+
+    items = [part.strip() for part in _split_message_items(remainder) if part.strip()]
+    if len(items) <= 1:
+      repeated_items = _split_repeated_entity_items(remainder)
+      if repeated_items:
+        items = repeated_items
+    if not items:
+      return None
+
+    normalized_items = [re.sub(r"^and\s+", "", item, flags=re.IGNORECASE) for item in items]
+    return {
+      "title": f"{title}:" if title else None,
+      "items": normalized_items,
+    }
+
+  for result in all_results:
+    test_function = result.get("test_function") or {}
+    assertions = test_function.get("assertions") or []
+    for assertion in assertions:
+      if isinstance(assertion, dict):
+        assertion["message_parts"] = _format_assertion_message(assertion.get("message"))
+
   def _variant_id(r: dict) -> str:
     return (r.get("prompt_variant_id") or "control")
 
@@ -1429,10 +1592,16 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
   control_aggregates = [a for a in all_aggregates if (a.get("prompt_variant_id") or "control") == "control"]
 
   prompt_variants_meta = meta_block.get("prompt_variants") or []
+  prompt_cases_meta = meta_block.get("prompt_cases") or []
   prompt_variant_meta_by_id = {}
   for pv in prompt_variants_meta:
     if isinstance(pv, dict) and pv.get("id"):
       prompt_variant_meta_by_id[pv.get("id")] = pv
+
+  prompt_case_meta_by_test_name = {}
+  for prompt_case in prompt_cases_meta:
+    if isinstance(prompt_case, dict) and prompt_case.get("test_name"):
+      prompt_case_meta_by_test_name[prompt_case.get("test_name")] = prompt_case
 
   prompt_variant_names = {"control": "Control"}
   for pv in prompt_variants_meta:
@@ -1676,7 +1845,14 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
       return (vid != "control", vid, si is None, si or 0)
 
     samples_sorted = sorted(samples, key=_sample_sort_key)
-    test_entry = grouped_results.setdefault(test_name, {"prompt": prompts_map.get(test_name), "models": []})
+    prompt_case_meta = prompt_case_meta_by_test_name.get(test_name) or {}
+    sample_meta = samples_sorted[0] if samples_sorted else {}
+    test_entry = grouped_results.setdefault(test_name, {
+      "prompt": prompts_map.get(test_name),
+      "base_test_name": prompt_case_meta.get("base_test_name") or sample_meta.get("base_test_name"),
+      "prompt_dimensions": prompt_case_meta.get("prompt_dimensions") or sample_meta.get("prompt_dimensions") or [],
+      "models": [],
+    })
 
     aggregates_by_variant = {}
     for pv in (prompt_variants_meta or []):

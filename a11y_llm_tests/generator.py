@@ -27,7 +27,7 @@ RETRY_MAX_DELAY = 60.0  # seconds
 TRUNCATION_RETRY_MAX = 1
 
 # Default output budget. Many Anthropic/Claude routes default to ~4096 if not explicitly set.
-DEFAULT_MAX_TOKENS = 16384
+DEFAULT_MAX_TOKENS = 32768
 
 _PROVIDER_ENV_DEBUG_VARS: dict[str, tuple[str, ...]] = {
     "azure": ("AZURE_API_BASE", "AZURE_API_KEY", "AZURE_API_VERSION"),
@@ -36,6 +36,18 @@ _PROVIDER_ENV_DEBUG_VARS: dict[str, tuple[str, ...]] = {
     "vertex_ai": ("VERTEXAI_PROJECT", "VERTEXAI_LOCATION", "GOOGLE_APPLICATION_CREDENTIALS"),
     "openai": ("OPENAI_API_KEY",),
 }
+
+
+def _load_required_env(env_name: str) -> str:
+    value = os.environ.get(env_name)
+    if value:
+        return value
+    raise RuntimeError(f"Required environment variable is not set: {env_name}")
+
+
+def _load_optional_env(env_name: str) -> Optional[str]:
+    value = os.environ.get(env_name)
+    return value if value else None
 
 
 def _is_anthropic_model(model: str) -> bool:
@@ -122,6 +134,55 @@ def _format_provider_auth_debug(model: str) -> str:
     )
     return f"provider={provider}; auth_env[{env_status}]"
 
+
+def _build_provider_completion_kwargs(model: str, provider_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    provider = _get_model_provider(model)
+    config = provider_config or {}
+    auth_cfg = config.get("auth") if isinstance(config, dict) else None
+    if not isinstance(auth_cfg, dict):
+        return {}
+
+    mode = str(auth_cfg.get("mode") or "").strip().lower()
+    if not mode or mode == "env":
+        return {}
+
+    if mode != "default_azure_credential":
+        raise RuntimeError(f"Unsupported auth mode for provider '{provider}': {mode}")
+
+    if provider not in {"azure", "azure_ai"}:
+        raise RuntimeError(
+            f"auth.mode=default_azure_credential is only supported for Azure providers, got '{provider}'"
+        )
+
+    try:
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+    except ImportError as exc:
+        raise RuntimeError(
+            "Model provider is configured with auth.mode=default_azure_credential, but azure-identity is not installed"
+        ) from exc
+
+    if provider == "azure_ai":
+        default_api_base_env = "AZURE_AI_API_BASE"
+        default_api_version_env = "AZURE_AI_API_VERSION"
+    else:
+        default_api_base_env = "AZURE_API_BASE"
+        default_api_version_env = "AZURE_API_VERSION"
+
+    api_base_env = str(auth_cfg.get("api_base_env") or default_api_base_env)
+    api_version_env = str(auth_cfg.get("api_version_env") or default_api_version_env)
+    scope = str(auth_cfg.get("scope") or "https://cognitiveservices.azure.com/.default")
+
+    credential = DefaultAzureCredential()
+    token_provider = get_bearer_token_provider(credential, scope)
+    kwargs = {
+        "api_base": _load_required_env(api_base_env),
+        "azure_ad_token_provider": token_provider,
+    }
+    api_version = _load_optional_env(api_version_env)
+    if api_version is not None:
+        kwargs["api_version"] = api_version
+    return kwargs
+
 DEFAULT_SYSTEM_PROMPT = (
     "You are generating a single standalone HTML document. "
     "Do NOT wrap output in markdown fences. Include <head> and <body>. "
@@ -198,6 +259,246 @@ def _meta_path(cache_file: Path) -> Path:
     return cache_file.with_suffix(cache_file.suffix + ".meta.json")
 
 
+def _cache_artifacts(model: str, user_prompt: str, iteration: int, seed: Optional[int]) -> tuple[str, Path, Path]:
+    prompt_hash_value = compute_prompt_hash(user_prompt)
+    seed_part = f"_s{seed}" if seed is not None else ""
+    iteration_part = f"_i{iteration}"
+    cache_file = CACHE_DIR / f"{model}_{prompt_hash_value}{seed_part}{iteration_part}.html"
+    return prompt_hash_value, cache_file, _meta_path(cache_file)
+
+
+def _build_generation_meta(
+    *,
+    cached: bool,
+    latency_s: float,
+    prompt_hash_value: str,
+    model_display_name: Optional[str],
+    tokens_in: Optional[int] = None,
+    tokens_out: Optional[int] = None,
+    total_tokens: Optional[int] = None,
+    cost_usd: Optional[float] = None,
+    finish_reason: Optional[str] = None,
+    stop_reason: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    seed: Optional[int] = None,
+    temperature: Optional[float] = None,
+    system_prompt: Optional[str] = None,
+    custom_instructions: Optional[str] = None,
+    effective_system_prompt: Optional[str] = None,
+) -> Dict[str, Any]:
+    return {
+        "cached": cached,
+        "latency_s": latency_s,
+        "prompt_hash": prompt_hash_value,
+        "model_display_name": model_display_name,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "total_tokens": total_tokens,
+        "cost_usd": cost_usd,
+        "finish_reason": finish_reason,
+        "stop_reason": stop_reason,
+        "max_tokens": max_tokens,
+        "seed": seed,
+        "temperature": temperature,
+        "system_prompt": system_prompt,
+        "custom_instructions": custom_instructions,
+        "effective_system_prompt": effective_system_prompt,
+    }
+
+
+def _load_cached_generation(
+    *,
+    cache_file: Path,
+    meta_file: Path,
+    prompt_hash_value: str,
+    temperature: Optional[float],
+    seed: Optional[int],
+    model_display_name: Optional[str],
+    base_system_prompt: str,
+    custom_instructions: Optional[str],
+    effective_system_prompt: str,
+) -> tuple[Optional[str], Optional[Dict[str, Any]], Optional[str]]:
+    cached_html, reason = read_and_validate_cached_html(cache_file)
+    if cached_html is None:
+        return None, None, reason
+
+    meta: Dict[str, Any] = _build_generation_meta(
+        cached=True,
+        latency_s=0.0,
+        prompt_hash_value=prompt_hash_value,
+        model_display_name=model_display_name,
+        seed=seed,
+        temperature=temperature,
+        system_prompt=base_system_prompt,
+        custom_instructions=custom_instructions,
+        effective_system_prompt=effective_system_prompt,
+    )
+    if meta_file.exists():
+        try:
+            loaded = json.loads(meta_file.read_text(encoding="utf-8"))
+            meta.update({
+                k: loaded.get(k) for k in [
+                    "tokens_in",
+                    "tokens_out",
+                    "total_tokens",
+                    "cost_usd",
+                    "system_prompt",
+                    "custom_instructions",
+                    "effective_system_prompt",
+                ]
+            })
+        except Exception:
+            pass
+    return cached_html, meta, None
+
+
+def _effective_max_tokens_for_model(model: str) -> Optional[int]:
+    return DEFAULT_MAX_TOKENS if _is_anthropic_model(model) else None
+
+
+def _build_completion_kwargs(
+    *,
+    model: str,
+    messages: Any,
+    temperature: Optional[float],
+    seed: Optional[int],
+    effective_max_tokens: Optional[int],
+    provider_config: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    kwargs: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "seed": seed,
+    }
+    if temperature is not None and not _is_codex_model(model):
+        kwargs["temperature"] = temperature
+    if effective_max_tokens is not None:
+        kwargs["max_tokens"] = effective_max_tokens
+    kwargs.update(_build_provider_completion_kwargs(model, provider_config))
+    return kwargs
+
+
+def _extract_finish_and_stop_reason(resp) -> tuple[Optional[str], Optional[str]]:
+    """Best-effort extraction of finish/stop reasons across providers."""
+    finish_reason = None
+    stop_reason = None
+    try:
+        choice0 = resp.choices[0] if getattr(resp, "choices", None) else None
+        if isinstance(choice0, dict):
+            finish_reason = choice0.get("finish_reason")
+            stop_reason = choice0.get("stop_reason") or choice0.get("stopReason")
+        else:
+            finish_reason = getattr(choice0, "finish_reason", None)
+            stop_reason = getattr(choice0, "stop_reason", None) or getattr(choice0, "stopReason", None)
+    except Exception:
+        pass
+    if stop_reason is None:
+        stop_reason = getattr(resp, "stop_reason", None) or getattr(resp, "stopReason", None)
+    return finish_reason, stop_reason
+
+
+def _response_to_generation_result(
+    *,
+    resp,
+    model: str,
+    elapsed: float,
+    prompt_hash_value: str,
+    temperature: Optional[float],
+    seed: Optional[int],
+    model_display_name: Optional[str],
+    base_system_prompt: str,
+    custom_instructions: Optional[str],
+    effective_system_prompt: str,
+    effective_max_tokens: Optional[int],
+) -> tuple[str, Dict[str, Any]]:
+    finish_reason, stop_reason = _extract_finish_and_stop_reason(resp)
+
+    usage = getattr(resp, "usage", None) or getattr(resp, "_hidden_params", {}).get("usage") or {}
+    tokens_in = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+    tokens_out = usage.get("completion_tokens") if isinstance(usage, dict) else None
+    total_tokens = usage.get("total_tokens") if isinstance(usage, dict) else None
+
+    limit_hit = False
+    if isinstance(finish_reason, str) and finish_reason.lower() == "length":
+        limit_hit = True
+    if isinstance(stop_reason, str) and stop_reason.lower() in {"max_tokens", "length", "token_limit", "tokens"}:
+        limit_hit = True
+    if effective_max_tokens is not None and tokens_out is not None and tokens_out >= (effective_max_tokens - 1):
+        limit_hit = True
+    if limit_hit:
+        raise OutputTokenLimitHit(
+            model=model,
+            max_tokens=effective_max_tokens,
+            finish_reason=finish_reason,
+            stop_reason=stop_reason,
+            tokens_out=tokens_out,
+        )
+
+    cost_usd = getattr(resp, "response_cost", None)
+    if cost_usd is None:
+        hidden = getattr(resp, "_hidden_params", {})
+        if isinstance(hidden, dict):
+            cost_usd = hidden.get("response_cost")
+
+    raw = resp.choices[0].message.content
+    html = clean_generation(raw)
+    meta = _build_generation_meta(
+        cached=False,
+        latency_s=elapsed,
+        prompt_hash_value=prompt_hash_value,
+        model_display_name=model_display_name,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        total_tokens=total_tokens,
+        cost_usd=cost_usd,
+        finish_reason=finish_reason,
+        stop_reason=stop_reason,
+        max_tokens=effective_max_tokens,
+        seed=seed,
+        temperature=temperature,
+        system_prompt=base_system_prompt,
+        custom_instructions=custom_instructions,
+        effective_system_prompt=effective_system_prompt,
+    )
+    return html, meta
+
+
+def _write_generation_cache(
+    *,
+    cache_file: Path,
+    meta_file: Path,
+    html: str,
+    model: str,
+    model_display_name: Optional[str],
+    prompt_hash_value: str,
+    meta: Dict[str, Any],
+) -> None:
+    cache_file.parent.mkdir(exist_ok=True, parents=True)
+    html_bytes = html.encode("utf-8")
+    atomic_write_bytes(cache_file, html_bytes)
+    write_sha256_sidecar(cache_file, html_bytes)
+
+    meta_payload = {
+        "model": model,
+        "model_display_name": model_display_name,
+        "prompt_hash": prompt_hash_value,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "tokens_in": meta.get("tokens_in"),
+        "tokens_out": meta.get("tokens_out"),
+        "total_tokens": meta.get("total_tokens"),
+        "cost_usd": meta.get("cost_usd"),
+        "seed": meta.get("seed"),
+        "temperature": meta.get("temperature"),
+        "system_prompt": meta.get("system_prompt"),
+        "custom_instructions": meta.get("custom_instructions"),
+        "effective_system_prompt": meta.get("effective_system_prompt"),
+    }
+    try:
+        atomic_write_text(meta_file, json.dumps(meta_payload, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _invalidate_cache_entry(cache_file: Path) -> None:
     """Best-effort removal of a corrupted cache entry (html + sidecars)."""
     for p in [
@@ -212,6 +513,185 @@ def _invalidate_cache_entry(cache_file: Path) -> None:
             pass
 
 
+def generate_html_batch_with_meta(
+    model: str,
+    requests: list[Dict[str, Any]],
+    temperature: Optional[float] = None,
+    seed: Optional[int] = None,
+    disable_cache: bool = False,
+    debug_truncated_cache: bool = False,
+    model_display_name: Optional[str] = None,
+    provider_config: Optional[Dict[str, Any]] = None,
+) -> list[Dict[str, Any]]:
+    """Generate multiple prompts for the same model using LiteLLM batch completion.
+
+    Each request must include `user_prompt` and `iteration`. Cache hits are returned
+    immediately and only cache misses are submitted through LiteLLM batching.
+    Individual item failures fall back to `generate_html_with_meta`.
+    """
+    if not requests:
+        return []
+
+    base_system_prompt = get_base_system_prompt()
+    custom_instructions = get_custom_instructions()
+    effective_system_prompt = get_effective_system_prompt()
+    effective_max_tokens = _effective_max_tokens_for_model(model)
+    litellm.drop_params = True
+    model_debug_label = _format_model_debug_label(model, model_display_name)
+    provider_auth_debug = _format_provider_auth_debug(model)
+
+    results: list[Optional[Dict[str, Any]]] = [None] * len(requests)
+    misses: list[Dict[str, Any]] = []
+
+    for index, request in enumerate(requests):
+        user_prompt = request["user_prompt"]
+        iteration = int(request["iteration"])
+        request_seed = request.get("seed", seed)
+        request_temperature = request.get("temperature", temperature)
+        request_disable_cache = bool(request.get("disable_cache", disable_cache))
+        request_debug_truncated_cache = bool(request.get("debug_truncated_cache", debug_truncated_cache))
+        prompt_hash_value, cache_file, meta_file = _cache_artifacts(model, user_prompt, iteration, request_seed)
+
+        truncated_cache_files: list[str] = []
+        truncated_cache_reasons: dict[str, str] = {}
+        if not request_disable_cache and cache_file.exists():
+            cached_html, cached_meta, reason = _load_cached_generation(
+                cache_file=cache_file,
+                meta_file=meta_file,
+                prompt_hash_value=prompt_hash_value,
+                temperature=request_temperature,
+                seed=request_seed,
+                model_display_name=model_display_name,
+                base_system_prompt=base_system_prompt,
+                custom_instructions=custom_instructions,
+                effective_system_prompt=effective_system_prompt,
+            )
+            if cached_html is not None and cached_meta is not None:
+                results[index] = {"html": cached_html, "meta": cached_meta}
+                continue
+            if request_debug_truncated_cache:
+                truncated_cache_files.append(str(cache_file))
+                truncated_cache_reasons[str(cache_file)] = reason or "invalid"
+            else:
+                _invalidate_cache_entry(cache_file)
+
+        misses.append({
+            "index": index,
+            "user_prompt": user_prompt,
+            "iteration": iteration,
+            "seed": request_seed,
+            "temperature": request_temperature,
+            "disable_cache": request_disable_cache,
+            "debug_truncated_cache": request_debug_truncated_cache,
+            "prompt_hash": prompt_hash_value,
+            "cache_file": cache_file,
+            "meta_file": meta_file,
+            "truncated_cache_files": truncated_cache_files,
+            "truncated_cache_reasons": truncated_cache_reasons,
+        })
+
+    if not misses:
+        return [result for result in results if result is not None]
+
+    def _fallback_single(item: Dict[str, Any]) -> Dict[str, Any]:
+        html, meta = generate_html_with_meta(
+            model=model,
+            user_prompt=item["user_prompt"],
+            iteration=item["iteration"],
+            temperature=item["temperature"],
+            seed=item["seed"],
+            disable_cache=item["disable_cache"],
+            debug_truncated_cache=item["debug_truncated_cache"],
+            model_display_name=model_display_name,
+            provider_config=provider_config,
+        )
+        return {"html": html, "meta": meta}
+
+    print(
+        f"Generating HTML batch with model={model_debug_label}, temp={temperature}, seed={seed} "
+        f"({provider_auth_debug})..."
+    )
+
+    batch_messages = [
+        [
+            {"role": "system", "content": effective_system_prompt},
+            {"role": "user", "content": item["user_prompt"]},
+        ]
+        for item in misses
+    ]
+    batch_kwargs = _build_completion_kwargs(
+        model=model,
+        messages=batch_messages,
+        temperature=temperature,
+        seed=seed,
+        effective_max_tokens=effective_max_tokens,
+        provider_config=provider_config,
+    )
+    batch_kwargs["max_workers"] = min(100, len(misses))
+
+    batch_start = time.time()
+    try:
+        batch_responses = litellm.batch_completion(**batch_kwargs)
+    except Exception:
+        batch_responses = None
+    batch_elapsed = time.time() - batch_start
+
+    if not isinstance(batch_responses, list) or len(batch_responses) != len(misses):
+        for item in misses:
+            results[item["index"]] = _fallback_single(item)
+        return [result for result in results if result is not None]
+
+    for item, resp in zip(misses, batch_responses):
+        if isinstance(resp, Exception):
+            results[item["index"]] = _fallback_single(item)
+            continue
+
+        try:
+            html, meta = _response_to_generation_result(
+                resp=resp,
+                model=model,
+                elapsed=batch_elapsed,
+                prompt_hash_value=item["prompt_hash"],
+                temperature=item["temperature"],
+                seed=item["seed"],
+                model_display_name=model_display_name,
+                base_system_prompt=base_system_prompt,
+                custom_instructions=custom_instructions,
+                effective_system_prompt=effective_system_prompt,
+                effective_max_tokens=effective_max_tokens,
+            )
+        except OutputTokenLimitHit:
+            raise
+        except Exception:
+            results[item["index"]] = _fallback_single(item)
+            continue
+
+        if not is_probably_complete_html(html):
+            results[item["index"]] = _fallback_single(item)
+            continue
+
+        cacheable = bool(html) and is_probably_complete_html(html)
+        should_write_cache = cacheable and not (
+            item["debug_truncated_cache"] and item["truncated_cache_files"]
+        )
+        if should_write_cache:
+            _write_generation_cache(
+                cache_file=item["cache_file"],
+                meta_file=item["meta_file"],
+                html=html,
+                model=model,
+                model_display_name=model_display_name,
+                prompt_hash_value=item["prompt_hash"],
+                meta=meta,
+            )
+        if item["truncated_cache_files"]:
+            meta["truncated_cache_files"] = item["truncated_cache_files"]
+            meta["truncated_cache_reasons"] = item["truncated_cache_reasons"]
+        results[item["index"]] = {"html": html, "meta": meta}
+
+    return [result for result in results if result is not None]
+
+
 def generate_html_with_meta(
     model: str,
     user_prompt: str,
@@ -221,6 +701,7 @@ def generate_html_with_meta(
     disable_cache: bool = False,
     debug_truncated_cache: bool = False,
     model_display_name: Optional[str] = None,
+    provider_config: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Generate (or load cached) HTML plus metadata including token usage & cost.
 
@@ -239,51 +720,24 @@ def generate_html_with_meta(
     base_system_prompt = get_base_system_prompt()
     custom_instructions = get_custom_instructions()
     effective_system_prompt = get_effective_system_prompt()
-    h = compute_prompt_hash(user_prompt)
-    # Incorporate seed into cache identity for sampling diversity
-    seed_part = f"_s{seed}" if seed is not None else ""
-    iteration_part = f"_i{iteration}"
-    cache_file = CACHE_DIR / f"{model}_{h}{seed_part}{iteration_part}.html"
-    meta_file = _meta_path(cache_file)
+    h, cache_file, meta_file = _cache_artifacts(model, user_prompt, iteration, seed)
 
     truncated_cache_files: list[str] = []
     truncated_cache_reasons: dict[str, str] = {}
     if not disable_cache and cache_file.exists():
-        cached_html, reason = read_and_validate_cached_html(cache_file)
-        if cached_html is not None:
-            html = cached_html
-            meta: Dict[str, Any] = {
-                "cached": True,
-                "latency_s": 0.0,
-                "prompt_hash": h,
-                "model_display_name": model_display_name,
-                "tokens_in": None,
-                "tokens_out": None,
-                "total_tokens": None,
-                "cost_usd": None,
-                "seed": seed,
-                "temperature": temperature,
-                "system_prompt": base_system_prompt,
-                "custom_instructions": custom_instructions,
-                "effective_system_prompt": effective_system_prompt,
-            }
-            if meta_file.exists():
-                try:
-                    loaded = json.loads(meta_file.read_text(encoding="utf-8"))
-                    meta.update({
-                        k: loaded.get(k) for k in [
-                            "tokens_in",
-                            "tokens_out",
-                            "total_tokens",
-                            "cost_usd",
-                            "system_prompt",
-                            "custom_instructions",
-                            "effective_system_prompt",
-                        ]
-                    })
-                except Exception:
-                    pass  # ignore malformed meta
-            return html, meta
+        cached_html, cached_meta, reason = _load_cached_generation(
+            cache_file=cache_file,
+            meta_file=meta_file,
+            prompt_hash_value=h,
+            temperature=temperature,
+            seed=seed,
+            model_display_name=model_display_name,
+            base_system_prompt=base_system_prompt,
+            custom_instructions=custom_instructions,
+            effective_system_prompt=effective_system_prompt,
+        )
+        if cached_html is not None and cached_meta is not None:
+            return cached_html, cached_meta
 
         # Corrupted/partial cache entry; either invalidate (default) or record for debug.
         if debug_truncated_cache:
@@ -301,29 +755,7 @@ def generate_html_with_meta(
         f"({provider_auth_debug})..."
     )
 
-    # Only set a default output token budget for Anthropic/Claude.
-    # Other providers have their own defaults/limits; passing a large max_tokens
-    # everywhere can change behavior unexpectedly.
-    effective_max_tokens: Optional[int] = DEFAULT_MAX_TOKENS if _is_anthropic_model(model) else None
-
-    def _extract_finish_and_stop_reason(resp) -> tuple[Optional[str], Optional[str]]:
-        """Best-effort extraction of finish/stop reasons across providers."""
-        finish_reason = None
-        stop_reason = None
-        try:
-            choice0 = resp.choices[0] if getattr(resp, "choices", None) else None
-            if isinstance(choice0, dict):
-                finish_reason = choice0.get("finish_reason")
-                stop_reason = choice0.get("stop_reason") or choice0.get("stopReason")
-            else:
-                finish_reason = getattr(choice0, "finish_reason", None)
-                stop_reason = getattr(choice0, "stop_reason", None) or getattr(choice0, "stopReason", None)
-        except Exception:
-            pass
-        # Some providers attach stop_reason at the top level.
-        if stop_reason is None:
-            stop_reason = getattr(resp, "stop_reason", None) or getattr(resp, "stopReason", None)
-        return finish_reason, stop_reason
+    effective_max_tokens = _effective_max_tokens_for_model(model)
 
     def _call_litellm_with_retries():
         resp = None
@@ -331,17 +763,19 @@ def generate_html_with_meta(
         for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
             try:
                 kwargs: Dict[str, Any] = {
-                    "model": model,
                     "messages": [
                         {"role": "system", "content": effective_system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    "seed": seed,
                 }
-                if temperature is not None and not _is_codex_model(model):
-                    kwargs["temperature"] = temperature
-                if effective_max_tokens is not None:
-                    kwargs["max_tokens"] = effective_max_tokens
+                kwargs = _build_completion_kwargs(
+                    model=model,
+                    messages=kwargs["messages"],
+                    temperature=temperature,
+                    seed=seed,
+                    effective_max_tokens=effective_max_tokens,
+                    provider_config=provider_config,
+                )
 
                 resp = litellm.completion(**kwargs)
                 if resp and getattr(resp, "choices", None) and len(resp.choices) > 0:
@@ -368,48 +802,33 @@ def generate_html_with_meta(
 
     resp = None
     html = None
-    tokens_in = tokens_out = total_tokens = None
-    cost_usd = None
-    raw = None
-    finish_reason = None
-    stop_reason = None
+    meta: Dict[str, Any] = _build_generation_meta(
+        cached=False,
+        latency_s=0.0,
+        prompt_hash_value=h,
+        model_display_name=model_display_name,
+        seed=seed,
+        temperature=temperature,
+        system_prompt=base_system_prompt,
+        custom_instructions=custom_instructions,
+        effective_system_prompt=effective_system_prompt,
+    )
 
     for trunc_attempt in range(TRUNCATION_RETRY_MAX + 1):
         resp = _call_litellm_with_retries()
-
-        finish_reason, stop_reason = _extract_finish_and_stop_reason(resp)
-
-        usage = getattr(resp, "usage", None) or getattr(resp, "_hidden_params", {}).get("usage") or {}
-        tokens_in = usage.get("prompt_tokens") if isinstance(usage, dict) else None
-        tokens_out = usage.get("completion_tokens") if isinstance(usage, dict) else None
-        total_tokens = usage.get("total_tokens") if isinstance(usage, dict) else None
-
-        # Exit fast if we hit the provider output limit to avoid spending on additional generations.
-        limit_hit = False
-        if isinstance(finish_reason, str) and finish_reason.lower() == "length":
-            limit_hit = True
-        if isinstance(stop_reason, str) and stop_reason.lower() in {"max_tokens", "length", "token_limit", "tokens"}:
-            limit_hit = True
-        if effective_max_tokens is not None and tokens_out is not None and tokens_out >= (effective_max_tokens - 1):
-            # Heuristic for providers that don't report finish_reason reliably.
-            limit_hit = True
-        if limit_hit:
-            raise OutputTokenLimitHit(
-                model=model,
-                max_tokens=effective_max_tokens,
-                finish_reason=finish_reason,
-                stop_reason=stop_reason,
-                tokens_out=tokens_out,
-            )
-
-        cost_usd = getattr(resp, "response_cost", None)
-        if cost_usd is None:
-            hidden = getattr(resp, "_hidden_params", {})
-            if isinstance(hidden, dict):
-                cost_usd = hidden.get("response_cost")
-
-        raw = resp.choices[0].message.content
-        html = clean_generation(raw)
+        html, meta = _response_to_generation_result(
+            resp=resp,
+            model=model,
+            elapsed=0.0,
+            prompt_hash_value=h,
+            temperature=temperature,
+            seed=seed,
+            model_display_name=model_display_name,
+            base_system_prompt=base_system_prompt,
+            custom_instructions=custom_instructions,
+            effective_system_prompt=effective_system_prompt,
+            effective_max_tokens=effective_max_tokens,
+        )
 
         if is_probably_complete_html(html):
             break
@@ -422,50 +841,18 @@ def generate_html_with_meta(
     cacheable = bool(html) and is_probably_complete_html(html)
     # In debug mode, preserve truncated cache files for inspection (don't overwrite them).
     should_write_cache = cacheable and not (debug_truncated_cache and truncated_cache_files)
+    meta["latency_s"] = elapsed
     if should_write_cache:
-        cache_file.parent.mkdir(exist_ok=True, parents=True)
-        html_bytes = html.encode("utf-8")
-        atomic_write_bytes(cache_file, html_bytes)
-        write_sha256_sidecar(cache_file, html_bytes)
+        _write_generation_cache(
+            cache_file=cache_file,
+            meta_file=meta_file,
+            html=html,
+            model=model,
+            model_display_name=model_display_name,
+            prompt_hash_value=h,
+            meta=meta,
+        )
 
-        meta_payload = {
-            "model": model,
-            "model_display_name": model_display_name,
-            "prompt_hash": h,
-            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "tokens_in": tokens_in,
-            "tokens_out": tokens_out,
-            "total_tokens": total_tokens,
-            "cost_usd": cost_usd,
-            "seed": seed,
-            "temperature": temperature,
-            "system_prompt": base_system_prompt,
-            "custom_instructions": custom_instructions,
-            "effective_system_prompt": effective_system_prompt,
-        }
-        try:
-            atomic_write_text(meta_file, json.dumps(meta_payload, indent=2), encoding="utf-8")
-        except Exception:
-            pass
-
-    meta = {
-        "cached": False,
-        "latency_s": elapsed,
-        "prompt_hash": h,
-        "model_display_name": model_display_name,
-        "tokens_in": tokens_in,
-        "tokens_out": tokens_out,
-        "total_tokens": total_tokens,
-        "cost_usd": cost_usd,
-        "finish_reason": finish_reason,
-        "stop_reason": stop_reason,
-        "max_tokens": effective_max_tokens,
-        "seed": seed,
-        "temperature": temperature,
-        "system_prompt": base_system_prompt,
-        "custom_instructions": custom_instructions,
-        "effective_system_prompt": effective_system_prompt,
-    }
     if truncated_cache_files:
         meta["truncated_cache_files"] = truncated_cache_files
         meta["truncated_cache_reasons"] = truncated_cache_reasons

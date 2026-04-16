@@ -21,7 +21,7 @@ module.exports.run = async ({ page, assert }) => {
     return true;
   });
 
-  await assert("Collapsed content is hidden from assistive technology", async () => {
+  await assert("Collapsed content is hidden from everyone", async () => {
     let applicableExamples = 0;
 
     for (const example of examples) {
@@ -33,9 +33,13 @@ module.exports.run = async ({ page, assert }) => {
       applicableExamples += 1;
       
       let isHidden = await example.$eval(".details", el => {
-        // Use axe-core's isVisible util to determine if hidden from sighted users but available to AT
-        let isVisuallyHidden = !window.axe.commons.dom.isVisible(el, false, true);
-        let isScreenReaderHidden = !window.axe.commons.dom.isVisible(el, true, true);
+        const virtualNode = window.axe.utils.getNodeFromTree(el);
+        const hasNoContentBox = el.clientHeight === 0;
+        const style = window.getComputedStyle(el);
+        const clipsOverflow = /(hidden|clip)/.test(`${style.overflow} ${style.overflowX} ${style.overflowY}`);
+        const isVisuallyHidden = !window.axe.commons.dom.isVisible(el, false, true)
+          || (hasNoContentBox && clipsOverflow);
+        const isScreenReaderHidden = !window.axe.commons.dom.isVisibleToScreenReaders(virtualNode);
         return isVisuallyHidden && isScreenReaderHidden;
       });
 

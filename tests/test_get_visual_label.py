@@ -73,6 +73,16 @@ CASES = [
         '<style>.visually-hidden-text { color: transparent; }</style><label for="i">Full<span class="visually-hidden-text"> Invisible</span> Name</label><input id="i" type="text">',
         'full name',
     ),
+    (
+        'nested_label_with_option_description',
+        '<label class="option"><input id="i" type="checkbox" aria-label="Python"><span class="option-label"><span class="option-title">Python</span><span class="option-desc">A valid language or technology in this context.</span></span></label>',
+        'python',
+    ),
+    (
+        'nested_label_with_required_indicator_and_description',
+        '<label class="option"><input id="i" type="checkbox" aria-label="Python"><span class="option-label"><span class="option-title">Python<span aria-hidden="true">*</span></span><span class="option-desc">A valid language or technology in this context.</span></span></label>',
+        'python*',
+    ),
 ]
 
 @pytest.mark.parametrize('name,html_snippet,expected', CASES, ids=[c[0] for c in CASES])

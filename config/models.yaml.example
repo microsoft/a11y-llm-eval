@@ -3,6 +3,16 @@ defaults:
   #  You are generating a single standalone HTML document.
   #temperature: 0.2
   #custom_instructions_markdown: custom-instructions.md
+providers:
+  #openai:
+  #  batch:
+  #    enabled: false
+  #azure:
+  #  auth:
+  #    mode: default_azure_credential
+  #    scope: https://cognitiveservices.azure.com/.default
+  #    api_base_env: AZURE_API_BASE
+  #    api_version_env: AZURE_API_VERSION
 models:
   - name: azure_ai/gpt-5-mini
     display_name: GPT-5 Mini

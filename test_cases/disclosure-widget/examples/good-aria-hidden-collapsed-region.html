@@ -2,7 +2,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Basic Disclosure using button and aria-expanded</title>
+    <title>Collapsed disclosure content hidden while border remains visible</title>
     <script id="a11y-assertions" type="application/json">{
         "assertions": {
             "All examples have a valid semantics": "pass",
@@ -11,12 +11,12 @@
     }</script>
 </head>
 <body>
-    <h1>Basic Disclosure using button and aria-expanded</h1>
-
     <div class="example">
-        <button aria-expanded="false" aria-controls="content">Show Details</button>
-        <div class="details" style="display: none;">
-            <p>This is the hidden content that can be disclosed.</p>
+        <button aria-expanded="false">Show cat facts</button>
+        <div class="details" aria-hidden="true" style="max-height: 0; overflow: hidden; border-top: 1px solid #ccc;">
+            <div style="padding-top: 16px;">
+                <p>Cats sleep for much of the day.</p>
+            </div>
         </div>
     </div>
 </body>

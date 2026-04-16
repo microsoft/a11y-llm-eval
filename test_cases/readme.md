@@ -6,10 +6,10 @@ This document explains the new structure for test cases and their examples.
 
 Each test case should have the following structure:
 
-```
+```text
 test_cases/
 └── <test-case-name>/
-    ├── prompt.md          # Prompt to generate code for the test case
+    ├── prompt.yaml        # Structured prompt spec for the test case
     ├── test.js            # JavaScript test assertions
     └── examples/          # Directory containing example HTML files and expectations
         ├── example1.html  # HTML example file with embedded json expectations for assertions
@@ -17,6 +17,8 @@ test_cases/
 ```
 
 ## Embedded JSON expectations for assertions
+
+`prompt.yaml` should define the base prompt text and any local dimensions that should be combined with the global dimensions in `config/prompt_dimensions.yaml`.
 
 Each HTML example file should have a script tag in the `<head>` that defines which assertions should pass or fail for that specific example.
 

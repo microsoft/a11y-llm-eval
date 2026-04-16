@@ -2,7 +2,11 @@ const detailedResults = require('./detailed-results');
 const getName = require('./get-name');
 const { getAccessibilityNodeInfo } = require('./get-accessibility-tree');
 const { getVisualLabel, SOURCE_PLACEHOLDER } = require('./get-visual-label');
-const { getAllFormFieldWrappers } = require('./get-form-field-wrapper');
+const {
+    getAllFormFieldWrappers,
+    PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+    SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
+} = require('./get-form-field-wrapper');
 const { combineHelperTexts, getHelperText, SOURCE_ARIA_DESCRIBEDBY, SOURCE_ARIA_DESCRIPTION, SOURCE_TITLE, SOURCE_CSS_PLACEHOLDER } = require('./get-helper-text');
 const { discover } = require('./discovery');
 
@@ -31,7 +35,247 @@ const getGroupDescriptionLocator = (locator, groupKind) => {
         return locator.locator('xpath=ancestor::*[@role="group"][1]').first();
     }
 
+    if (groupKind === 'wrapper') {
+        return locator.locator('xpath=ancestor::*['
+            + 'not(self::label) and ('
+            + 'contains(@class, "field") or '
+            + 'contains(@class, "input") or '
+            + 'contains(@class, "control") or '
+            + 'contains(@class, "item") or '
+            + 'contains(@class, "group") or '
+            + 'contains(@class, "question") or '
+            + 'contains(@class, "prompt")'
+            + ') and '
+            + 'count(.//input[@type="checkbox"] | .//*[@role="checkbox"]) > 1'
+            + '][1]').first();
+    }
+
     return null;
+};
+
+const normalizeText = (value) => (value || '').toString().replace(/[\s\u00A0]+/g, ' ').trim();
+
+const quoteText = (value) => {
+    const text = normalizeText(value);
+    return text ? `"${text}"` : '';
+};
+
+const summarizeList = (items, maxItems = 4) => {
+    const filtered = items.filter(Boolean);
+    if (filtered.length === 0) {
+        return '';
+    }
+
+    if (filtered.length <= maxItems) {
+        return filtered.join(', ');
+    }
+
+    const remaining = filtered.length - maxItems;
+    return `${filtered.slice(0, maxItems).join(', ')}, and ${remaining} more`;
+};
+
+const pickControlLabel = (item) => {
+    const visualLabel = normalizeText(item && item.visualLabel && item.visualLabel.text);
+    const accessibleName = normalizeText(item && item.name);
+
+    if (visualLabel) {
+        return visualLabel;
+    }
+    if (accessibleName) {
+        return accessibleName;
+    }
+    return '';
+};
+
+const describeControl = (item, controlType, index = null) => {
+    const roleLabel = controlType || 'control';
+    const chosenLabel = pickControlLabel(item);
+    const groupLabel = normalizeText(item && item.groupLabel);
+    const ordinal = Number.isInteger(index) ? index + 1 : null;
+
+    if (chosenLabel && groupLabel) {
+        return `${roleLabel} ${quoteText(chosenLabel)} in group ${quoteText(groupLabel)}`;
+    }
+    if (chosenLabel) {
+        return `${roleLabel} ${quoteText(chosenLabel)}`;
+    }
+    if (groupLabel) {
+        return `${roleLabel} ${ordinal || 'item'} in group ${quoteText(groupLabel)}`;
+    }
+    if (ordinal) {
+        return `${roleLabel} ${ordinal}`;
+    }
+    return roleLabel;
+};
+
+const describeGroup = (group, groupType, index = null) => {
+    const label = normalizeText((group && group.groupLabel) || (group && group.groupVisualLabel));
+    if (label) {
+        return `${groupType} ${quoteText(label)}`;
+    }
+    if (Number.isInteger(index)) {
+        return `${groupType} ${index + 1}`;
+    }
+    return groupType;
+};
+
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const normalizeLabelFragment = (value) => (value || '')
+    .toString()
+    .replace(/\p{P}+/gu, ' ')
+    .replace(/[\s\u00A0]+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+const isGroupLabelFragment = (text, labelCandidates) => {
+    const normalizedText = normalizeLabelFragment(text);
+    if (!normalizedText) {
+        return true;
+    }
+
+    if (/^\d+$/.test(normalizedText)) {
+        return true;
+    }
+
+    const textWordCount = normalizedText.split(/\s+/).filter(Boolean).length;
+
+    for (const candidate of labelCandidates) {
+        const normalizedCandidate = normalizeLabelFragment(candidate);
+        if (!normalizedCandidate) {
+            continue;
+        }
+
+        if (normalizedText === normalizedCandidate) {
+            return true;
+        }
+
+        // Group labels often get harvested as multiple nearby text nodes
+        // (for example: "1", ".", and "Which ..."). Treat any multi-word
+        // helper entry that is wholly contained within the group label as label text.
+        if (textWordCount >= 2 && normalizedCandidate.includes(normalizedText)) {
+            return true;
+        }
+    }
+
+    return false;
+};
+
+const stripLeadingGroupLabelText = (text, labelCandidates) => {
+    const normalizedText = normalizeText(text);
+    if (!normalizedText) {
+        return '';
+    }
+
+    for (const candidate of labelCandidates) {
+        const normalizedCandidate = normalizeText(candidate);
+        if (!normalizedCandidate) {
+            continue;
+        }
+
+        const exactPattern = new RegExp(`^\\s*(?:\\d+[\\.)]\\s*)?${escapeRegExp(normalizedCandidate)}\\s*$`, 'i');
+        if (exactPattern.test(normalizedText)) {
+            return '';
+        }
+
+        const prefixPattern = new RegExp(`^\\s*(?:\\d+[\\.)]\\s*)?${escapeRegExp(normalizedCandidate)}(?:\\s*[:;\\-]\\s*|\\s+)`, 'i');
+        if (prefixPattern.test(normalizedText)) {
+            const stripped = normalizedText.replace(prefixPattern, '').trim();
+            if (stripped) {
+                return stripped;
+            }
+        }
+    }
+
+    return normalizedText;
+};
+
+const getGroupVisualLabel = async (groupLocator) => {
+    if (!groupLocator || !await groupLocator.count()) {
+        return '';
+    }
+
+    return groupLocator.evaluate((groupEl) => {
+        const normalizeText = (value) => (value || '').toString().replace(/\s+/g, ' ').trim();
+        const LABEL_CLASS_RE = /\b(question|prompt|legend|label|title|heading)\b/;
+        const SUPPLEMENTARY_CLASS_RE = /\b(desc|description|helper|help-text|helper-text|hint|tooltip|supporting|assistive|option-desc|field-note|field-description|validation|error|alert)\b/;
+
+        const collectTextExcludingSupplementary = (node) => {
+            if (!node) return '';
+            if (node.nodeType === Node.TEXT_NODE) {
+                return node.nodeValue || '';
+            }
+            if (node.nodeType !== Node.ELEMENT_NODE) {
+                return '';
+            }
+
+            const className = (node.className || '').toString().toLowerCase();
+            if (SUPPLEMENTARY_CLASS_RE.test(className)) {
+                return '';
+            }
+
+            let buffer = '';
+            for (const child of node.childNodes) {
+                buffer += ` ${collectTextExcludingSupplementary(child)}`;
+            }
+            return buffer;
+        };
+
+        const isVisible = (node) => {
+            if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+            if (window.axe && window.axe.commons && window.axe.commons.dom && typeof window.axe.commons.dom.isVisible === 'function') {
+                return window.axe.commons.dom.isVisible(node, false, true);
+            }
+
+            const style = window.getComputedStyle(node);
+            if (!style) return true;
+            return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+        };
+
+        const isChoiceLabel = (node) => {
+            if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+            if (node.closest && node.closest('label')) {
+                const label = node.closest('label');
+                if (label && label.querySelector('input, textarea, select, [role="checkbox"], [role="radio"]')) {
+                    return true;
+                }
+            }
+            return !!node.querySelector && !!node.querySelector('input, textarea, select, [role="checkbox"], [role="radio"]');
+        };
+
+        const labelledby = (groupEl.getAttribute && groupEl.getAttribute('aria-labelledby')) || '';
+        for (const id of labelledby.split(/\s+/)) {
+            if (!id) continue;
+            const target = document.getElementById(id);
+            if (!target || !isVisible(target)) continue;
+            const text = normalizeText(collectTextExcludingSupplementary(target) || target.textContent || target.innerText || '');
+            if (text) return text;
+        }
+
+        const wrapper = groupEl.closest('[class*="field"], [class*="input"], [class*="control"], [class*="item"], [class*="question"], [class*="prompt"]')
+            || groupEl.parentElement
+            || groupEl;
+
+        const candidates = Array.from(wrapper.querySelectorAll('legend, h1, h2, h3, h4, h5, h6, [class*="question"], [class*="label"], [class*="title"], [data-label], [data-question]'));
+
+        for (const candidate of candidates) {
+            if (!isVisible(candidate) || isChoiceLabel(candidate)) {
+                continue;
+            }
+
+            const className = (candidate.className || '').toString().toLowerCase();
+            if (SUPPLEMENTARY_CLASS_RE.test(className) && !LABEL_CLASS_RE.test(className)) {
+                continue;
+            }
+
+            const text = normalizeText(collectTextExcludingSupplementary(candidate) || candidate.textContent || candidate.innerText || '');
+            if (text) {
+                return text;
+            }
+        }
+
+        return '';
+    });
 };
 
 // Check that each text input has an accessible name (R - WCAG 4.1.2)
@@ -45,13 +289,20 @@ testFn.testEachInputHasName = async (scope, discoveryCache) => {
         return results;
     }
 
-    for (const item of d.inputs) {
+    const unnamedInputs = [];
+
+    for (const [index, item] of d.inputs.entries()) {
         const name = item.name;
         if (name && name.trim().length > 0) {
             results.addPass(item.locator);
         } else {
             results.addFail(item.locator);
+            unnamedInputs.push(describeControl(item, 'text input', index));
         }
+    }
+
+    if (unnamedInputs.length > 0) {
+        results.addMessage(`Missing accessible names for ${summarizeList(unnamedInputs)}`);
     }
 
     return results;
@@ -138,10 +389,11 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
         }
 
         results.addFail(locator);
-        const failureKey = normalizeForCompare(combinedHelperText);
+        const targetDescription = options.targetDescription || 'control';
+        const failureKey = `${targetDescription}:${normalizeForCompare(combinedHelperText)}`;
         if (!reportedHelperFailures.has(failureKey)) {
             reportedHelperFailures.add(failureKey);
-            results.addMessage("Found `" + combinedHelperText + "`");
+            results.addMessage(`${targetDescription} has helper text ${quoteText(combinedHelperText)} that is not programmatically associated`);
         }
         return true;
     };
@@ -173,11 +425,14 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
                 groupedItems[0].locator,
                 helperEntries,
                 [group.groupLabel, ...groupedItems.map((item) => item.name)],
-                { groupHasProgrammaticDescription: !!group.groupHasProgrammaticDescription },
+                {
+                    groupHasProgrammaticDescription: !!group.groupHasProgrammaticDescription,
+                    targetDescription: describeGroup(group, groupedControlType === 'radio' ? 'radio group' : 'checkbox group'),
+                },
             );
         }
 
-        for (const item of d.inputs) {
+        for (const [index, item] of d.inputs.entries()) {
             if (groupedIndexes.has(item.domIndex)) {
                 continue;
             }
@@ -187,7 +442,9 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
                 continue;
             }
 
-            evaluateHelperTarget(item.locator, helperEntries, [item.name]);
+            evaluateHelperTarget(item.locator, helperEntries, [item.name], {
+                targetDescription: describeControl(item, groupedControlType, index),
+            });
         }
 
         if (applicable === 0) {
@@ -198,14 +455,16 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
         return results;
     }
 
-    for (const item of d.inputs) {
+    for (const [index, item] of d.inputs.entries()) {
         const meaningfulHelpers = normalizeHelpers(item.helperText);
 
         if (meaningfulHelpers.length === 0) {
             continue; // no meaningful helper text to check
         }
 
-        evaluateHelperTarget(item.locator, meaningfulHelpers, [item.name]);
+        evaluateHelperTarget(item.locator, meaningfulHelpers, [item.name], {
+            targetDescription: describeControl(item, 'text input', index),
+        });
     }
 
     if (applicable === 0) {
@@ -227,7 +486,9 @@ testFn.testEachInputFocusable = async (scope, discoveryCache) => {
         return results;
     }
 
-    for (const item of d.inputs) {
+    const unfocusableInputs = [];
+
+    for (const [index, item] of d.inputs.entries()) {
         if (!item.visible) {
             continue; // skip hidden inputs
         }
@@ -237,7 +498,12 @@ testFn.testEachInputFocusable = async (scope, discoveryCache) => {
             results.addPass(item.locator);
         } else {
             results.addFail(item.locator);
+            unfocusableInputs.push(`${describeControl(item, 'text input', index)} has tabindex ${quoteText(tabindex)}`);
         }
+    }
+
+    if (unfocusableInputs.length > 0) {
+        results.addMessage(`Not keyboard focusable: ${summarizeList(unfocusableInputs)}`);
     }
 
     return results;
@@ -259,7 +525,9 @@ testFn.testPlaceholderTextDefined = async (scope, discoveryCache) => {
 
     let applicable = 0;
 
-    for (const item of d.inputs) {
+    const cssOnlyPlaceholders = [];
+
+    for (const [index, item] of d.inputs.entries()) {
         const placeholder = item.placeholder;
         const ariaPlaceholder = item.ariaPlaceholder;
 
@@ -285,11 +553,15 @@ testFn.testPlaceholderTextDefined = async (scope, discoveryCache) => {
             // Placeholder-like text rendered only via CSS pseudo-elements,
             // with no programmatic placeholder or aria-placeholder property.
             results.addFail(item.locator);
-            results.addMessage("Found CSS placeholder text without programmatic placeholder property");
+            cssOnlyPlaceholders.push(describeControl(item, 'text input', index));
         } else if (hasStandardPlaceholder) {
             // Placeholder text is exposed via a proper property.
             results.addPass(item.locator);
         }
+    }
+
+    if (cssOnlyPlaceholders.length > 0) {
+        results.addMessage(`CSS-only placeholder text found for ${summarizeList(cssOnlyPlaceholders)}`);
     }
 
     if (applicable === 0) {
@@ -312,13 +584,20 @@ testFn.testEachInputHasPersistentVisualLabel = async (scope, discoveryCache) => 
         return results;
     }
 
-    for (const item of d.inputs) {
+    const missingVisualLabels = [];
+
+    for (const [index, item] of d.inputs.entries()) {
         const visualLabel = item.visualLabel;
         if (visualLabel && visualLabel.text.trim().length > 0 && visualLabel.source !== SOURCE_PLACEHOLDER) {
             results.addPass(item.locator);
         } else {
             results.addFail(item.locator);
+            missingVisualLabels.push(describeControl(item, 'text input', index));
         }
+    }
+
+    if (missingVisualLabels.length > 0) {
+        results.addMessage(`Missing persistent visual labels for ${summarizeList(missingVisualLabels)}`);
     }
 
     return results;
@@ -469,19 +748,20 @@ const collectRequiredIndicatorEntries = async (discovery) => {
 
             entries.push({
                 locator: groupedItems[0]?.locator,
+                description: describeGroup(group, controlLabel.toLowerCase()),
                 hasVisualIndicator: groupLabelIndicatesRequired || itemLevelVisualIndicator || sharedContextVisualIndicator,
                 hasProgrammaticIndicator,
                 visualNotApplicable,
                 programmaticNotApplicable,
-                visualMissingMessage: `${controlLabel} is programmatically required but has no visual required indicator`,
-                programmaticMissingMessage: `${controlLabel} appears visually required but has no programmatic required indicator`,
+                visualMissingMessage: `${describeGroup(group, controlLabel.toLowerCase())} is programmatically required but has no visual required indicator`,
+                programmaticMissingMessage: `${describeGroup(group, controlLabel.toLowerCase())} appears visually required but has no programmatic required indicator`,
             });
         }
 
         return entries;
     }
 
-    for (const item of discovery.inputs) {
+    for (const [index, item] of discovery.inputs.entries()) {
         const helpers = Array.isArray(item.helperText)
             ? item.helperText
             : (item.helperText ? [item.helperText] : []);
@@ -492,10 +772,11 @@ const collectRequiredIndicatorEntries = async (discovery) => {
 
         entries.push({
             locator: item.locator,
+            description: describeControl(item, 'text input', index),
             hasVisualIndicator: localVisualIndicator || sharedContextVisualIndicator,
             hasProgrammaticIndicator: !!item.programmaticallyRequired,
-            visualMissingMessage: "Input is programmatically required but has no visual required indicator",
-            programmaticMissingMessage: "Input appears visually required but has no programmatic required indicator",
+            visualMissingMessage: `${describeControl(item, 'text input', index)} is programmatically required but has no visual required indicator`,
+            programmaticMissingMessage: `${describeControl(item, 'text input', index)} appears visually required but has no programmatic required indicator`,
         });
     }
 
@@ -516,6 +797,8 @@ testFn.testRequiredFieldsIndicatedVisually = async (scope, discoveryCache) => {
     let applicable = 0;
     let notApplicableGroupedMinimumChoice = 0;
 
+    const missingVisualIndicators = [];
+
     for (const entry of entries) {
         if (entry.visualNotApplicable) {
             notApplicableGroupedMinimumChoice++;
@@ -530,8 +813,12 @@ testFn.testRequiredFieldsIndicatedVisually = async (scope, discoveryCache) => {
             results.addPass(entry.locator);
         } else {
             results.addFail(entry.locator);
-            results.addMessage(entry.visualMissingMessage);
+            missingVisualIndicators.push(entry.visualMissingMessage);
         }
+    }
+
+    if (missingVisualIndicators.length > 0) {
+        results.addMessage(summarizeList(missingVisualIndicators));
     }
 
     if (applicable === 0) {
@@ -560,6 +847,8 @@ testFn.testRequiredFieldsIndicatedProgrammatically = async (scope, discoveryCach
     let applicable = 0;
     let notApplicableGroupedMinimumChoice = 0;
 
+    const missingProgrammaticIndicators = [];
+
     for (const entry of entries) {
         if (entry.visualNotApplicable || entry.programmaticNotApplicable) {
             notApplicableGroupedMinimumChoice++;
@@ -574,8 +863,12 @@ testFn.testRequiredFieldsIndicatedProgrammatically = async (scope, discoveryCach
             results.addPass(entry.locator);
         } else {
             results.addFail(entry.locator);
-            results.addMessage(entry.programmaticMissingMessage);
+            missingProgrammaticIndicators.push(entry.programmaticMissingMessage);
         }
+    }
+
+    if (missingProgrammaticIndicators.length > 0) {
+        results.addMessage(summarizeList(missingProgrammaticIndicators));
     }
 
     if (applicable === 0) {
@@ -605,6 +898,8 @@ testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
     let applicable = 0;
     let notApplicableGroupedMinimumChoice = 0;
 
+    const requiredIndicatorFailures = [];
+
     for (const entry of entries) {
         if (entry.visualNotApplicable || entry.programmaticNotApplicable) {
             notApplicableGroupedMinimumChoice++;
@@ -620,9 +915,13 @@ testFn.testRequiredFieldsIndicated = async (scope, discoveryCache) => {
         } else {
             results.addFail(entry.locator);
             if (entry.hasProgrammaticIndicator && !entry.hasVisualIndicator) {
-                results.addMessage(entry.visualMissingMessage);
+                requiredIndicatorFailures.push(entry.visualMissingMessage);
             }
         }
+    }
+
+    if (requiredIndicatorFailures.length > 0) {
+        results.addMessage(summarizeList(requiredIndicatorFailures));
     }
 
     if (applicable === 0) {
@@ -667,7 +966,9 @@ testFn.testLabelInName = async (scope, discoveryCache) => {
 
     // Only applies when there is a visible text label (not placeholder-only)
     let applicable = 0;
-    for (const item of d.inputs) {
+    const labelMismatchMessages = [];
+
+    for (const [index, item] of d.inputs.entries()) {
         const vl = item.visualLabel;
         if (!vl || !vl.text || !vl.text.trim()) {
             continue; // no visible text label
@@ -682,7 +983,12 @@ testFn.testLabelInName = async (scope, discoveryCache) => {
             results.addPass(item.locator);
         } else {
             results.addFail(item.locator);
+            labelMismatchMessages.push(`${describeControl(item, 'text input', index)} has visible label ${quoteText(vl.text)} but accessible name ${quoteText(item.name || 'missing')}`);
         }
+    }
+
+    if (labelMismatchMessages.length > 0) {
+        results.addMessage(`Visible label mismatch: ${summarizeList(labelMismatchMessages)}`);
     }
 
     if (applicable === 0) {
@@ -862,6 +1168,7 @@ testFn.discoverRadios = async (scope) => {
             : (rawHelperText ? [rawHelperText] : []);
         let groupHasProgrammaticDescription = false;
         let groupLabel = meta.groupLabel;
+        let groupVisualLabel = '';
         const groupLocator = getGroupDescriptionLocator(locator, meta.groupKind);
         let visualLabel = rawVisualLabel;
 
@@ -869,6 +1176,7 @@ testFn.discoverRadios = async (scope) => {
             const groupAccessibilityNode = await getAccessibilityNodeInfo(groupLocator);
             groupLabel = groupAccessibilityNode.name || groupLabel;
             groupHasProgrammaticDescription = !!groupAccessibilityNode.description;
+            groupVisualLabel = await getGroupVisualLabel(groupLocator);
         }
 
         if ((!visualLabel || !visualLabel.text || !visualLabel.text.trim()) && meta.controlText) {
@@ -896,6 +1204,7 @@ testFn.discoverRadios = async (scope) => {
             groupKey: meta.groupKey,
             groupKind: meta.groupKind,
             groupLabel,
+            groupVisualLabel,
             groupHasProgrammaticDescription,
         };
 
@@ -906,6 +1215,7 @@ testFn.discoverRadios = async (scope) => {
                 groupKey: meta.groupKey,
                 groupKind: meta.groupKind,
                 groupLabel,
+                groupVisualLabel,
                 programmaticallyRequired: meta.groupProgrammaticallyRequired,
                 groupHasProgrammaticDescription,
                 hasNativeAriaStateMismatch: false,
@@ -933,6 +1243,8 @@ testFn.discoverRadios = async (scope) => {
 
     for (const group of groups) {
         const groupLabel = normalizeText(group.groupLabel);
+        const groupVisualLabel = normalizeText(group.groupVisualLabel);
+        const groupLabelCandidates = [group.groupLabel, group.groupVisualLabel].filter(Boolean);
         const radioLabels = new Set(
             group.radios
                 .map((radio) => normalizeText((radio.visualLabel && radio.visualLabel.text) || radio.name))
@@ -941,11 +1253,23 @@ testFn.discoverRadios = async (scope) => {
 
         for (const radio of group.radios) {
             radio.helperText = radio.helperText.filter((helper) => {
-                const text = normalizeText(helper && helper.text);
+                const strippedText = stripLeadingGroupLabelText(helper && helper.text, groupLabelCandidates);
+                if (!strippedText) {
+                    return false;
+                }
+
+                helper.text = strippedText;
+                const text = normalizeText(strippedText);
                 if (!text) {
                     return false;
                 }
+                if (isGroupLabelFragment(text, groupLabelCandidates)) {
+                    return false;
+                }
                 if (text === groupLabel) {
+                    return false;
+                }
+                if (text === groupVisualLabel) {
                     return false;
                 }
                 if (radioLabels.has(text)) {
@@ -973,6 +1297,7 @@ testFn.discoverCheckboxes = async (scope) => {
     const count = await checkboxLocator.count();
     const inputs = [];
     const groupsByKey = new Map();
+    const wrapperSelector = `${PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR}, ${SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR}, [class*="question"], [class*="prompt"]`;
 
     for (let index = 0; index < count; index++) {
         const locator = checkboxLocator.nth(index);
@@ -982,7 +1307,7 @@ testFn.discoverCheckboxes = async (scope) => {
             getHelperText(locator),
             locator.isVisible(),
             locator.evaluate((checkbox, args) => {
-                const { idx } = args;
+                const { idx, wrapperSelector } = args;
                 const normalizeText = (value) => (value || '').toString().replace(/\s+/g, ' ').trim();
                 const parseAriaBoolean = (value) => {
                     if (value === 'true') {
@@ -1048,10 +1373,45 @@ testFn.discoverCheckboxes = async (scope) => {
                     return normalizeText(legend ? legend.textContent : '');
                 };
 
+                const isMeaningfulWrapperContainer = (element) => {
+                    if (!element || element.nodeType !== Node.ELEMENT_NODE) {
+                        return false;
+                    }
+
+                    const tagName = (element.tagName || '').toUpperCase();
+                    if (tagName === 'LABEL') {
+                        return false;
+                    }
+
+                    const role = (element.getAttribute('role') || '').toLowerCase();
+                    if (role === 'checkbox' || role === 'radio') {
+                        return false;
+                    }
+
+                    return true;
+                };
+
+                const findWrapperContainer = (element, selector) => {
+                    let current = element && element.parentElement;
+                    while (current) {
+                        if (current.matches && current.matches(selector) && isMeaningfulWrapperContainer(current)) {
+                            const checkboxCount = current.querySelectorAll('input[type="checkbox"], [role="checkbox"]').length;
+                            if (checkboxCount > 1) {
+                                return current;
+                            }
+                        }
+                        current = current.parentElement;
+                    }
+
+                    return null;
+                };
+
                 const groupContainers = Array.from(document.querySelectorAll('fieldset, [role="group"]'));
                 const fieldsets = Array.from(document.querySelectorAll('fieldset'));
                 const isNativeCheckbox = checkbox.matches('input[type="checkbox"]');
                 const groupContainer = checkbox.closest('fieldset, [role="group"]');
+                const wrapperContainers = Array.from(document.querySelectorAll(wrapperSelector));
+                const wrapperContainer = findWrapperContainer(checkbox, wrapperSelector);
                 const requiredAttr = checkbox.getAttribute('required');
                 const ariaRequired = checkbox.getAttribute('aria-required');
                 const ariaDisabled = checkbox.getAttribute('aria-disabled');
@@ -1106,6 +1466,12 @@ testFn.discoverCheckboxes = async (scope) => {
                             groupProgrammaticallyRequired = true;
                         }
                     }
+                } else if (wrapperContainer) {
+                    const checkboxCountInWrapper = wrapperContainer.querySelectorAll('input[type="checkbox"], [role="checkbox"]').length;
+                    if (checkboxCountInWrapper > 1) {
+                        groupKey = `wrapper:${wrapperContainers.indexOf(wrapperContainer)}:${getNodePath(wrapperContainer)}`;
+                        groupKind = 'wrapper';
+                    }
                 }
 
                 return {
@@ -1127,7 +1493,7 @@ testFn.discoverCheckboxes = async (scope) => {
                     programmaticallyRequired,
                     controlText,
                 };
-            }, { idx: index }),
+            }, { idx: index, wrapperSelector }),
         ]);
 
         const helperText = Array.isArray(rawHelperText)
@@ -1135,6 +1501,7 @@ testFn.discoverCheckboxes = async (scope) => {
             : (rawHelperText ? [rawHelperText] : []);
         let groupHasProgrammaticDescription = false;
         let groupLabel = meta.groupLabel;
+        let groupVisualLabel = '';
         const groupLocator = getGroupDescriptionLocator(locator, meta.groupKind);
         let visualLabel = rawVisualLabel;
 
@@ -1142,6 +1509,7 @@ testFn.discoverCheckboxes = async (scope) => {
             const groupAccessibilityNode = await getAccessibilityNodeInfo(groupLocator);
             groupLabel = groupAccessibilityNode.name || groupLabel;
             groupHasProgrammaticDescription = !!groupAccessibilityNode.description;
+            groupVisualLabel = await getGroupVisualLabel(groupLocator);
         }
 
         if ((!visualLabel || !visualLabel.text || !visualLabel.text.trim()) && meta.controlText) {
@@ -1169,6 +1537,7 @@ testFn.discoverCheckboxes = async (scope) => {
             groupKey: meta.groupKey,
             groupKind: meta.groupKind,
             groupLabel,
+            groupVisualLabel,
             groupHasProgrammaticDescription,
         };
 
@@ -1180,6 +1549,7 @@ testFn.discoverCheckboxes = async (scope) => {
                     groupKey: meta.groupKey,
                     groupKind: meta.groupKind,
                     groupLabel,
+                    groupVisualLabel,
                     programmaticallyRequired: meta.groupProgrammaticallyRequired,
                     groupHasProgrammaticDescription,
                     hasNativeAriaStateMismatch: false,
@@ -1208,6 +1578,8 @@ testFn.discoverCheckboxes = async (scope) => {
 
     for (const group of groups) {
         const groupLabel = normalizeText(group.groupLabel);
+        const groupVisualLabel = normalizeText(group.groupVisualLabel);
+        const groupLabelCandidates = [group.groupLabel, group.groupVisualLabel].filter(Boolean);
         const checkboxLabels = new Set(
             group.checkboxes
                 .map((checkbox) => normalizeText((checkbox.visualLabel && checkbox.visualLabel.text) || checkbox.name))
@@ -1216,11 +1588,23 @@ testFn.discoverCheckboxes = async (scope) => {
 
         for (const checkbox of group.checkboxes) {
             checkbox.helperText = checkbox.helperText.filter((helper) => {
-                const text = normalizeText(helper && helper.text);
+                const strippedText = stripLeadingGroupLabelText(helper && helper.text, groupLabelCandidates);
+                if (!strippedText) {
+                    return false;
+                }
+
+                helper.text = strippedText;
+                const text = normalizeText(strippedText);
                 if (!text) {
                     return false;
                 }
+                if (isGroupLabelFragment(text, groupLabelCandidates)) {
+                    return false;
+                }
                 if (text === groupLabel) {
+                    return false;
+                }
+                if (text === groupVisualLabel) {
                     return false;
                 }
                 if (checkboxLabels.has(text)) {
@@ -1359,7 +1743,8 @@ testFn.testIdentifyInputPurposeAutocomplete = async (scope, discoveryCache) => {
     };
 
     let applicable = 0;
-    for (const item of d.inputs) {
+    const autocompleteFailures = [];
+    for (const [index, item] of d.inputs.entries()) {
         const expected = inferExpectedAutocomplete(item.name, item.visualLabel);
         if (!expected || expected.length === 0) {
             continue; // Not applicable for this input
@@ -1372,6 +1757,7 @@ testFn.testIdentifyInputPurposeAutocomplete = async (scope, discoveryCache) => {
         // If autocomplete is missing or is 'on'/'off', this fails when we expect a specific token
         if (!val || val === 'on' || val === 'off') {
             results.addFail(item.locator);
+            autocompleteFailures.push(`${describeControl(item, 'text input', index)} should use ${quoteText(expected.join(' or '))} but has ${quoteText(val || 'no autocomplete value')}`);
             continue;
         }
 
@@ -1380,7 +1766,12 @@ testFn.testIdentifyInputPurposeAutocomplete = async (scope, discoveryCache) => {
             results.addPass(item.locator);
         } else {
             results.addFail(item.locator);
+            autocompleteFailures.push(`${describeControl(item, 'text input', index)} should use ${quoteText(expected.join(' or '))} but has ${quoteText(val)}`);
         }
+    }
+
+    if (autocompleteFailures.length > 0) {
+        results.addMessage(`Incorrect autocomplete values: ${summarizeList(autocompleteFailures)}`);
     }
 
     if (applicable === 0) {

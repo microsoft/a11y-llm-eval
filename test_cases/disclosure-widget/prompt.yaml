@@ -1,0 +1,7 @@
+name: Disclosure Widget
+base_prompt: |
+  Build an FAQ page about cats. Questions are collapsed by default and can be expanded..
+common_requirements:
+  - Wrap each question/answer section in a div with class "example".
+  - Give the container for the controlled content a class of "details".
+dimensions:

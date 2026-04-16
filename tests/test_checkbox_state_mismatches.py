@@ -25,6 +25,10 @@ CASES = [
             'Checked state is programmatically exposed': 'fail',
             'Required fields are indicated programmatically': 'na',
         },
+        {
+          'ARIA attributes match native checkbox attributes if used': ['I agree to the policy', 'checked'],
+          'Checked state is programmatically exposed': ['I agree to the policy'],
+        },
     ),
     (
         'required_mismatch',
@@ -42,6 +46,9 @@ CASES = [
             'Required fields are indicated visually': 'pass',
             'Required fields are indicated programmatically': 'pass',
             'Checked state is programmatically exposed': 'pass',
+        },
+        {
+          'ARIA attributes match native checkbox attributes if used': ['Receive account updates', 'required'],
         },
     ),
     (
@@ -61,6 +68,10 @@ CASES = [
             'Space toggles checkbox state': 'fail',
             'Checked state is programmatically exposed': 'pass',
         },
+        {
+          'ARIA attributes match native checkbox attributes if used': ['Send me promotional offers', 'disabled'],
+          'Space toggles checkbox state': ['Send me promotional offers'],
+        },
     ),
     (
         'global_required_note',
@@ -79,6 +90,7 @@ CASES = [
             'Required fields are indicated programmatically': 'pass',
             'ARIA attributes match native checkbox attributes if used': 'pass',
         },
+        {},
     ),
     (
         'native_indeterminate_mixed',
@@ -99,6 +111,7 @@ CASES = [
             'Checked state is programmatically exposed': 'pass',
             'Space toggles checkbox state': 'pass',
         },
+        {},
     ),
     (
         'aria_mixed_custom_checkbox',
@@ -115,12 +128,13 @@ CASES = [
             'Checked state is programmatically exposed': 'pass',
             'Each checkbox is keyboard reachable': 'pass',
         },
+        {},
     ),
 ]
 
 
-@pytest.mark.parametrize('name,html,expected', CASES, ids=[case[0] for case in CASES])
-def test_checkbox_native_aria_state_mismatches(name, html, expected):
+@pytest.mark.parametrize('name,html,expected,expected_messages', CASES, ids=[case[0] for case in CASES])
+def test_checkbox_native_aria_state_mismatches(name, html, expected, expected_messages):
     screenshot_dir = Path('runs') / 'pytest_screenshots'
     screenshot_dir.mkdir(parents=True, exist_ok=True)
     screenshot_file = str(screenshot_dir / f'checkbox_state_mismatch__{name}.png')
@@ -130,6 +144,7 @@ def test_checkbox_native_aria_state_mismatches(name, html, expected):
     assert 'testFunctionResult' in result, f"Runner failed or returned unexpected output: {result}"
     assertions = result['testFunctionResult'].get('assertions', [])
     actual = {assertion.get('name'): assertion.get('status') for assertion in assertions if assertion.get('name')}
+    messages = {assertion.get('name'): assertion.get('message') for assertion in assertions if assertion.get('name')}
 
     mismatches = {
         assertion_name: {
@@ -141,3 +156,8 @@ def test_checkbox_native_aria_state_mismatches(name, html, expected):
     }
 
     assert not mismatches, f"Unexpected assertion results for {name}: {mismatches}. Full results: {actual}"
+
+    for assertion_name, expected_fragments in expected_messages.items():
+        message = messages.get(assertion_name) or ''
+        for fragment in expected_fragments:
+            assert fragment in message, f"Expected '{fragment}' in assertion message for {name}/{assertion_name}, got: {message}"

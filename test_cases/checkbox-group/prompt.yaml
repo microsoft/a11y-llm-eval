@@ -1,0 +1,8 @@
+name: Checkbox Group
+base_prompt: |
+  Build a 3 question quiz about computer languages. Each question should have 4 answer choices, and users should be able to select multiple answers for each question.
+common_requirements:
+  - Wrap each question in a div with class "form-field".
+  - The first question should have help text.
+  - Include a submit button.
+dimensions:

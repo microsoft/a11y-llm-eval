@@ -89,6 +89,9 @@ async function main() {
           if (!['pass', 'fail', 'na'].includes(status)) {
             status = 'fail';
           }
+          if (status === 'fail' && (!message || !String(message).trim())) {
+            message = `Assertion failed: ${name}`;
+          }
           collected.push({ name, status, message, type: normalizedType });
         } catch (e) {
           collected.push({ name, status: 'fail', message: e.message, type: normalizedType });

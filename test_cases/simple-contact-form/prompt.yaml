@@ -1,0 +1,19 @@
+name: Simple Contact Form
+base_prompt: |
+  Build a contact form for a support page with text inputs for full name, email address, and phone number.
+common_requirements:
+  - Keep full name and email address required.
+  - Keep phone number optional.
+  - Wrap each field in a div with class "form-field".
+  - The phone number field MUST have helper text that describes the expected format.
+  - Include a submit button.
+dimensions:
+  validation-message:
+    label: Validation Message
+    values:
+      present:
+        label: Error Message Present
+        prompt_fragment: Include inline validation messages for required or incorrectly formatted fields.
+      absent:
+        label: No Error Message
+        prompt_fragment: Do not show inline validation messages on initial render.

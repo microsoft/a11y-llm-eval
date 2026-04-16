@@ -27,9 +27,10 @@ It does **not** attempt to specify the internal HTML report layout pixel-perfect
 
 ## Glossary
 
-- **Test case**: a folder under `test_cases/<name>/` containing `prompt.md` and `test.js`.
+- **Base test case**: a folder under `test_cases/<name>/` containing `prompt.yaml` and `test.js`.
+- **Prompt case**: one concrete composed prompt produced from a base test case plus the selected local and global prompt dimensions.
 - **Model name**: the string used as `models[].name` in `config/models.yaml` (also used in filenames).
-- **Sample**: one independent generation for a (test case, model). Samples are indexed 0-based.
+- **Sample**: one independent generation for a (prompt case, model). Samples are indexed 0-based.
 - **Requirement assertion** (`type: "R"`): affects pass/fail.
 - **Best Practice assertion** (`type: "BP"`): tracked, but does not affect pass/fail.
 - **Not applicable assertion** (`status: "na"`): an assertion that does not apply to that sample. Requirement N/A assertions exclude the sample from denominator-based pass metrics.
@@ -71,13 +72,22 @@ The harness supports a two-phase workflow:
 A test case directory is considered runnable if:
 
 - It is a subdirectory of `test_cases/`.
-- It contains `prompt.md`.
+- It contains `prompt.yaml`.
 
 During evaluation, `test.js` is loaded and executed by the Node runner.
 
 ### Acceptance criteria
 
-- `prompt.md` is treated as the *user prompt body*.
+- `prompt.yaml` is treated as the canonical prompt specification for the base test case.
+- `prompt.yaml` must include at least:
+  - `base_prompt`
+  - optional `name`
+  - optional `common_requirements`
+  - optional local `dimensions`
+- The harness composes one user prompt per cross-product combination of:
+  - local dimensions from the base test case
+  - global dimensions from `config/prompt_dimensions.yaml` or the file passed via `run --prompt-dimensions-file`
+- Each composed prompt becomes its own prompt case with a stable `prompt_case_id` and a user-visible `test_name`.
 - `test.js` is expected to export `module.exports.run = async ({ page, assert, utils }) => { ... }`.
 - If `test.js` does not export a `run` function, the Node runner returns an error in `testFunctionResult.error`.
 
@@ -90,7 +100,9 @@ During evaluation, `test.js` is loaded and executed by the Node runner.
 Generation uses `litellm.completion(...)` with:
 
 - A system message that is the **effective system prompt**.
-- A user message that is the test case’s `prompt.md`.
+- A user message that is the composed prompt case text built from `prompt.yaml` plus the configured global prompt dimensions.
+
+For providers that do not opt out, generation may use LiteLLM's same-model batch completion helper to submit multiple uncached prompts together when their effective request settings match.
 
 The effective system prompt is:
 
@@ -102,6 +114,14 @@ The effective system prompt is:
 - `defaults.system_prompt` (string)
 - `defaults.custom_instructions_markdown` (path to a markdown file)
 - `defaults.temperature` (float)
+
+`config/models.yaml` may also define provider-level configuration under `providers.<provider>`.
+
+- `providers.<provider>.auth.mode` may be omitted or set to `env` to preserve LiteLLM's existing environment-based behavior.
+- `providers.<provider>.batch.enabled` may be omitted or set to `true` to allow LiteLLM batch submission for eligible generation groups; set it to `false` to force per-request generation for that provider.
+- `providers.azure.auth.mode` and `providers.azure_ai.auth.mode` may be set to `default_azure_credential` to pass an Azure bearer token provider from `azure.identity.DefaultAzureCredential()` into LiteLLM.
+- For `default_azure_credential`, the harness reads `api_base` from `api_base_env` and optionally reads `api_version` from `api_version_env`, defaulting to `AZURE_API_BASE` / `AZURE_API_VERSION` for `azure` and `AZURE_AI_API_BASE` / `AZURE_AI_API_VERSION` for `azure_ai`.
+- When `default_azure_credential` is configured, `azure-identity` must be installed; otherwise generation fails with a clear error.
 
 If `run --temperature` is not provided, the effective temperature defaults to `defaults.temperature` if present.
 
@@ -137,6 +157,8 @@ Cache identity includes:
 
 On cache hits, the generator returns `cached: True` and can optionally load token/cost metadata from a `.meta.json` file.
 
+When LiteLLM batching is enabled for a provider, cache identity and cache validation remain per request. Cached requests are not submitted to LiteLLM batching; only cache misses are sent.
+
 ### Acceptance criteria
 
 - Cache files are created at:
@@ -146,6 +168,7 @@ On cache hits, the generator returns `cached: True` and can optionally load toke
 - If a cached HTML file is incomplete/corrupted, it is treated as a cache miss and a fresh generation is performed.
 - Debugging: `run --debug-truncated-cache` prints a list of truncated/corrupted cached HTML files at the end of generation and preserves them for inspection.
 - The `--disable-cache` flag forces fresh generation even if a cache entry exists.
+- If LiteLLM batching is attempted for a group and the batch call or an individual item fails, the harness falls back to the existing per-request generation path for the affected requests.
 
 ---
 
@@ -155,7 +178,7 @@ On cache hits, the generator returns `cached: True` and can optionally load toke
 
 During `run`, generated HTML is written under:
 
-- `<run_dir>/raw/<test_name>/`
+- `<run_dir>/raw/<prompt_case_id>/`
 
 Naming depends on `--samples`:
 
@@ -168,14 +191,14 @@ During `evaluate`, screenshots are written under:
 
 Screenshot naming:
 
-- Multi-sample: `<test_name>__<model>__s<sample_index>.png`
-- Legacy single-sample: `<test_name>__<model>.png`
+- Multi-sample: `<prompt_case_id>__<model>__s<sample_index>.png`
+- Legacy single-sample: `<prompt_case_id>__<model>.png`
 
 ### Acceptance criteria
 
 - Multi-sample HTML naming uses `__s` with a 0-based `sample_index`.
 - For legacy single-sample runs, `sample_index` is `null` in `results.json`.
-- Evaluation finds HTML files by scanning `raw/<test>/` for `*.html` (including nested dirs).
+- Evaluation may reconstruct prompt cases from the stub `results[]` written during `run` and uses stored `generation_html_path` values as the source of truth for generated artifacts.
 
 ---
 
@@ -194,14 +217,17 @@ This is enabled via `run --instruction-sets-file <path>`.
 
 Artifacts for variants are written under separate directories:
 
-- Variant HTML: `<run_dir>/raw_variants/<variant_id>/<test_name>/<model>__s<sample_index>.html`
-- Variant screenshots: `<run_dir>/screenshots_variants/<variant_id>/<test_name>__<model>__s<sample_index>.png`
+- Variant HTML: `<run_dir>/raw_variants/<variant_id>/<prompt_case_id>/<model>__s<sample_index>.html`
+- Variant screenshots: `<run_dir>/screenshots_variants/<variant_id>/<prompt_case_id>__<model>__s<sample_index>.png`
 
 Schema additions:
 
 - Each `results[]` record includes `prompt_variant_id` ("control" or the instruction set id).
+- Each `results[]` record includes `base_test_name`, `prompt_case_id`, and `prompt_dimensions` for the composed prompt case.
 - Each `aggregates[]` record includes `prompt_variant_id`.
+- Each `aggregates[]` record includes `base_test_name`, `prompt_case_id`, and `prompt_dimensions` for the composed prompt case.
 - `meta.prompt_variants` describes the variants included in the run (id/name/description/custom instruction path/sample count).
+- `meta.prompt_cases` describes the expanded prompt cases included in the run.
 
 ### Acceptance criteria
 
@@ -238,6 +264,19 @@ $$\text{PASS} \iff (\text{test\_function.status} = \text{"pass"}) \land (\text{a
   - `type` is normalized to uppercase and defaults to `"R"` if missing/invalid.
   - `status` accepts `"pass"`, `"fail"`, and `"na"`; legacy aliases normalize to those values.
   - Only `"R"` and `"BP"` are valid types; others become `"R"`.
+
+### Test-case-specific assertion semantics
+
+- Disclosure widget: `Collapsed content is hidden from everyone`
+  - For button-based disclosure implementations, collapsed content must be hidden from assistive technology.
+  - The visual-hidden check is evaluated against the collapsed content area, not decorative container chrome alone.
+  - A collapsed disclosure container may still render decorative borders or similar non-content styling and pass, so long as the content box is collapsed/clipped and the disclosure content itself is not visually exposed.
+- Shopping home page: `Has a skip navigation link`
+  - The page must include at least one link whose accessible name indicates bypassing repeated navigation, such as `Skip nav`, `Skip to main`, `Skip header`, `Jump to main`, or `Go to main`.
+  - The skip link must target the page's single `main` landmark or a same-page fragment target at the start of the main content.
+  - The target must be keyboard focusable, either by being in the focus order or by exposing `tabindex="-1"`.
+  - A target later in the main content does not satisfy this assertion.
+  - If the page does not expose exactly one `main` landmark, this assertion fails.
 - Assertion helpers may return `"na"` when a check has no applicable target on the page, for example when no visible labels, helper text, placeholder text, or recognizable autocomplete purpose exist for that assertion.
 - Required-field assertions may treat a shared visible note such as `All questions are required.` or `All fields are required.` as a valid visual indicator for the relevant required controls or radio groups.
 - For native checkbox or radio groups that visibly require choosing one or at least one option but do not expose a valid group-level programmatic required state, the programmatic required-field assertion may return `"na"` rather than failing each item individually.
@@ -283,7 +322,7 @@ with edge cases:
 - `sample_index` values in `results.json` are 0-based and cover the full range `[0, samples-1]` for multi-sample runs.
 - `pass_at_k` is stored with **string keys** (e.g. `"1"`, `"5"`) for JSON stability.
 - Assertion-level `na` results do not exclude samples from `pass_rate` or `pass@k` denominators. Compatibility fields `n_applicable` and `n_not_applicable` remain available in `aggregates[]`.
-- When prompt variants are present, aggregates are computed per (test, model, variant) and stored with `prompt_variant_id`.
+- When prompt variants are present, aggregates are computed per (prompt case, model, variant) and stored with `prompt_variant_id`.
 
 ---
 
@@ -301,12 +340,13 @@ The report summarizes:
 - Average failure counts per model.
 - Requirement assertion and best-practice assertion rates.
 - Axe WCAG failures and axe best-practice failures tracked separately.
-- When multiple samples exist, per-test/per-model aggregates can be displayed.
+- When multiple samples exist, per-prompt-case/per-model aggregates can be displayed.
 
 When prompt variants exist:
 
 - The main tables reflect the **control** results.
 - The report includes an additional section that compares each variant against control.
+- Each composed prompt case is displayed as its own test entry and surfaces the base test name plus applied prompt dimensions.
 
 ### Acceptance criteria
 
@@ -343,6 +383,8 @@ The runner:
     - boolean, or
     - `{ pass: boolean, message?: string }`, or
     - `{ status: "pass" | "fail" | "na", message?: string }`.
+  - When an assertion fails, the recorded assertion entry includes a human-readable `message`.
+  - For assertion helpers that identify specific failing controls or groups, the failure `message` names those problem elements rather than only reporting a count.
 - Runner output JSON contains (at minimum):
   - `testFunctionResult` with `status` and `assertions`.
     - `status` is determined by requirement assertion failures only.

@@ -1,0 +1,8 @@
+name: Single Checkbox
+base_prompt: |
+  Build a small form with a single consent checkbox for agreeing to terms of use and include a submit button.
+common_requirements:
+  - Wrap the checkbox field in a div with class "form-field".
+  - Include concise helper text for the checkbox.
+  - Make the checkbox required.
+dimensions:
