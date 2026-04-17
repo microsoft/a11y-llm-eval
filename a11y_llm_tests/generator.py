@@ -1171,6 +1171,8 @@ def generate_html_with_agent_meta(
             model_args=model_args,
             agent_limits=limits_cfg,
             use_browser=use_browser,
+            temperature=temperature,
+            seed=seed,
         )
         html = clean_generation(
             extract_agent_html_from_transcript(result.transcript, fallback_html=result.html)
@@ -1191,8 +1193,8 @@ def generate_html_with_agent_meta(
         tokens_out=result.usage.get("completion_tokens"),
         total_tokens=result.usage.get("total_tokens"),
         cost_usd=result.usage.get("total_cost"),
-        seed=None,
-        temperature=None,
+        seed=seed,
+        temperature=temperature,
         system_prompt=base_system_prompt,
         custom_instructions=custom_instructions,
         effective_system_prompt=effective_system_prompt,

@@ -652,6 +652,8 @@ def run_agent_generation(
     model_args: dict[str, Any] | None = None,
     agent_limits: dict[str, Any] | None = None,
     use_browser: bool = True,
+    temperature: float | None = None,
+    seed: int | None = None,
 ) -> AgentGenerationResult:
     """Run a sandboxed Inspect ReAct agent through a one-sample task.
 
@@ -662,6 +664,7 @@ def run_agent_generation(
     from inspect_ai import Task, eval as inspect_eval
     from inspect_ai.agent import react
     from inspect_ai.dataset import Sample
+    from inspect_ai.model import GenerateConfig
     from inspect_ai.tool import bash, mcp_server_sandbox, mcp_tools, python as python_tool, text_editor
 
     limits_cfg = normalize_agent_limits(agent_limits)
@@ -710,6 +713,16 @@ def run_agent_generation(
         truncation="auto",
     )
 
+    generate_config_kwargs: dict[str, Any] = {}
+    if temperature is not None:
+        generate_config_kwargs["temperature"] = temperature
+    if seed is not None:
+        generate_config_kwargs["seed"] = seed
+    max_output = limits_cfg.get("max_output_tokens")
+    if max_output is not None:
+        generate_config_kwargs["max_tokens"] = int(max_output)
+    generate_config = GenerateConfig(**generate_config_kwargs) if generate_config_kwargs else None
+
     task_kwargs: dict[str, Any] = {
         "dataset": [Sample(input=prompt, id="agent-html", sandbox=sandbox)],
         "solver": agent,
@@ -723,6 +736,8 @@ def run_agent_generation(
         "continue_on_fail": False,
         "name": "sandboxed_agent_html_generation",
     }
+    if generate_config is not None:
+        task_kwargs["config"] = generate_config
     if limits_cfg.get("cost_limit") is not None:
         task_kwargs["cost_limit"] = float(limits_cfg["cost_limit"])
 
