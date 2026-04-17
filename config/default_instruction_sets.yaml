@@ -8,16 +8,16 @@ instruction_sets:
     description: Minimal reminder that all output must be accessible.
     system_prompt_append_markdown: instructions/accessible-minimal.md
     # Optional override. If omitted, defaults to the same value as --samples.
-    samples: 1
-  #- id: accessible_basic
-  #  name: 1. Basic
-  #  description: Basic reminder that all output must be accessible (includes slightly more instructions than minimal).
-  #  system_prompt_append_markdown: instructions/accessible-basic.md
-  #  # Optional override. If omitted, defaults to the same value as --samples.
-  #  # samples: 10
-  #- id: detailed
-  #  name: 2. Detailed Instructions
-  #  description: Detailed instructions for accessibility.
-  #  system_prompt_append_markdown: instructions/detailed.md
-  #  # Optional override. If omitted, defaults to the same value as --samples.
-  #  # samples: 10
+    # samples: 10
+  - id: accessible_basic
+    name: 1. Basic
+    description: Basic reminder that all output must be accessible (includes slightly more instructions than minimal).
+    system_prompt_append_markdown: instructions/accessible-basic.md
+    # Optional override. If omitted, defaults to the same value as --samples.
+    # samples: 10
+  - id: detailed
+    name: 2. Detailed Instructions
+    description: Detailed instructions for accessibility.
+    system_prompt_append_markdown: instructions/detailed.md
+    # Optional override. If omitted, defaults to the same value as --samples.
+    # samples: 10
