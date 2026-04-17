@@ -640,6 +640,34 @@ def test_agent_generation_uses_cache_across_runs(monkeypatch, tmp_path: Path):
     assert meta2["cost_usd"] == 0.42
 
 
+def test_agent_cache_does_not_invalidate_direct_cache(monkeypatch, tmp_path: Path):
+    """Agent and direct generation use different cache files so loading an
+    agent entry that misses the transcript sidecar never deletes a valid
+    direct-generation cache entry."""
+    monkeypatch.setattr(generator, "CACHE_DIR", tmp_path / "generations")
+    generator.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    html = "<html><body><h1>direct cached page</h1></body></html>"
+
+    _, direct_cache, direct_meta = generator._cache_artifacts(
+        "test-model", "Build an accessible page", 0, None
+    )
+    _, agent_cache, agent_meta = generator._cache_artifacts(
+        "test-model", "Build an accessible page", 0, None, generation_mode="agent"
+    )
+    # The two cache files must be different paths
+    assert direct_cache != agent_cache
+
+    # Seed the direct cache
+    direct_cache.write_text(html, encoding="utf-8")
+    direct_meta.write_text(json.dumps({"cached": True}), encoding="utf-8")
+
+    # Agent cache miss should NOT touch the direct cache files
+    assert not agent_cache.exists()
+    assert direct_cache.exists()
+    assert direct_meta.exists()
+
+
 def test_cached_agent_transcript_is_repaired_when_it_contains_truncated_submit_preview(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(generator, "CACHE_DIR", tmp_path / "generations")
     generator.CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -650,7 +678,7 @@ def test_cached_agent_transcript_is_repaired_when_it_contains_truncated_submit_p
         "Here is a truncated version:\n<START_TOOL_OUTPUT>"
     )
     prompt_hash_value, cache_file, meta_file = generator._cache_artifacts(
-        "test-model", "Build an accessible page", 0, 123
+        "test-model", "Build an accessible page", 0, 123, generation_mode="agent"
     )
     transcript_file = cache_file.with_suffix(cache_file.suffix + ".agent.json")
 
@@ -705,7 +733,7 @@ def test_cached_agent_html_is_repaired_from_submit_answer_when_html_file_is_corr
     broken_html = "<html><head><style>.x{filter: blur(0, and lifestyle text</style></head><body><h1>bad</h1></body></html>"
     good_html = "<html><head><title>ok</title></head><body><h1>cached agent page</h1></body></html>"
     _prompt_hash_value, cache_file, meta_file = generator._cache_artifacts(
-        "test-model", "Build an accessible page", 0, 123
+        "test-model", "Build an accessible page", 0, 123, generation_mode="agent"
     )
     transcript_file = cache_file.with_suffix(cache_file.suffix + ".agent.json")
 
@@ -847,7 +875,7 @@ def test_agent_generation_does_not_cache_persistently_incomplete_html(monkeypatc
         agent_config={},
     )
 
-    h, cache_file, _meta_file = generator._cache_artifacts("test-model", "Build an accessible page", 0, None)
+    h, cache_file, _meta_file = generator._cache_artifacts("test-model", "Build an accessible page", 0, None, generation_mode="agent")
 
     assert h
     assert calls["count"] == 4
@@ -925,7 +953,7 @@ def test_agent_generation_prefers_transcript_submit_html_over_corrupted_result_h
         agent_config={},
     )
 
-    _, cache_file, _meta_file = generator._cache_artifacts("test-model", "Build an accessible page", 0, None)
+    _, cache_file, _meta_file = generator._cache_artifacts("test-model", "Build an accessible page", 0, None, generation_mode="agent")
 
     assert meta["cached"] is False
     assert html == good_html

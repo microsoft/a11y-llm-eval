@@ -156,7 +156,7 @@ Note: some Codex-style deployments (e.g., certain `*-codex` models) do not accep
 
 Generated HTML is cached under `.cache/generations/`.
 
-Agent-backed generations use the same cache by default. When an agent generation is cached, the harness also caches the agent conversation payload needed to recreate the per-run `.agent.json` sidecar. Cached agent hits do not create a fresh Inspect eval log for the new run.
+Agent-backed generations use a separate cache identity from direct generations. When an agent generation is cached, the harness also caches the agent conversation payload needed to recreate the per-run `.agent.json` sidecar. Cached agent hits do not create a fresh Inspect eval log for the new run.
 
 Cache identity includes:
 
@@ -164,6 +164,7 @@ Cache identity includes:
 - Prompt hash
 - Seed (if provided)
 - Sample iteration index
+- Generation mode (agent vs. direct)
 
 On cache hits, the generator returns `cached: True` and can optionally load token/cost metadata from a `.meta.json` file.
 
@@ -174,8 +175,11 @@ When batch generation is enabled for a provider, cache identity and cache valida
 - Cache files are created at:
   - `.cache/generations/<model>_<promptHash>_s<seed>_i<iteration>.html` (when seed is provided)
   - `.cache/generations/<model>_<promptHash>_i<iteration>.html` (when seed is not provided)
+  - `.cache/generations/<model>_<promptHash>_s<seed>_i<iteration>_agent.html` (agent mode with seed)
+  - `.cache/generations/<model>_<promptHash>_i<iteration>_agent.html` (agent mode without seed)
 - The cache directory may also contain sidecar integrity files (e.g., `.sha256`) alongside cached HTML.
 - Agent-mode cache entries may additionally include a cached transcript sidecar used to recreate the run-local `.agent.json` artifact on cache hits.
+- Direct and agent mode cache entries are independent; running one mode does not invalidate the other.
 - If a cached HTML file is incomplete/corrupted, it is treated as a cache miss and a fresh generation is performed.
 - Debugging: `run --debug-truncated-cache` prints a list of truncated/corrupted cached HTML files at the end of generation and preserves them for inspection.
 - The `--disable-cache` flag forces fresh generation even if a cache entry exists.

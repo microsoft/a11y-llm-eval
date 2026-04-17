@@ -320,11 +320,18 @@ def _agent_eval_cache_path(cache_file: Path) -> Path:
     return cache_file.with_suffix(cache_file.suffix + ".eval")
 
 
-def _cache_artifacts(model: str, user_prompt: str, iteration: int, seed: Optional[int]) -> tuple[str, Path, Path]:
+def _cache_artifacts(
+    model: str,
+    user_prompt: str,
+    iteration: int,
+    seed: Optional[int],
+    generation_mode: Optional[str] = None,
+) -> tuple[str, Path, Path]:
     prompt_hash_value = compute_prompt_hash(user_prompt)
     seed_part = f"_s{seed}" if seed is not None else ""
     iteration_part = f"_i{iteration}"
-    cache_file = CACHE_DIR / f"{model}_{prompt_hash_value}{seed_part}{iteration_part}.html"
+    mode_part = "_agent" if generation_mode == "agent" else ""
+    cache_file = CACHE_DIR / f"{model}_{prompt_hash_value}{seed_part}{iteration_part}{mode_part}.html"
     return prompt_hash_value, cache_file, _meta_path(cache_file)
 
 
@@ -1116,7 +1123,7 @@ def generate_html_with_agent_meta(
     base_system_prompt = get_base_system_prompt()
     custom_instructions = get_custom_instructions()
     effective_system_prompt = get_effective_system_prompt()
-    prompt_hash_value, cache_file, meta_file = _cache_artifacts(model, user_prompt, iteration, seed)
+    prompt_hash_value, cache_file, meta_file = _cache_artifacts(model, user_prompt, iteration, seed, generation_mode="agent")
 
     if not disable_cache and cache_file.exists():
         cached_html, cached_meta, cached_transcript, reason = _load_cached_agent_generation(
