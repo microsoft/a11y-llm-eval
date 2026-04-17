@@ -244,7 +244,7 @@ Schema additions:
 - Each `results[]` record includes `prompt_variant_id` ("control" or the instruction set id).
 - Each `results[]` record includes `base_test_name`, `prompt_case_id`, and `prompt_dimensions` for the composed prompt case.
 - Each `results[]` record may include `generation_conversation_path` for instruction-set samples.
-- Each `results[]` record may include `generation_eval_path` for instruction-set samples when an Inspect eval log file is produced.
+- Each `results[]` record may include `generation_eval_path` for instruction-set samples when an Inspect eval log file is produced or restored from cache.
 - Each `aggregates[]` record includes `prompt_variant_id`.
 - Each `aggregates[]` record includes `base_test_name`, `prompt_case_id`, and `prompt_dimensions` for the composed prompt case.
 - `generation` metadata may additionally include `generation_mode`, `agent_sandbox`, `agent_limit_error`, and `agent_limits`.
@@ -257,7 +257,7 @@ Schema additions:
   - Control samples are still written to `<run_dir>/raw/` using existing naming rules.
   - Variant samples are written to `<run_dir>/raw_variants/<variant_id>/...` using `__s<idx>` naming.
   - Instruction-set variants additionally write a conversation JSON sidecar beside each generated HTML file.
-  - Instruction-set variants use the default generation cache across runs; on cache hits they still write the conversation JSON sidecar, while `generation_eval_path` is only populated when a fresh Inspect eval log is produced for that run.
+  - Instruction-set variants use the default generation cache across runs; on cache hits they still write the conversation JSON sidecar. When a cached `.eval` log exists, it is restored into the run's `inspect_logs/` directory and `generation_eval_path` is populated so the report can link to it. If no cached eval log is available, `generation_eval_path` is left unset.
   - `results.json` includes `meta.prompt_variants` with at least:
     - a `control` entry
     - one entry per configured instruction set
