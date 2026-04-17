@@ -21,7 +21,7 @@ from .schema import (
     PromptVariant,
 )
 from .metrics import compute_pass_at_k, format_pass_at_k
-from .utils import atomic_write_text, cleanup_docker_networks
+from .utils import atomic_write_text, check_docker_network_pool
 
 # importing os module for environment variables
 import os
@@ -613,16 +613,14 @@ def run(
                 gen_tasks.append(queue.pop(0))
                 made_progress = True
 
-    # If any tasks use Docker sandboxes, tear down stale Inspect sandbox
-    # projects and prune networks to avoid address-pool exhaustion ("all
-    # predefined address pools have been fully subnetted").
+    # If any tasks use Docker sandboxes, check that the Docker network
+    # address pool has capacity.  Fail early rather than partway through
+    # a run when new sandboxes can no longer allocate subnets.
     has_agent_tasks = any(
         (t.get("generation_mode") or "direct") != "direct" for t in gen_tasks
     )
     if has_agent_tasks:
-        n_cleaned = cleanup_docker_networks()
-        if n_cleaned:
-            typer.echo(f"Cleaned up {n_cleaned} stale Docker sandbox(es) before agent generation.")
+        check_docker_network_pool()
 
     if gen_tasks:
         pool_size = None
