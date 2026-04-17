@@ -145,11 +145,19 @@ def cleanup_docker_networks(*, quiet: bool = False) -> int:
     networks_pruned = 0
     prune_result = _run([docker, "network", "prune", "--force"])
     if prune_result is not None and prune_result.returncode == 0:
-        networks_pruned = sum(
-            1
-            for line in prune_result.stdout.splitlines()
-            if line.strip() and not line.startswith("Deleted")
-        )
+        # Output format: "Deleted Networks:\n<id>\n...\nTotal reclaimed space: …"
+        # Count only the actual network ID/name lines.
+        in_deleted_section = False
+        for line in prune_result.stdout.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("Deleted Networks"):
+                in_deleted_section = True
+                continue
+            if stripped.startswith("Total reclaimed space"):
+                in_deleted_section = False
+                continue
+            if in_deleted_section and stripped:
+                networks_pruned += 1
 
     return projects_torn_down + networks_pruned
 
