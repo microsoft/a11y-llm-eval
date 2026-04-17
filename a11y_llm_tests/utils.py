@@ -87,10 +87,14 @@ def cleanup_docker_networks(*, quiet: bool = False) -> int:
     sandboxes fail with ``RuntimeError: No services started``.
 
     This function:
-    1. Finds running/stopped containers whose names start with
-       ``inspect-sandboxed_ag-`` (the Inspect naming convention).
-    2. Tears down their Compose projects with ``docker compose down``.
-    3. Finishes with ``docker network prune`` for any orphaned networks.
+    1. Lists Docker networks (``docker network ls``) and selects those whose
+       names start with ``inspect-sandboxed_ag-`` (the Inspect naming
+       convention, e.g. ``inspect-sandboxed_ag-XXXX_default``).
+    2. Derives unique Compose project names by stripping the ``_default``
+       network suffix and tears each one down with
+       ``docker compose -p <project> down --remove-orphans``.
+    3. Finishes with ``docker network prune`` for any remaining orphaned
+       networks.
 
     Returns the total number of Compose projects torn down plus networks pruned
     (0 if Docker is unavailable or nothing needed cleanup).
