@@ -1529,25 +1529,38 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
   all_results = data.get("results", []) or []
 
   def _read_json_for_report(path_str: str | None):
+    """Read a JSON file for embedding in the report.
+
+    Only files that resolve to a location *under* the run directory are
+    read.  Paths that escape the run directory (via ``../`` traversals
+    or unrelated absolute locations) are silently ignored to prevent
+    local-file disclosure when ``results.json`` comes from an untrusted
+    source.
+    """
     if not path_str:
       return None
     raw_path = Path(path_str)
     run_dir = run_json_path.parent
-    candidates = []
-    if raw_path.is_absolute():
-      candidates.append(raw_path)
-    else:
-      candidates.append(run_dir / raw_path)
-      candidates.append(Path.cwd() / raw_path)
-      repo_root = run_dir.parent.parent
-      candidates.append(repo_root / raw_path)
+    resolved_run_dir = run_dir.resolve()
 
-    for candidate in candidates:
-      try:
-        if candidate.exists() and candidate.is_file():
-          return orjson.loads(candidate.read_bytes())
-      except Exception:
-        continue
+    # Build the single candidate: join relative paths onto run_dir,
+    # or use the absolute path directly.
+    if raw_path.is_absolute():
+      candidate = raw_path.resolve()
+    else:
+      candidate = (run_dir / raw_path).resolve()
+
+    # Ensure the resolved path is still under the run directory.
+    try:
+      candidate.relative_to(resolved_run_dir)
+    except ValueError:
+      return None
+
+    try:
+      if candidate.is_file():
+        return orjson.loads(candidate.read_bytes())
+    except Exception:
+      pass
     return None
 
   def _conversation_preview(conversation: dict | None) -> tuple[list[dict[str, str]], int, int | None]:
