@@ -70,8 +70,11 @@ def test_load_prompt_specs_expands_global_and_local_dimensions(tmp_path: Path):
     assert "Single Checkbox | React | Optional" in case_names
 
     first_case = prompt_spec_set.prompt_cases[0]
-    assert first_case.prompt_case_id.startswith("modal-dialog--") or first_case.prompt_case_id.startswith("single-checkbox--")
-    assert "Requirements:" in first_case.prompt_text or "Build a modal" in first_case.prompt_text
+    assert first_case.prompt_case_id == "modal-dialog--framework-vanilla-js"
+    assert first_case.test_name == "Modal Dialog | Vanilla JS"
+    assert first_case.base_test_name == "modal-dialog"
+    assert "Build a modal dialog." in first_case.prompt_text
+    assert "Use vanilla JavaScript." in first_case.prompt_text
 
 
 def test_test_case_filter_selects_single_case(tmp_path: Path):
