@@ -21,12 +21,12 @@ from .schema import (
     PromptVariant,
 )
 from .metrics import compute_pass_at_k, format_pass_at_k
-from .utils import atomic_write_text
+from .utils import atomic_write_text, cleanup_docker_networks
 
 # importing os module for environment variables
 import os
 # importing necessary functions from dotenv library
-from dotenv import load_dotenv, dotenv_values 
+from dotenv import load_dotenv
 # loading variables from .env file
 load_dotenv() 
 
@@ -60,6 +60,8 @@ def _evaluate_worker(args_tuple):
     gen_meta = args_tuple.get("gen_meta") or {}
     prompt_text = args_tuple.get("prompt_text") or ""
     prompt_variant_id = args_tuple.get("prompt_variant_id")
+    generation_conversation_path = args_tuple.get("generation_conversation_path")
+    generation_eval_path = args_tuple.get("generation_eval_path")
     html = Path(html_path).read_text(encoding="utf-8")
     sp = Path(screenshot_path)
     sp.parent.mkdir(parents=True, exist_ok=True)
@@ -118,6 +120,8 @@ def _evaluate_worker(args_tuple):
         model_name=model,
         timestamp=datetime.utcnow(),
         generation_html_path=html_path,
+        generation_conversation_path=generation_conversation_path,
+        generation_eval_path=generation_eval_path,
         screenshot_path=screenshot_path,
         test_function=test_result,
         axe=axe_obj,
@@ -135,6 +139,10 @@ def _evaluate_worker(args_tuple):
             system_prompt=gen_meta.get("system_prompt", generator.get_base_system_prompt()),
             custom_instructions=gen_meta.get("custom_instructions", generator.get_custom_instructions()),
             effective_system_prompt=gen_meta.get("effective_system_prompt", generator.get_effective_system_prompt()),
+            generation_mode=gen_meta.get("generation_mode"),
+            agent_sandbox=gen_meta.get("agent_sandbox"),
+            agent_limit_error=gen_meta.get("agent_limit_error"),
+            agent_limits=gen_meta.get("agent_limits"),
         ),
         sample_index=sample_index,
         prompt_variant_id=prompt_variant_id,
@@ -159,38 +167,63 @@ def _generate_worker(task):
     prompt_variant_id = task.get("prompt_variant_id")
     debug_truncated_cache = task.get("debug_truncated_cache", False)
     html_out_path = task["html_out_path"]
+    conversation_out_path = task.get("conversation_out_path")
     model_display_name = task.get("model_display_name")
     provider_config = task.get("provider_config")
     runtime_log_dir = task.get("runtime_log_dir")
+    generation_mode = task.get("generation_mode") or "direct"
+    agent_config = task.get("agent_config") or {}
 
     # Configure prompts within this worker process for the specific variant.
     generator.configure_prompts(system_prompt_override, custom_instructions_text)
     generator.configure_runtime(runtime_log_dir)
 
-    kwargs = {
-        "temperature": temperature,
-        "seed": seed,
-        "disable_cache": disable_cache,
-    }
-    try:
-        generate_signature = inspect.signature(generator.generate_html_with_meta)
-        if "model_display_name" in generate_signature.parameters:
-            kwargs["model_display_name"] = model_display_name
-        if "provider_config" in generate_signature.parameters:
-            kwargs["provider_config"] = provider_config
-        if "runtime_log_dir" in generate_signature.parameters:
-            kwargs["runtime_log_dir"] = runtime_log_dir
-    except (TypeError, ValueError):
-        pass
+    conversation_payload = None
+    if generation_mode == "inspect_react_agent":
+        html, meta, conversation_payload = generator.generate_html_with_agent_meta(
+            model,
+            prompt_text,
+            sample_index,
+            temperature=temperature,
+            seed=seed,
+            disable_cache=disable_cache,
+            model_display_name=model_display_name,
+            provider_config=provider_config,
+            runtime_log_dir=runtime_log_dir,
+            agent_config=agent_config,
+        )
+    else:
+        kwargs = {
+            "temperature": temperature,
+            "seed": seed,
+            "disable_cache": disable_cache,
+        }
+        try:
+            generate_signature = inspect.signature(generator.generate_html_with_meta)
+            if "model_display_name" in generate_signature.parameters:
+                kwargs["model_display_name"] = model_display_name
+            if "provider_config" in generate_signature.parameters:
+                kwargs["provider_config"] = provider_config
+            if "runtime_log_dir" in generate_signature.parameters:
+                kwargs["runtime_log_dir"] = runtime_log_dir
+        except (TypeError, ValueError):
+            pass
 
-    if debug_truncated_cache:
-        kwargs["debug_truncated_cache"] = True
+        if debug_truncated_cache:
+            kwargs["debug_truncated_cache"] = True
 
-    html, meta = generator.generate_html_with_meta(model, prompt_text, sample_index, **kwargs)
+        html, meta = generator.generate_html_with_meta(model, prompt_text, sample_index, **kwargs)
 
     out_path = Path(html_out_path)
     out_path.parent.mkdir(exist_ok=True, parents=True)
     atomic_write_text(out_path, html, encoding="utf-8")
+
+    conversation_path = None
+    if conversation_payload is not None and conversation_out_path:
+        conversation_target = Path(conversation_out_path)
+        conversation_target.parent.mkdir(exist_ok=True, parents=True)
+        atomic_write_text(conversation_target, json.dumps(conversation_payload, indent=2), encoding="utf-8")
+        conversation_path = str(conversation_target)
 
     # Return only small, picklable data
     return {
@@ -203,6 +236,8 @@ def _generate_worker(task):
         "prompt_text": prompt_text,
         "meta": meta,
         "html_path": str(out_path),
+        "conversation_path": conversation_path,
+        "eval_path": meta.get("agent_eval_path"),
         "prompt_variant_id": prompt_variant_id,
     }
 
@@ -257,6 +292,7 @@ def _provider_batch_enabled(provider_config: Any) -> bool:
 def _batch_group_key(task: dict[str, Any]) -> tuple[Any, ...]:
     provider_config = task.get("provider_config") or {}
     return (
+        task.get("generation_mode") or "direct",
         task.get("model"),
         task.get("seed"),
         task.get("temperature"),
@@ -343,7 +379,11 @@ def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[d
     """
     path = Path(instruction_sets_file)
     if not path.is_absolute():
-        path = (base_dir / path).resolve()
+        cwd_path = path.resolve()
+        if cwd_path.exists():
+            path = cwd_path
+        else:
+            path = (base_dir / path).resolve()
     if not path.exists():
         raise FileNotFoundError(f"Instruction sets file not found: {path}")
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -359,6 +399,10 @@ def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[d
             raise ValueError("Each instruction set must include a non-empty 'id'")
         if sid.lower() == "control":
             raise ValueError("'control' is reserved; choose a different instruction set id")
+        if "generation_mode" in s:
+            raise ValueError(
+                f"Instruction set '{sid}' cannot specify generation_mode; instruction sets always use the inspect_react_agent path"
+            )
         md_path = s.get("system_prompt_append_markdown")
         if not md_path:
             raise ValueError(f"Instruction set '{sid}' must include system_prompt_append_markdown")
@@ -374,6 +418,8 @@ def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[d
             "markdown_path": str(mdp),
             "markdown_text": mdp.read_text(encoding="utf-8"),
             "samples": s.get("samples"),
+            "generation_mode": "inspect_react_agent",
+            "agent": s.get("agent") if isinstance(s.get("agent"), dict) else {},
         })
     return out
 
@@ -391,6 +437,7 @@ def run(
     instruction_sets_file: str = typer.Option(None, help="Optional YAML defining custom instruction sets to benchmark vs control."),
     instruction_samples: int = typer.Option(None, min=1, help="Default samples per instruction set (if not specified in instruction sets file)."),
     test_cases_dir: str = typer.Option("test_cases", help="Directory containing test case folders."),
+    test_cases: str = typer.Option(None, "--test-cases", help="Comma-separated base test case names to include (e.g. single-checkbox,modal-dialog). Defaults to all."),
     processes: int = typer.Option(None, "--processes", "-p", help="Parallel processes for generation (defaults CPU count; use 1 to disable)."),
     debug_truncated_cache: bool = typer.Option(
         False,
@@ -455,9 +502,10 @@ def run(
     model_provider_lookup = normalized_models["model_provider_lookup"]
     models_info = normalized_models["models_info"]
     tcd = Path(test_cases_dir)
+    test_case_filter = [name.strip() for name in test_cases.split(",") if name.strip()] if test_cases else None
     prompt_dimensions_path = _resolve_cli_path(prompt_dimensions_file, config_dir)
     try:
-        prompt_spec_set = load_prompt_specs(tcd, prompt_dimensions_path.resolve())
+        prompt_spec_set = load_prompt_specs(tcd, prompt_dimensions_path.resolve(), test_case_filter=test_case_filter)
     except Exception as exc:
         typer.secho(f"Failed to load prompt specs: {exc}", err=True)
         raise typer.Exit(code=1)
@@ -475,6 +523,8 @@ def run(
         "custom_instructions_path": (None if instruction_sets_file else custom_instructions_path),
         "custom_instructions_text": (None if instruction_sets_file else custom_instructions_text),
         "n_samples_requested": samples,
+        "generation_mode": "direct",
+        "agent": {},
     })
 
     if instruction_sets_file:
@@ -502,6 +552,8 @@ def run(
                 "custom_instructions_path": s.get("markdown_path"),
                 "custom_instructions_text": s.get("markdown_text"),
                 "n_samples_requested": n_int,
+                "generation_mode": "inspect_react_agent",
+                "agent": s.get("agent") or {},
             })
     # Build generation tasks
     results = []  # stub pending evaluation records
@@ -518,9 +570,13 @@ def run(
                     if variant_id == "control":
                         raw_path = out_dir / "raw" / prompt_case.prompt_case_id
                         html_file = raw_path / (f"{model}__s{sample_index}.html" if n_samples > 1 else f"{model}.html")
+                        conversation_file = None
                     else:
                         raw_path = out_dir / "raw_variants" / variant_id / prompt_case.prompt_case_id
                         html_file = raw_path / f"{model}__s{sample_index}.html"
+                        conversation_file = raw_path / f"{model}__s{sample_index}.agent.json"
+
+                    generation_mode = "direct" if variant_id == "control" else "inspect_react_agent"
 
                     tasks_by_model[model].append({
                         "test_name": prompt_case.test_name,
@@ -538,9 +594,12 @@ def run(
                         "prompt_variant_id": variant_id,
                         "debug_truncated_cache": debug_truncated_cache,
                         "html_out_path": str(html_file),
+                        "conversation_out_path": (str(conversation_file) if conversation_file is not None else None),
                         "model_display_name": model_display_lookup.get(model),
                         "runtime_log_dir": str(inspect_logs_dir),
                         "provider_config": model_provider_lookup.get(model),
+                        "generation_mode": generation_mode,
+                        "agent_config": variant.get("agent") or {},
                     })
 
     # Flatten into a single task list using round-robin across models
@@ -554,12 +613,30 @@ def run(
                 gen_tasks.append(queue.pop(0))
                 made_progress = True
 
+    # If any tasks use Docker sandboxes, tear down stale Inspect sandbox
+    # projects and prune networks to avoid address-pool exhaustion ("all
+    # predefined address pools have been fully subnetted").
+    has_agent_tasks = any(
+        (t.get("generation_mode") or "direct") != "direct" for t in gen_tasks
+    )
+    if has_agent_tasks:
+        n_cleaned = cleanup_docker_networks()
+        if n_cleaned:
+            typer.echo(f"Cleaned up {n_cleaned} stale Docker sandbox(es) before agent generation.")
+
     if gen_tasks:
         pool_size = None
         if processes is None:
             pool_size = min(multiprocessing.cpu_count(), len(gen_tasks))
         else:
             pool_size = max(1, processes)
+        # Cap parallelism for agent (Docker sandbox) tasks to avoid exhausting
+        # Docker's network address pool.  Each sandbox allocates a subnet; the
+        # default pool supports ~30 networks, so 4 concurrent sandboxes is a
+        # safe default that leaves headroom for other Docker workloads.
+        _MAX_AGENT_PARALLEL = 4
+        if has_agent_tasks and processes is None and pool_size > _MAX_AGENT_PARALLEL:
+            pool_size = _MAX_AGENT_PARALLEL
         truncated_cache_files: set[str] = set()
         def _consume_generation_results(gen_results_iter):
             total = len(gen_tasks)
@@ -578,6 +655,8 @@ def run(
                 prompt_text = gen_result["prompt_text"]
                 meta = gen_result.get("meta") or {}
                 html_path = gen_result["html_path"]
+                conversation_path = gen_result.get("conversation_path")
+                eval_path = gen_result.get("eval_path")
                 prompt_variant_id = gen_result.get("prompt_variant_id")
 
                 if debug_truncated_cache and isinstance(meta, dict):
@@ -597,6 +676,8 @@ def run(
                     model_name=model,
                     timestamp=datetime.utcnow(),
                     generation_html_path=str(html_path),
+                    generation_conversation_path=conversation_path,
+                    generation_eval_path=eval_path,
                     screenshot_path=None,
                     test_function=TestFunctionResult(status="PENDING", assertions=[], error=None, duration_ms=None),
                     axe=None,
@@ -614,13 +695,20 @@ def run(
                         system_prompt=meta.get("system_prompt", generator.get_base_system_prompt()),
                         custom_instructions=meta.get("custom_instructions", generator.get_custom_instructions()),
                         effective_system_prompt=meta.get("effective_system_prompt", generator.get_effective_system_prompt()),
+                        generation_mode=meta.get("generation_mode"),
+                        agent_sandbox=meta.get("agent_sandbox"),
+                        agent_limit_error=meta.get("agent_limit_error"),
+                        agent_limits=meta.get("agent_limits"),
                     ),
                     sample_index=sample_index,
                     prompt_variant_id=variant_id,
                 )
                 results.append(json.loads(rec.model_dump_json()))
 
-        batch_supported = hasattr(generator, "generate_html_batch_with_meta") and generator.supports_batch_generation()
+        batch_supported = (
+            hasattr(generator, "generate_html_batch_with_meta")
+            and generator.supports_batch_generation()
+        )
         indexed_tasks = list(enumerate(gen_tasks))
         batched_groups: list[list[tuple[int, dict[str, Any]]]] = []
         single_indexed_tasks: list[tuple[int, dict[str, Any]]] = []
@@ -629,7 +717,7 @@ def run(
             grouped_tasks: dict[tuple[Any, ...], list[tuple[int, dict[str, Any]]]] = {}
             for indexed_task in indexed_tasks:
                 task = indexed_task[1]
-                if _provider_batch_enabled(task.get("provider_config")):
+                if (task.get("generation_mode") or "direct") == "direct" and _provider_batch_enabled(task.get("provider_config")):
                     grouped_tasks.setdefault(_batch_group_key(task), []).append(indexed_task)
                 else:
                     single_indexed_tasks.append(indexed_task)
@@ -709,6 +797,9 @@ def run(
                 description=v.get("description"),
                 custom_instructions_path=v.get("custom_instructions_path"),
                 n_samples_requested=v.get("n_samples_requested"),
+                generation_mode=v.get("generation_mode"),
+                agent_sandbox=generator.format_agent_sandbox((v.get("agent") or {}).get("sandbox")),
+                agent_limits=(v.get("agent") or {}).get("limits"),
             ).model_dump_json()) for v in prompt_variants],
             "prompt_cases": [json.loads(PromptCase(
                 id=pc["id"],
@@ -740,6 +831,7 @@ def run(
 def evaluate(
     run_dir: str = typer.Argument(..., help="Existing run directory produced by 'run' command"),
     test_cases_dir: str = typer.Option("test_cases", help="Directory containing test case folders."),
+    test_cases: str = typer.Option(None, "--test-cases", help="Comma-separated base test case names to evaluate (e.g. single-checkbox,modal-dialog). Defaults to all."),
     k: str = typer.Option("1,5,10", help="Comma-separated k values for pass@k metrics."),
     generate_report: bool = typer.Option(True, help="Generate HTML report (index.html) after evaluation."),
     processes: int = typer.Option(None, "--processes", "-p", help="Number of parallel processes for evaluation (defaults to CPU count; use 1 to disable)."),
@@ -776,6 +868,7 @@ def evaluate(
 
     # Build evaluation task list
     tasks = []
+    test_case_filter = set(name.strip() for name in test_cases.split(",") if name.strip()) if test_cases else None
     test_js_lookup = {
         p.name: p / "test.js"
         for p in sorted(tcd.iterdir())
@@ -789,6 +882,8 @@ def evaluate(
             if not html_path:
                 continue
             base_test_name = result.get("base_test_name") or result.get("test_name")
+            if test_case_filter and base_test_name not in test_case_filter:
+                continue
             test_js = test_js_lookup.get(base_test_name)
             if test_js is None:
                 typer.secho(f"Skipping missing test.js for base test '{base_test_name}'", err=True)
@@ -813,6 +908,8 @@ def evaluate(
                 "html_path": str(html_path),
                 "test_js_path": str(test_js),
                 "screenshot_path": str(screenshot_path),
+                "generation_conversation_path": result.get("generation_conversation_path"),
+                "generation_eval_path": result.get("generation_eval_path"),
                 "test_name": test_name,
                 "base_test_name": base_test_name,
                 "prompt_case_id": prompt_case_id,
@@ -826,6 +923,8 @@ def evaluate(
     else:
         typer.secho("No prior generation records found in results.json; falling back to legacy directory scan.", err=True)
         for base_test_name, test_js in test_js_lookup.items():
+            if test_case_filter and base_test_name not in test_case_filter:
+                continue
             raw_dir = rd / "raw" / base_test_name
             if not raw_dir.exists():
                 continue
@@ -846,6 +945,8 @@ def evaluate(
                     "html_path": str(hf),
                     "test_js_path": str(test_js),
                     "screenshot_path": str(_default_screenshot_path(rd, base_test_name, base_test_name, model, sample_index, "control")),
+                    "generation_conversation_path": None,
+                    "generation_eval_path": None,
                     "test_name": base_test_name,
                     "base_test_name": base_test_name,
                     "prompt_case_id": base_test_name,

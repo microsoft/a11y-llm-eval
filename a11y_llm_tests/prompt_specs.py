@@ -95,7 +95,11 @@ def _compose_prompt(
     return "\n".join(lines).strip()
 
 
-def load_prompt_specs(test_cases_dir: str | Path, global_dimensions_file: str | Path) -> PromptSpecSet:
+def load_prompt_specs(
+    test_cases_dir: str | Path,
+    global_dimensions_file: str | Path,
+    test_case_filter: list[str] | None = None,
+) -> PromptSpecSet:
     test_cases_root = Path(test_cases_dir)
     global_config_path = Path(global_dimensions_file)
 
@@ -109,6 +113,17 @@ def load_prompt_specs(test_cases_dir: str | Path, global_dimensions_file: str | 
         p for p in test_cases_root.iterdir()
         if p.is_dir() and (p / "prompt.yaml").exists()
     )
+
+    if test_case_filter is not None:
+        available_names = {p.name for p in test_dirs}
+        unknown = [name for name in test_case_filter if name not in available_names]
+        if unknown:
+            raise ValueError(
+                f"Unknown test case(s): {', '.join(sorted(unknown))}. "
+                f"Available: {', '.join(sorted(available_names))}"
+            )
+        filter_set = set(test_case_filter)
+        test_dirs = [p for p in test_dirs if p.name in filter_set]
 
     prompt_cases: list[PromptCaseDefinition] = []
     prompt_cases_meta: list[dict[str, Any]] = []

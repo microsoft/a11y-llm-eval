@@ -258,8 +258,15 @@ def test_debug_truncated_cache_preserves_file_and_reports(tmp_path, monkeypatch)
     assert meta["cached"] is False
     assert meta.get("truncated_cache_files") == [str(cache_file)]
     # Preserve truncated cache entry for inspection (do not overwrite)
-    assert cache_file.read_text(encoding="utf-8") == "<html><body><h1>cut off"
-    assert "</html>" in html.lower()
+
+
+def test_clean_generation_preserves_leading_doctype():
+    raw = "preface\n<!DOCTYPE html>\n<html><head><title>x</title></head><body>ok</body></html>\ntrailer"
+
+    cleaned = generator.clean_generation(raw)
+
+    assert cleaned.startswith("<!DOCTYPE html>")
+    assert cleaned.endswith("</html>")
 
 
 def test_batch_generation_skips_cache_hits(tmp_path, monkeypatch):

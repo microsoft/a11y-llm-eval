@@ -63,6 +63,10 @@ class GenerationMeta(BaseModel):
     system_prompt: Optional[str] = None
     custom_instructions: Optional[str] = None
     effective_system_prompt: Optional[str] = None
+    generation_mode: Optional[str] = None
+    agent_sandbox: Optional[str] = None
+    agent_limit_error: Optional[str] = None
+    agent_limits: Optional[Dict[str, Any]] = None
 
 
 class PromptVariant(BaseModel):
@@ -77,6 +81,9 @@ class PromptVariant(BaseModel):
     description: Optional[str] = None
     custom_instructions_path: Optional[str] = None
     n_samples_requested: Optional[int] = None
+    generation_mode: Optional[str] = None
+    agent_sandbox: Optional[str] = None
+    agent_limits: Optional[Dict[str, Any]] = None
 
 
 class PromptDimensionAssignment(BaseModel):
@@ -101,6 +108,8 @@ class ResultRecord(BaseModel):
     model_name: str
     timestamp: datetime
     generation_html_path: str
+    generation_conversation_path: Optional[str] = None
+    generation_eval_path: Optional[str] = None
     screenshot_path: Optional[str]
     test_function: TestFunctionResult
     axe: Optional[AxeResult]
@@ -110,18 +119,6 @@ class ResultRecord(BaseModel):
     sample_index: Optional[int] = None
     # Prompt variant identifier. None or "control" for baseline runs.
     prompt_variant_id: Optional[str] = None
-
-
-class RunSummary(BaseModel):
-    run_id: str
-    created_at: datetime
-    results: List[ResultRecord]
-    models: List[str]
-    tests: List[str]
-
-
-class AggregateStats(BaseModel):
-    per_model: Dict[str, Dict[str, Any]]
 
 
 class AggregateRecord(BaseModel):

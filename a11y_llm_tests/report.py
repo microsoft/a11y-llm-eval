@@ -232,6 +232,54 @@ figure img {
   color: var(--text-primary);
   box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.12);
 }
+.transcript-summary {
+  margin-top: 0.75rem;
+  font-size: 0.92rem;
+}
+.transcript-meta {
+  color: var(--text-secondary);
+  margin: 0.35rem 0 0.65rem;
+}
+.transcript-turns {
+  display: grid;
+  gap: 0.35rem;
+}
+.transcript-turn {
+  padding: 0.35rem 0.65rem;
+  border-left: 3px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-muted) 50%, transparent);
+  border-radius: 0 0.4rem 0.4rem 0;
+}
+.transcript-turn-header {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-primary);
+}
+.transcript-turn-msg {
+  margin: 0.15rem 0;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+.transcript-turn-msg-label {
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+}
+.transcript-turn-prompt {
+  margin: 0.2rem 0 0;
+}
+.transcript-tool-list {
+  margin: 0.15rem 0 0;
+  font-size: 0.82rem;
+  color: #d97706;
+}
+.transcript-turn-system { border-left-color: #64748b; }
+.transcript-turn-user { border-left-color: #2563eb; }
+.transcript-turn-assistant { border-left-color: #16a34a; }
 .agg-table { margin-top: 1rem; }
 /* Heatmap cells for pass@k tables */
 .pass-at-k-cell {
@@ -607,6 +655,9 @@ details li { margin-bottom: 0.35rem; }
           <summary>{{ v.name }}</summary>
           {% if v.description %}<p>{{ v.description }}</p>{% endif %}
           {% if v.n_samples_requested %}<p><strong>Variant samples per (test, model):</strong> {{ v.n_samples_requested }}</p>{% endif %}
+          {% if v.generation_mode %}<p><strong>Generation mode:</strong> {{ v.generation_mode }}</p>{% endif %}
+          {% if v.agent_sandbox %}<p><strong>Sandbox:</strong> {{ v.agent_sandbox }}</p>{% endif %}
+          {% if v.agent_limits %}<pre class="prompt-block">{{ v.agent_limits|tojson(indent=2) }}</pre>{% endif %}
           {% if v.custom_instructions_markdown %}
             <pre class="prompt-block">{{ v.custom_instructions_markdown|e }}</pre>
           {% else %}
@@ -1016,6 +1067,9 @@ details li { margin-bottom: 0.35rem; }
           </p>
           <p><span class="badge-{{ 'pass' if r.result=='PASS' else 'fail' }}">{{ r.result }}</span> | Latency {{ '%.2f'|format(r.generation.latency_s) }}s{% if r.generation.cached %} cached{% endif %}</p>
           <p>Axe WCAG: {{ r.axe.failure_count if r.axe else 'n/a' }}{% if r.axe and r.axe.best_practice_count > 0 %} | BP: {{ r.axe.best_practice_count }}{% endif %}{% if r.generation.cost_usd is not none %} | ${{ '%.4f'|format(r.generation.cost_usd) }}{% endif %}</p>
+          {% if r.generation.generation_mode %}
+          <p><strong>Generation mode:</strong> {{ r.generation.generation_mode }}{% if r.generation.agent_sandbox %} | <strong>Sandbox:</strong> {{ r.generation.agent_sandbox }}{% endif %}</p>
+          {% endif %}
           {% if r.screenshot_path %}
             {# Trim the first two path segments (e.g., 'runs/<run_id>/...') #}
             {% set _parts = r.screenshot_path.split('/') %}
@@ -1023,6 +1077,32 @@ details li { margin-bottom: 0.35rem; }
             <figure>
               <img src="{{ _trimmed }}" alt="Screenshot sample {{ r.sample_index }} for {{ r.test_name }} / {{ model_display_names.get(r.model_name, r.model_name) }}" style="max-width:320px;">
             </figure>
+          {% endif %}
+          {% if r.generation_conversation %}
+          <details class="transcript-summary">
+            <summary>Agent conversation ({{ r.generation_conversation.message_count }} messages{% if r.generation_conversation.entry_count is not none %}, {{ r.generation_conversation.entry_count }} entries{% endif %}{% if r.generation.agent_limit_error %}, limit: {{ r.generation.agent_limit_error }}{% endif %})</summary>
+            {% if r.generation_conversation.turns %}
+              <div class="transcript-turns">
+                {% for turn in r.generation_conversation.turns %}
+                  <div class="transcript-turn transcript-turn-{{ turn.role }}">
+                    <p class="transcript-turn-header">{{ turn.role_label }}</p>
+                    {% for msg in turn.messages %}
+                      {% if msg.label == 'Prompt' %}
+                        <pre class="prompt-block transcript-turn-prompt">{{ msg.content|e }}</pre>
+                      {% else %}
+                        <p class="transcript-turn-msg"><span class="transcript-turn-msg-label">{{ msg.label }}:</span> {{ msg.content|e }}</p>
+                      {% endif %}
+                    {% endfor %}
+                    {% if turn.tool_calls %}
+                      <p class="transcript-tool-list">{% for tc in turn.tool_calls %}{{ tc|e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</p>
+                    {% endif %}
+                  </div>
+                {% endfor %}
+              </div>
+            {% else %}
+              <p><em>No transcript preview available.</em></p>
+            {% endif %}
+          </details>
           {% endif %}
           <details>
             <summary>
@@ -1446,6 +1526,242 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
   from collections import defaultdict
 
   all_results = data.get("results", []) or []
+
+  def _read_json_for_report(path_str: str | None):
+    if not path_str:
+      return None
+    raw_path = Path(path_str)
+    run_dir = run_json_path.parent
+    candidates = []
+    if raw_path.is_absolute():
+      candidates.append(raw_path)
+    else:
+      candidates.append(run_dir / raw_path)
+      candidates.append(Path.cwd() / raw_path)
+      repo_root = run_dir.parent.parent
+      candidates.append(repo_root / raw_path)
+
+    for candidate in candidates:
+      try:
+        if candidate.exists() and candidate.is_file():
+          return orjson.loads(candidate.read_bytes())
+      except Exception:
+        continue
+    return None
+
+  def _conversation_preview(conversation: dict | None) -> tuple[list[dict[str, str]], int, int | None]:
+    if not isinstance(conversation, dict):
+      return [], 0, None
+
+    def _looks_like_html(text):
+      normalized = text.lstrip().lower()
+      return (
+        normalized.startswith("<!doctype html")
+        or normalized.startswith("<html")
+        or normalized.startswith("<body")
+      )
+
+    def _text_value(value):
+      if isinstance(value, str):
+        text = value.strip()
+        return text or None
+      if isinstance(value, (int, float, bool)):
+        return str(value)
+      return None
+
+    def _is_noise(text):
+      lowered = text.lower()
+      if len(text) > 1000:
+        return True
+      if "opaque" in lowered and "reasoning" in lowered:
+        return True
+      if "chain-of-thought" in lowered or "chain of thought" in lowered:
+        return True
+      if "here's the result of running `cat -n`" in lowered or lowered.startswith("```bash"):
+        return True
+      return False
+
+    def _append_entry(entries, seen, kind, label, content):
+      text = _text_value(content)
+      if not text:
+        return
+      if _looks_like_html(text):
+        return
+      if _is_noise(text):
+        return
+      key = (kind, label, text)
+      if key in seen:
+        return
+      seen.add(key)
+      entries.append({"kind": kind, "label": label, "content": text})
+
+    def _summarize_tool_call(call):
+      if not isinstance(call, dict):
+        return None
+      function_name = call.get("function") or call.get("name") or "tool"
+      arguments = call.get("arguments")
+      summary_bits = []
+      if isinstance(arguments, dict):
+        command = arguments.get("command") or arguments.get("cmd")
+        path = arguments.get("path")
+        if isinstance(command, str) and command.strip():
+          summary_bits.append(command.strip())
+        if isinstance(path, str) and path.strip():
+          summary_bits.append(path.strip())
+      if summary_bits:
+        return f"Used {function_name}: {' | '.join(summary_bits)}"
+      return f"Used {function_name}."
+
+    def _content_blocks(content):
+      if content is None:
+        return []
+      if isinstance(content, str):
+        text = content.strip()
+        return [text] if text and not _looks_like_html(text) and not _is_noise(text) else []
+      if isinstance(content, list):
+        parts = []
+        for item in content:
+          if isinstance(item, str):
+            text = item.strip()
+            if text and not _looks_like_html(text) and not _is_noise(text):
+              parts.append(text)
+            continue
+          if not isinstance(item, dict):
+            continue
+          item_type = item.get("type")
+          if item_type == "reasoning":
+            summary = _text_value(item.get("summary"))
+            if summary and not _is_noise(summary):
+              parts.append(summary)
+            continue
+          if item_type == "text":
+            text = _text_value(item.get("text"))
+            if text and not _looks_like_html(text) and not _is_noise(text):
+              parts.append(text)
+            continue
+          if item_type == "tool_result":
+            text = _text_value(item.get("content")) or _text_value(item.get("output")) or _text_value(item.get("result"))
+            if text and not _looks_like_html(text) and not _is_noise(text):
+              parts.append(text)
+        return parts
+      if isinstance(content, dict):
+        text = _text_value(content.get("text")) or _text_value(content.get("content"))
+        if text and not _looks_like_html(text) and not _is_noise(text):
+          return [text]
+      return []
+
+    entries = []
+    seen = set()
+    messages = conversation.get("messages") or []
+    for message in messages:
+      if not isinstance(message, dict):
+        continue
+      role = str(message.get("role") or "message").lower()
+
+      if role == "assistant":
+        for call in message.get("tool_calls") or []:
+          summary = _summarize_tool_call(call)
+          if summary:
+            _append_entry(entries, seen, "assistant", "Agent action", summary)
+
+      blocks = _content_blocks(message.get("content"))
+      if not blocks:
+        blocks = _content_blocks(message.get("text"))
+      if not blocks:
+        blocks = _content_blocks(message.get("summary"))
+
+      if not blocks:
+        continue
+
+      label = {
+        "system": "Instructions",
+        "user": "Prompt",
+        "assistant": "Agent",
+        "tool": "Tool result",
+      }.get(role, role.capitalize())
+      kind = role if role in {"system", "user", "assistant"} else "assistant"
+      for block in blocks:
+        _append_entry(entries, seen, kind, label, block)
+
+    events = conversation.get("events") or []
+    for event in events:
+      if not isinstance(event, dict):
+        continue
+      name = event.get("name") or event.get("tool") or event.get("type") or event.get("event") or "event"
+      args = event.get("arguments") or event.get("args") or event.get("input") or event.get("payload") or {}
+      if not isinstance(args, dict):
+        args = {}
+      command = args.get("command") or event.get("command")
+      path = args.get("path") or event.get("path")
+      bits = []
+      command_text = _text_value(command)
+      path_text = _text_value(path)
+      if command_text:
+        bits.append(command_text)
+      if path_text:
+        bits.append(path_text)
+      if bits:
+        _append_entry(entries, seen, "assistant", "Agent action", f"Used {name}: {' | '.join(bits)}")
+      else:
+        _append_entry(entries, seen, "assistant", "Agent action", f"Used {name}.")
+
+      result_text = (
+        _text_value(event.get("human_readable_result"))
+        or _text_value(event.get("message"))
+        or _text_value(event.get("result"))
+        or _text_value(event.get("summary"))
+      )
+      if result_text and not _looks_like_html(result_text) and not _is_noise(result_text):
+        _append_entry(entries, seen, "assistant", f"{name} result", result_text)
+
+    output = conversation.get("output") or {}
+    if isinstance(output, dict):
+      completion = _text_value(output.get("completion") or output.get("text") or output.get("content"))
+      if completion:
+        if _looks_like_html(completion):
+          _append_entry(entries, seen, "assistant", "Final answer", "Submitted final HTML document.")
+        else:
+          _append_entry(entries, seen, "assistant", "Final answer", completion)
+
+    event_count = len(events) if isinstance(events, list) else None
+    return entries, len(messages), event_count
+
+  def _build_turns(entries: list[dict[str, str]]) -> list[dict]:
+    """Group flat entries into role-based turns for compact rendering."""
+    turns: list[dict] = []
+    current: dict | None = None
+    for entry in entries:
+      kind = entry["kind"]
+      label = entry["label"]
+      content = entry["content"]
+      if current is None or current["role"] != kind:
+        current = {
+          "role": kind,
+          "role_label": {"system": "System", "user": "User", "assistant": "Agent"}.get(kind, kind.capitalize()),
+          "messages": [],
+          "tool_calls": [],
+        }
+        turns.append(current)
+      if label == "Agent action":
+        current["tool_calls"].append(content)
+      else:
+        current["messages"].append({"label": label, "content": content})
+    return turns
+
+  for result in all_results:
+    conversation_path = result.get("generation_conversation_path")
+    conversation = _read_json_for_report(conversation_path)
+    if not conversation:
+      continue
+    entries, message_count, event_count = _conversation_preview(conversation)
+    result["generation_conversation"] = {
+      "path": conversation_path,
+      "entries": entries,
+      "turns": _build_turns(entries),
+      "entry_count": len(entries),
+      "message_count": message_count,
+      "event_count": event_count,
+    }
 
   def _split_message_items(text: str) -> list[str]:
     items = []
@@ -2217,6 +2533,9 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         "name": variant_name,
         "description": pv.get("description"),
         "n_samples_requested": pv.get("n_samples_requested"),
+        "generation_mode": pv.get("generation_mode"),
+        "agent_sandbox": pv.get("agent_sandbox"),
+        "agent_limits": pv.get("agent_limits"),
         "custom_instructions_path": custom_instructions_path,
         "custom_instructions_markdown": custom_instructions_markdown,
       })

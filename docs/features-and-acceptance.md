@@ -57,6 +57,8 @@ The harness supports a two-phase workflow:
   - Writes `<run_dir>/results.json` with:
     - `meta.status == "GENERATED_ONLY"`.
     - `aggregates == []` (must be empty pre-evaluation).
+  - `--test-cases single-checkbox,modal-dialog` limits generation to only the named base test cases. All dimension variants of the selected tests are still generated. Defaults to all test cases when omitted.
+    - Unknown test case names produce a clear error listing available names.
 - `python -m a11y_llm_tests.cli evaluate <run_dir> ...`:
   - Requires an existing run directory.
   - Writes/overwrites `<run_dir>/results.json` with:
@@ -64,6 +66,7 @@ The harness supports a two-phase workflow:
     - `results` containing evaluated records.
     - `aggregates` containing pass@k records (see Sampling section).
   - If report generation is enabled (default), writes `<run_dir>/index.html`.
+  - `--test-cases single-checkbox,modal-dialog` limits evaluation to only the named base test cases from the existing run. Defaults to all test cases when omitted.
 
 ---
 
@@ -105,6 +108,8 @@ Generation uses the Inspect-backed harness runtime with:
 - A user message that is the composed prompt case text built from `prompt.yaml` plus the configured global prompt dimensions.
 
 For providers that do not opt out, generation may submit multiple uncached prompts together for the same model when their effective request settings match.
+
+Mixed direct-plus-agent runs may batch eligible non-agent requests while agent requests execute per-request.
 
 The effective system prompt is:
 
@@ -151,6 +156,8 @@ Note: some Codex-style deployments (e.g., certain `*-codex` models) do not accep
 
 Generated HTML is cached under `.cache/generations/`.
 
+Agent-backed generations use the same cache by default. When an agent generation is cached, the harness also caches the agent conversation payload needed to recreate the per-run `.agent.json` sidecar. Cached agent hits do not create a fresh Inspect eval log for the new run.
+
 Cache identity includes:
 
 - Model name
@@ -168,6 +175,7 @@ When batch generation is enabled for a provider, cache identity and cache valida
   - `.cache/generations/<model>_<promptHash>_s<seed>_i<iteration>.html` (when seed is provided)
   - `.cache/generations/<model>_<promptHash>_i<iteration>.html` (when seed is not provided)
 - The cache directory may also contain sidecar integrity files (e.g., `.sha256`) alongside cached HTML.
+- Agent-mode cache entries may additionally include a cached transcript sidecar used to recreate the run-local `.agent.json` artifact on cache hits.
 - If a cached HTML file is incomplete/corrupted, it is treated as a cache miss and a fresh generation is performed.
 - Debugging: `run --debug-truncated-cache` prints a list of truncated/corrupted cached HTML files at the end of generation and preserves them for inspection.
 - The `--disable-cache` flag forces fresh generation even if a cache entry exists.
@@ -217,19 +225,26 @@ This is enabled via `run --instruction-sets-file <path>`.
   - Control is generated using the configured base system prompt **with no custom instructions**.
 - Each instruction set is benchmarked **separately** (no combining instruction sets).
 - Instruction sets may request a different number of samples than control.
+- Instruction sets always use the sandboxed Inspect ReAct agent path.
+- Instruction-set YAML does not support `generation_mode`; configs that specify it are invalid.
+- Instruction sets may declare `agent.sandbox` as an Inspect sandbox spec (for Docker compose, a two-item value equivalent to `("docker", "compose.yaml")`) plus additive `agent.limits` overrides.
 
 Artifacts for variants are written under separate directories:
 
 - Variant HTML: `<run_dir>/raw_variants/<variant_id>/<prompt_case_id>/<model>__s<sample_index>.html`
+- Agent conversation sidecar for agent-mode variants: `<run_dir>/raw_variants/<variant_id>/<prompt_case_id>/<model>__s<sample_index>.agent.json`
 - Variant screenshots: `<run_dir>/screenshots_variants/<variant_id>/<prompt_case_id>__<model>__s<sample_index>.png`
 
 Schema additions:
 
 - Each `results[]` record includes `prompt_variant_id` ("control" or the instruction set id).
 - Each `results[]` record includes `base_test_name`, `prompt_case_id`, and `prompt_dimensions` for the composed prompt case.
+- Each `results[]` record may include `generation_conversation_path` for instruction-set samples.
+- Each `results[]` record may include `generation_eval_path` for instruction-set samples when an Inspect eval log file is produced.
 - Each `aggregates[]` record includes `prompt_variant_id`.
 - Each `aggregates[]` record includes `base_test_name`, `prompt_case_id`, and `prompt_dimensions` for the composed prompt case.
-- `meta.prompt_variants` describes the variants included in the run (id/name/description/custom instruction path/sample count).
+- `generation` metadata may additionally include `generation_mode`, `agent_sandbox`, `agent_limit_error`, and `agent_limits`.
+- `meta.prompt_variants` describes the variants included in the run (id/name/description/custom instruction path/sample count, and agent metadata for instruction sets).
 - `meta.prompt_cases` describes the expanded prompt cases included in the run.
 
 ### Acceptance criteria
@@ -237,6 +252,8 @@ Schema additions:
 - When `--instruction-sets-file` is provided:
   - Control samples are still written to `<run_dir>/raw/` using existing naming rules.
   - Variant samples are written to `<run_dir>/raw_variants/<variant_id>/...` using `__s<idx>` naming.
+  - Instruction-set variants additionally write a conversation JSON sidecar beside each generated HTML file.
+  - Instruction-set variants use the default generation cache across runs; on cache hits they still write the conversation JSON sidecar, while `generation_eval_path` is only populated when a fresh Inspect eval log is produced for that run.
   - `results.json` includes `meta.prompt_variants` with at least:
     - a `control` entry
     - one entry per configured instruction set
@@ -350,6 +367,7 @@ When prompt variants exist:
 - The main tables reflect the **control** results.
 - The report includes an additional section that compares each variant against control.
 - Each composed prompt case is displayed as its own test entry and surfaces the base test name plus applied prompt dimensions.
+- If a sample includes `generation_conversation_path`, the sample details show an agent conversation section with a transcript preview.
 
 ### Acceptance criteria
 

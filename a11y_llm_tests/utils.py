@@ -8,16 +8,6 @@ import tempfile
 from pathlib import Path
 
 
-def ensure_single_html(doc: str) -> str:
-    """Return only the first <html>...</html> segment if multiple exist."""
-    lower = doc.lower()
-    if "<html" in lower and "</html>" in lower:
-        start = lower.index("<html")
-        end = lower.index("</html>") + len("</html>")
-        return doc[start:end]
-    return doc
-
-
 def is_probably_complete_html(html: str) -> bool:
     """Heuristic truncation detector for standalone HTML documents.
 
@@ -86,6 +76,78 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
 
 def atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
     atomic_write_bytes(path, text.encode(encoding))
+
+
+def cleanup_docker_networks(*, quiet: bool = False) -> int:
+    """Tear down stale Inspect sandbox Compose projects and prune networks.
+
+    Inspect AI creates a Docker Compose project per sandbox sample.  If cleanup
+    fails (e.g. the eval errors out), containers keep running and their networks
+    remain allocated.  When the predefined address pool is fully subnetted new
+    sandboxes fail with ``RuntimeError: No services started``.
+
+    This function:
+    1. Finds running/stopped containers whose names start with
+       ``inspect-sandboxed_ag-`` (the Inspect naming convention).
+    2. Tears down their Compose projects with ``docker compose down``.
+    3. Finishes with ``docker network prune`` for any orphaned networks.
+
+    Returns the total number of Compose projects torn down plus networks pruned
+    (0 if Docker is unavailable or nothing needed cleanup).
+    """
+    import shutil
+    import subprocess
+
+    docker = shutil.which("docker")
+    if docker is None:
+        return 0
+
+    def _run(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess[str] | None:
+        try:
+            return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+
+    # 1. Discover stale Inspect sandbox Compose projects via their networks.
+    result = _run([docker, "network", "ls", "--format", "{{.Name}}"])
+    if result is None or result.returncode != 0:
+        return 0
+
+    # Inspect names networks like "inspect-sandboxed_ag-<id>_default"
+    inspect_networks = [
+        name.strip()
+        for name in result.stdout.splitlines()
+        if name.strip().startswith("inspect-sandboxed_ag-")
+    ]
+
+    # Derive unique Compose project names (network name minus the "_default" suffix).
+    projects_torn_down = 0
+    seen_projects: set[str] = set()
+    for net_name in inspect_networks:
+        # "inspect-sandboxed_ag-XXXX_default" → project "inspect-sandboxed_ag-XXXX"
+        project = net_name.rsplit("_", 1)[0] if net_name.endswith("_default") else net_name
+        if project in seen_projects:
+            continue
+        seen_projects.add(project)
+
+        down_result = _run(
+            [docker, "compose", "-p", project, "down", "--remove-orphans", "--timeout", "5"],
+            timeout=30,
+        )
+        if down_result is not None and down_result.returncode == 0:
+            projects_torn_down += 1
+
+    # 2. Prune any remaining dangling networks.
+    networks_pruned = 0
+    prune_result = _run([docker, "network", "prune", "--force"])
+    if prune_result is not None and prune_result.returncode == 0:
+        networks_pruned = sum(
+            1
+            for line in prune_result.stdout.splitlines()
+            if line.strip() and not line.startswith("Deleted")
+        )
+
+    return projects_torn_down + networks_pruned
 
 
 def write_sha256_sidecar(target_path: Path, data: bytes) -> None:

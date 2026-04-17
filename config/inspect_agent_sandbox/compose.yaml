@@ -1,0 +1,8 @@
+services:
+  default:
+    image: mcr.microsoft.com/playwright/python:v1.55.0-noble
+    init: true
+    working_dir: /workspace
+    command: ["bash", "-lc", "mkdir -p /workspace /tmp/playwright-mcp && sleep infinity"]
+    environment:
+      HOME: /root

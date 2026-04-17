@@ -5,7 +5,16 @@ from pathlib import Path
 from typing import Tuple, Dict, Any, Optional
 import json
 
-from .inspect_runtime import GenerationRequest, InspectGenerationRuntime
+from .inspect_runtime import (
+    AgentGenerationResult,
+    GenerationRequest,
+    InspectGenerationRuntime,
+    extract_agent_html_from_transcript,
+    normalize_agent_transcript,
+    normalize_agent_limits,
+    run_agent_generation,
+)
+from .model_config import get_model_provider
 from .utils import (
     atomic_write_bytes,
     atomic_write_text,
@@ -109,15 +118,6 @@ class OutputTokenLimitHit(RuntimeError):
         self.tokens_out = tokens_out
 
 
-def _get_model_provider(model: str) -> str:
-    parts = [part.strip().lower() for part in (model or "").split("/") if part.strip()]
-    if len(parts) >= 2 and parts[1] == "azure":
-        return "azure"
-    if len(parts) >= 2:
-        return parts[0] or "unknown"
-    return "unknown"
-
-
 def _is_azure_ai_provider(provider: str) -> bool:
     return provider in {"azure_ai", "azureai"}
 
@@ -135,7 +135,7 @@ def _format_model_debug_label(model: str, model_display_name: Optional[str] = No
 
 
 def _format_provider_auth_debug(model: str) -> str:
-    provider = _get_model_provider(model)
+    provider = get_model_provider(model)
     env_names = _PROVIDER_ENV_DEBUG_VARS.get(provider)
     if not env_names:
         return f"provider={provider}"
@@ -146,7 +146,7 @@ def _format_provider_auth_debug(model: str) -> str:
 
 
 def _build_provider_completion_kwargs(model: str, provider_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    provider = _get_model_provider(model)
+    provider = get_model_provider(model)
     config = provider_config or {}
     auth_cfg = config.get("auth") if isinstance(config, dict) else None
     if not isinstance(auth_cfg, dict):
@@ -297,10 +297,12 @@ def clean_generation(raw: str) -> str:
                 parts.append(line)
         if parts:
             raw = "\n".join(parts)
-    # Keep only first <html>...</html>
+    # Keep only first HTML document, preserving a leading doctype when present.
     lower = raw.lower()
     if "<html" in lower and "</html>" in lower:
-        start = lower.index("<html")
+        html_start = lower.index("<html")
+        doctype_start = lower.rfind("<!doctype", 0, html_start)
+        start = doctype_start if doctype_start != -1 else html_start
         end = lower.index("</html>") + len("</html>")
         raw = raw[start:end]
     return raw.strip()
@@ -308,6 +310,10 @@ def clean_generation(raw: str) -> str:
 
 def _meta_path(cache_file: Path) -> Path:
     return cache_file.with_suffix(cache_file.suffix + ".meta.json")
+
+
+def _agent_transcript_cache_path(cache_file: Path) -> Path:
+    return cache_file.with_suffix(cache_file.suffix + ".agent.json")
 
 
 def _cache_artifacts(model: str, user_prompt: str, iteration: int, seed: Optional[int]) -> tuple[str, Path, Path]:
@@ -396,11 +402,67 @@ def _load_cached_generation(
                     "system_prompt",
                     "custom_instructions",
                     "effective_system_prompt",
+                    "generation_mode",
+                    "agent_sandbox",
+                    "agent_limit_error",
+                    "agent_limits",
                 ]
             })
         except Exception:
             pass
     return cached_html, meta, None
+
+
+def _load_cached_agent_generation(
+    *,
+    cache_file: Path,
+    meta_file: Path,
+    prompt_hash_value: str,
+    temperature: Optional[float],
+    seed: Optional[int],
+    model_display_name: Optional[str],
+    base_system_prompt: str,
+    custom_instructions: Optional[str],
+    effective_system_prompt: str,
+) -> tuple[Optional[str], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[str]]:
+    cached_html, meta, reason = _load_cached_generation(
+        cache_file=cache_file,
+        meta_file=meta_file,
+        prompt_hash_value=prompt_hash_value,
+        temperature=temperature,
+        seed=seed,
+        model_display_name=model_display_name,
+        base_system_prompt=base_system_prompt,
+        custom_instructions=custom_instructions,
+        effective_system_prompt=effective_system_prompt,
+    )
+    if cached_html is None or meta is None:
+        return None, None, None, reason
+
+    transcript_file = _agent_transcript_cache_path(cache_file)
+    try:
+        transcript = json.loads(transcript_file.read_text(encoding="utf-8"))
+    except Exception:
+        return None, None, None, "missing_or_invalid_agent_transcript"
+
+    if not isinstance(transcript, dict):
+        return None, None, None, "missing_or_invalid_agent_transcript"
+
+    repaired_html = clean_generation(extract_agent_html_from_transcript(transcript, fallback_html=cached_html))
+    if is_probably_complete_html(repaired_html):
+        cached_html = repaired_html
+        try:
+            html_bytes = cached_html.encode("utf-8")
+            atomic_write_bytes(cache_file, html_bytes)
+            write_sha256_sidecar(cache_file, html_bytes)
+        except Exception:
+            pass
+
+    transcript = normalize_agent_transcript(transcript, cached_html)
+
+    meta["generation_mode"] = meta.get("generation_mode") or "inspect_react_agent"
+    meta["agent_eval_path"] = None
+    return cached_html, meta, transcript, None
 
 
 def _effective_max_tokens_for_model(model: str) -> Optional[int]:
@@ -545,9 +607,43 @@ def _write_generation_cache(
         "system_prompt": meta.get("system_prompt"),
         "custom_instructions": meta.get("custom_instructions"),
         "effective_system_prompt": meta.get("effective_system_prompt"),
+        "generation_mode": meta.get("generation_mode"),
+        "agent_sandbox": meta.get("agent_sandbox"),
+        "agent_limit_error": meta.get("agent_limit_error"),
+        "agent_limits": meta.get("agent_limits"),
     }
     try:
         atomic_write_text(meta_file, json.dumps(meta_payload, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _write_agent_generation_cache(
+    *,
+    cache_file: Path,
+    meta_file: Path,
+    html: str,
+    model: str,
+    model_display_name: Optional[str],
+    prompt_hash_value: str,
+    meta: Dict[str, Any],
+    transcript: Dict[str, Any],
+) -> None:
+    _write_generation_cache(
+        cache_file=cache_file,
+        meta_file=meta_file,
+        html=html,
+        model=model,
+        model_display_name=model_display_name,
+        prompt_hash_value=prompt_hash_value,
+        meta=meta,
+    )
+    try:
+        atomic_write_text(
+            _agent_transcript_cache_path(cache_file),
+            json.dumps(transcript, indent=2),
+            encoding="utf-8",
+        )
     except Exception:
         pass
 
@@ -558,6 +654,7 @@ def _invalidate_cache_entry(cache_file: Path) -> None:
         cache_file,
         cache_file.with_suffix(cache_file.suffix + ".sha256"),
         _meta_path(cache_file),
+        _agent_transcript_cache_path(cache_file),
     ]:
         try:
             if p.exists():
@@ -940,3 +1037,143 @@ def generate_html(model: str, user_prompt: str, temperature: float = None, seed:
         disable_cache=disable_cache,
     )
     return html, meta["cached"], meta["latency_s"]
+
+
+def _normalize_agent_sandbox_spec(value: Any) -> Any:
+    if isinstance(value, tuple) and len(value) == 2:
+        return (str(value[0]), str(value[1]))
+    if isinstance(value, list) and len(value) == 2:
+        return (str(value[0]), str(value[1]))
+    return value
+
+
+def format_agent_sandbox(value: Any) -> Optional[str]:
+    normalized = _normalize_agent_sandbox_spec(value)
+    if normalized is None:
+        return None
+    if isinstance(normalized, tuple) and len(normalized) == 2:
+        return f"{normalized[0]}:{normalized[1]}"
+    return str(normalized)
+
+
+def default_agent_sandbox() -> tuple[str, str]:
+    return (
+        "docker",
+        (Path(__file__).resolve().parent.parent / "config" / "inspect_agent_sandbox" / "compose.yaml").as_posix(),
+    )
+
+
+def generate_html_with_agent_meta(
+    model: str,
+    user_prompt: str,
+    iteration: int,
+    temperature: Optional[float] = None,
+    seed: Optional[int] = None,
+    disable_cache: bool = False,
+    model_display_name: Optional[str] = None,
+    provider_config: Optional[Dict[str, Any]] = None,
+    runtime_log_dir: Optional[str] = None,
+    agent_config: Optional[Dict[str, Any]] = None,
+) -> tuple[str, Dict[str, Any], Dict[str, Any]]:
+    """Generate HTML through a sandboxed Inspect ReAct agent.
+
+    Agent generations use the same cross-run cache identity as direct generation
+    and additionally cache a transcript sidecar so agent-mode artifacts can be
+    reconstructed without re-running the sandbox.
+    """
+    base_system_prompt = get_base_system_prompt()
+    custom_instructions = get_custom_instructions()
+    effective_system_prompt = get_effective_system_prompt()
+    prompt_hash_value, cache_file, meta_file = _cache_artifacts(model, user_prompt, iteration, seed)
+
+    if not disable_cache and cache_file.exists():
+        cached_html, cached_meta, cached_transcript, reason = _load_cached_agent_generation(
+            cache_file=cache_file,
+            meta_file=meta_file,
+            prompt_hash_value=prompt_hash_value,
+            temperature=temperature,
+            seed=seed,
+            model_display_name=model_display_name,
+            base_system_prompt=base_system_prompt,
+            custom_instructions=custom_instructions,
+            effective_system_prompt=effective_system_prompt,
+        )
+        if cached_html is not None and cached_meta is not None and cached_transcript is not None:
+            return cached_html, cached_meta, cached_transcript
+        if reason is not None:
+            _invalidate_cache_entry(cache_file)
+
+    config = agent_config or {}
+    user_limits = config.get("limits")
+    limits_cfg = normalize_agent_limits(user_limits if isinstance(user_limits, dict) else None)
+
+    sandbox_spec = _normalize_agent_sandbox_spec(config.get("sandbox") or default_agent_sandbox())
+    use_browser = bool(config.get("use_browser", True))
+
+    provider_kwargs = _build_provider_completion_kwargs(model, provider_config)
+    model_args = {
+        k: v
+        for k, v in provider_kwargs.items()
+        if k not in {"api_base"} and v is not None
+    }
+
+    result: AgentGenerationResult | None = None
+    html = ""
+    transcript: Dict[str, Any] = {}
+    for trunc_attempt in range(TRUNCATION_RETRY_MAX + 1):
+        result = run_agent_generation(
+            model=model,
+            prompt=user_prompt,
+            sandbox=sandbox_spec,
+            system_prompt=effective_system_prompt,
+            log_dir=runtime_log_dir,
+            model_base_url=provider_kwargs.get("api_base"),
+            model_args=model_args,
+            agent_limits=limits_cfg,
+            use_browser=use_browser,
+        )
+        html = clean_generation(
+            extract_agent_html_from_transcript(result.transcript, fallback_html=result.html)
+        )
+        transcript = normalize_agent_transcript(result.transcript, html)
+        if is_probably_complete_html(html):
+            break
+        if trunc_attempt < TRUNCATION_RETRY_MAX:
+            print("Detected truncated/incomplete agent HTML; retrying generation once...")
+
+    assert result is not None
+    meta = _build_generation_meta(
+        cached=False,
+        latency_s=result.elapsed_s,
+        prompt_hash_value=prompt_hash_value,
+        model_display_name=model_display_name,
+        tokens_in=result.usage.get("prompt_tokens"),
+        tokens_out=result.usage.get("completion_tokens"),
+        total_tokens=result.usage.get("total_tokens"),
+        cost_usd=result.usage.get("total_cost"),
+        seed=None,
+        temperature=None,
+        system_prompt=base_system_prompt,
+        custom_instructions=custom_instructions,
+        effective_system_prompt=effective_system_prompt,
+    )
+    meta["generation_mode"] = "inspect_react_agent"
+    meta["agent_sandbox"] = format_agent_sandbox(result.sandbox)
+    meta["agent_limit_error"] = result.limit_error
+    meta["agent_limits"] = limits_cfg
+    meta["agent_eval_path"] = result.eval_log_path
+    meta["iteration"] = iteration
+
+    if html and is_probably_complete_html(html):
+        _write_agent_generation_cache(
+            cache_file=cache_file,
+            meta_file=meta_file,
+            html=html,
+            model=model,
+            model_display_name=model_display_name,
+            prompt_hash_value=prompt_hash_value,
+            meta=meta,
+            transcript=transcript,
+        )
+
+    return html, meta, transcript
