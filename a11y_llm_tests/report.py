@@ -1543,24 +1543,28 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     run_dir = run_json_path.parent
     resolved_run_dir = run_dir.resolve()
 
-    # Build the single candidate: join relative paths onto run_dir,
-    # or use the absolute path directly.
+    # Build candidates: try run_dir-relative first, then CWD-relative
+    # for paths stored relative to the repo root.  Absolute paths are
+    # used directly.
     if raw_path.is_absolute():
-      candidate = raw_path.resolve()
+      candidates = [raw_path.resolve()]
     else:
-      candidate = (run_dir / raw_path).resolve()
+      candidates = [
+        (run_dir / raw_path).resolve(),
+        (Path.cwd() / raw_path).resolve(),
+      ]
 
-    # Ensure the resolved path is still under the run directory.
-    try:
-      candidate.relative_to(resolved_run_dir)
-    except ValueError:
-      return None
-
-    try:
-      if candidate.is_file():
-        return orjson.loads(candidate.read_bytes())
-    except Exception:
-      pass
+    for candidate in candidates:
+      # Ensure the resolved path is under the run directory.
+      try:
+        candidate.relative_to(resolved_run_dir)
+      except ValueError:
+        continue
+      try:
+        if candidate.is_file():
+          return orjson.loads(candidate.read_bytes())
+      except Exception:
+        continue
     return None
 
   def _conversation_preview(conversation: dict | None) -> tuple[list[dict[str, str]], int, int | None]:
