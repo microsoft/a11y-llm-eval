@@ -1772,9 +1772,7 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
       try:
         result["generation_conversation_path_relative"] = str(conv_p.resolve().relative_to(run_dir.resolve()))
       except ValueError:
-        # Fallback: strip leading runs/<id>/ segments
-        parts = conversation_path.split("/")
-        result["generation_conversation_path_relative"] = "/".join(parts[2:]) if len(parts) > 2 else conversation_path
+        pass
     if not conversation:
       continue
     entries, message_count, event_count = _conversation_preview(conversation)
