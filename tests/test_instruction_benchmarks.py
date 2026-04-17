@@ -220,7 +220,12 @@ def test_instruction_benchmarks_variants(monkeypatch, tmp_path: Path):
     assert "Concise" in index_html
     assert "Agent conversation" in index_html
     assert "Open raw conversation JSON" not in index_html
-    assert ".eval" not in index_html
+    # .eval may appear inside href links to Inspect logs, but raw eval
+    # content must not leak into the report body.
+    assert "Inspect log</a>" in index_html
+    import re as _re
+    _eval_outside_href = _re.sub(r'href="[^"]*\.eval"', '', index_html)
+    assert ".eval" not in _eval_outside_href
 
 
 def test_instruction_benchmark_agent_variant_persists_conversation(monkeypatch, tmp_path: Path):
@@ -432,7 +437,12 @@ def test_instruction_benchmark_agent_variant_persists_conversation(monkeypatch, 
     assert "opaque-internal-reasoning" not in index_html
     assert "very large technical payload" not in index_html
     assert "generated page</body></html>" not in index_html
-    assert ".eval" not in index_html
+    # .eval may appear inside href links to Inspect logs, but raw eval
+    # content must not leak into the report body.
+    assert "Inspect log</a>" in index_html
+    import re as _re
+    _eval_outside_href = _re.sub(r'href="[^"]*\.eval"', '', index_html)
+    assert ".eval" not in _eval_outside_href
 
 
 def test_instruction_sets_reject_generation_mode_key(tmp_path: Path):
@@ -563,6 +573,11 @@ def test_agent_generation_uses_cache_across_runs(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(generator, "CACHE_DIR", tmp_path / "generations")
     generator.CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Create a real .eval file so the cache can copy it
+    fake_eval_file = tmp_path / "inspect_logs_orig" / "first-run.eval"
+    fake_eval_file.parent.mkdir(parents=True, exist_ok=True)
+    fake_eval_file.write_text('{"eval": "log"}', encoding="utf-8")
+
     calls = {"count": 0}
 
     def fake_run_agent_generation(**kwargs):
@@ -583,7 +598,7 @@ def test_agent_generation_uses_cache_across_runs(monkeypatch, tmp_path: Path):
             "elapsed_s": 0.2,
             "sandbox": kwargs["sandbox"],
             "limit_error": None,
-            "eval_log_path": "/tmp/inspect/first-run.eval",
+            "eval_log_path": str(fake_eval_file),
         })()
 
     monkeypatch.setattr("a11y_llm_tests.generator.run_agent_generation", fake_run_agent_generation)
@@ -609,13 +624,16 @@ def test_agent_generation_uses_cache_across_runs(monkeypatch, tmp_path: Path):
     assert html1 == html2
     assert transcript1 == transcript2
     assert meta1["cached"] is False
-    assert meta1["agent_eval_path"] == "/tmp/inspect/first-run.eval"
+    assert meta1["agent_eval_path"] == str(fake_eval_file)
     assert meta2["cached"] is True
     assert meta2["generation_mode"] == "inspect_react_agent"
     assert meta2["agent_sandbox"] == meta1["agent_sandbox"]
     assert meta2["agent_limit_error"] == meta1["agent_limit_error"]
     assert meta2["agent_limits"] == meta1["agent_limits"]
-    assert meta2["agent_eval_path"] is None
+    # Cached run should restore the .eval file into the new run's inspect_logs dir
+    assert meta2["agent_eval_path"] is not None
+    assert Path(meta2["agent_eval_path"]).exists()
+    assert str(tmp_path / "inspect_logs_b") in meta2["agent_eval_path"]
     assert meta2["tokens_in"] == 12
     assert meta2["tokens_out"] == 18
     assert meta2["total_tokens"] == 30

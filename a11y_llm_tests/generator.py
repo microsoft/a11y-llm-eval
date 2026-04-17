@@ -316,6 +316,10 @@ def _agent_transcript_cache_path(cache_file: Path) -> Path:
     return cache_file.with_suffix(cache_file.suffix + ".agent.json")
 
 
+def _agent_eval_cache_path(cache_file: Path) -> Path:
+    return cache_file.with_suffix(cache_file.suffix + ".eval")
+
+
 def _cache_artifacts(model: str, user_prompt: str, iteration: int, seed: Optional[int]) -> tuple[str, Path, Path]:
     prompt_hash_value = compute_prompt_hash(user_prompt)
     seed_part = f"_s{seed}" if seed is not None else ""
@@ -424,6 +428,7 @@ def _load_cached_agent_generation(
     base_system_prompt: str,
     custom_instructions: Optional[str],
     effective_system_prompt: str,
+    runtime_log_dir: Optional[str] = None,
 ) -> tuple[Optional[str], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[str]]:
     cached_html, meta, reason = _load_cached_generation(
         cache_file=cache_file,
@@ -461,7 +466,22 @@ def _load_cached_agent_generation(
     transcript = normalize_agent_transcript(transcript, cached_html)
 
     meta["generation_mode"] = meta.get("generation_mode") or "inspect_react_agent"
-    meta["agent_eval_path"] = None
+
+    # Restore the cached .eval log into this run's inspect_logs/ directory
+    # so the report can link to it.
+    eval_cache = _agent_eval_cache_path(cache_file)
+    restored_eval_path = None
+    if eval_cache.exists() and runtime_log_dir:
+        try:
+            import shutil
+            dest_dir = Path(runtime_log_dir)
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / eval_cache.name
+            shutil.copy2(str(eval_cache), str(dest))
+            restored_eval_path = str(dest)
+        except Exception:
+            pass
+    meta["agent_eval_path"] = restored_eval_path
     return cached_html, meta, transcript, None
 
 
@@ -628,6 +648,7 @@ def _write_agent_generation_cache(
     prompt_hash_value: str,
     meta: Dict[str, Any],
     transcript: Dict[str, Any],
+    eval_log_path: Optional[str] = None,
 ) -> None:
     _write_generation_cache(
         cache_file=cache_file,
@@ -646,6 +667,16 @@ def _write_agent_generation_cache(
         )
     except Exception:
         pass
+    # Cache the Inspect AI .eval log alongside other sidecars so it can be
+    # restored on future cache hits.
+    if eval_log_path:
+        src = Path(eval_log_path)
+        if src.exists():
+            try:
+                import shutil
+                shutil.copy2(str(src), str(_agent_eval_cache_path(cache_file)))
+            except Exception:
+                pass
 
 
 def _invalidate_cache_entry(cache_file: Path) -> None:
@@ -655,6 +686,7 @@ def _invalidate_cache_entry(cache_file: Path) -> None:
         cache_file.with_suffix(cache_file.suffix + ".sha256"),
         _meta_path(cache_file),
         _agent_transcript_cache_path(cache_file),
+        _agent_eval_cache_path(cache_file),
     ]:
         try:
             if p.exists():
@@ -1097,6 +1129,7 @@ def generate_html_with_agent_meta(
             base_system_prompt=base_system_prompt,
             custom_instructions=custom_instructions,
             effective_system_prompt=effective_system_prompt,
+            runtime_log_dir=runtime_log_dir,
         )
         if cached_html is not None and cached_meta is not None and cached_transcript is not None:
             return cached_html, cached_meta, cached_transcript
@@ -1174,6 +1207,7 @@ def generate_html_with_agent_meta(
             prompt_hash_value=prompt_hash_value,
             meta=meta,
             transcript=transcript,
+            eval_log_path=result.eval_log_path,
         )
 
     return html, meta, transcript

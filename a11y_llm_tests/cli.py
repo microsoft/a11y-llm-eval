@@ -632,9 +632,9 @@ def run(
             pool_size = max(1, processes)
         # Cap parallelism for agent (Docker sandbox) tasks to avoid exhausting
         # Docker's network address pool.  Each sandbox allocates a subnet; the
-        # default pool supports ~30 networks, so 4 concurrent sandboxes is a
+        # default pool supports ~30 networks, so 8 concurrent sandboxes is a
         # safe default that leaves headroom for other Docker workloads.
-        _MAX_AGENT_PARALLEL = 4
+        _MAX_AGENT_PARALLEL = 8
         if has_agent_tasks and processes is None and pool_size > _MAX_AGENT_PARALLEL:
             pool_size = _MAX_AGENT_PARALLEL
         truncated_cache_files: set[str] = set()

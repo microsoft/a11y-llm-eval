@@ -542,12 +542,13 @@ details li { margin-bottom: 0.35rem; }
   <ul>
     <li>Each test uses a prompt to generate HTML. The generated HTML is then tested for accessibility.</li>
     <li>The prompts intentionally do not include specific accessibility instructions. The goal is to see if the LLMs produce accessible HTML by default.</li>
+    <li><strong>Control (one-shot):</strong> Each model receives a single prompt and produces HTML in one turn with no tool use or iteration. This measures baseline accessibility out of the box.</li>
+    <li><strong>Instruction-set variants (Inspect AI ReAct agent):</strong> Instruction-set variants are generated using an <a href="https://inspect.ai-safety-institute.org.uk/">Inspect AI</a> sandboxed ReAct agent. The agent can take multiple turns, call tools (e.g. a text editor to create and revise files), and iteratively refine the HTML inside a Docker sandbox before submitting a final result. This measures whether additional instructions and agentic iteration improve accessibility.</li>
     <li>The resulting HTML is rendered in a browser via Playwright (Chromium). This allows the HTML's JavaScript and CSS to execute, which can impact accessibility.</li>
     <li>The rendered HTML is evaluated using <a href="https://github.com/dequelabs/axe-core">axe-core</a> to identify common accessibility issues.</li>
     <li>A custom test script (JavaScript) is executed against the rendered page to check for accessibility requirements that are specific to the test case and not covered by axe-core. These tests look for <a href="https://www.w3.org/WAI/WCAG22/quickref/">WCAG 2.2</a> failures and best practices. Best practices do not impact pass/fail results.</li>
     <li>Each test case is run multiple times (samples) to evaluate the consistency and reliability of the LLM's output.</li>
     <li>By default, the harness does not explicitly set a temperature, so each provider/model uses its own default sampling behavior.</li>
-    <li>Instruction sets are also evaluated to see how specific accessibility instructions impact results. See the "Instruction sets" section for details.</li>
   </ul>
   {% set system_prompt = prompting_meta.get('system_prompt') %}
   {% set effective_system_prompt = prompting_meta.get('effective_system_prompt') %}
@@ -1068,7 +1069,7 @@ details li { margin-bottom: 0.35rem; }
           <p><span class="badge-{{ 'pass' if r.result=='PASS' else 'fail' }}">{{ r.result }}</span> | Latency {{ '%.2f'|format(r.generation.latency_s) }}s{% if r.generation.cached %} cached{% endif %}</p>
           <p>Axe WCAG: {{ r.axe.failure_count if r.axe else 'n/a' }}{% if r.axe and r.axe.best_practice_count > 0 %} | BP: {{ r.axe.best_practice_count }}{% endif %}{% if r.generation.cost_usd is not none %} | ${{ '%.4f'|format(r.generation.cost_usd) }}{% endif %}</p>
           {% if r.generation.generation_mode %}
-          <p><strong>Generation mode:</strong> {{ r.generation.generation_mode }}{% if r.generation.agent_sandbox %} | <strong>Sandbox:</strong> {{ r.generation.agent_sandbox }}{% endif %}</p>
+          <p><strong>Generation mode:</strong> {{ r.generation.generation_mode }}{% if r.generation.agent_sandbox %} | <strong>Sandbox:</strong> {{ r.generation.agent_sandbox }}{% endif %}{% if r.generation_eval_path_relative %} | <a href="{{ r.generation_eval_path_relative }}">Inspect log</a>{% endif %}{% if r.generation_conversation_path_relative %} | <a href="{{ r.generation_conversation_path_relative }}">Conversation JSON</a>{% endif %}</p>
           {% endif %}
           {% if r.screenshot_path %}
             {# Trim the first two path segments (e.g., 'runs/<run_id>/...') #}
@@ -1748,9 +1749,19 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         current["messages"].append({"label": label, "content": content})
     return turns
 
+  run_dir = run_json_path.parent
+
   for result in all_results:
     conversation_path = result.get("generation_conversation_path")
     conversation = _read_json_for_report(conversation_path)
+    if conversation_path:
+      conv_p = Path(conversation_path)
+      try:
+        result["generation_conversation_path_relative"] = str(conv_p.resolve().relative_to(run_dir.resolve()))
+      except ValueError:
+        # Fallback: strip leading runs/<id>/ segments
+        parts = conversation_path.split("/")
+        result["generation_conversation_path_relative"] = "/".join(parts[2:]) if len(parts) > 2 else conversation_path
     if not conversation:
       continue
     entries, message_count, event_count = _conversation_preview(conversation)
@@ -1762,6 +1773,37 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
       "message_count": message_count,
       "event_count": event_count,
     }
+
+  # Compute report-relative paths for eval log files so the template can
+  # link directly to them.  The stored path may be absolute or a file:// URI.
+  for result in all_results:
+    eval_path_raw = result.get("generation_eval_path")
+    if not eval_path_raw:
+      continue
+    # Strip file:// scheme if present
+    if eval_path_raw.startswith("file://"):
+      eval_path_raw = eval_path_raw[len("file://"):]
+    eval_p = Path(eval_path_raw)
+    try:
+      result["generation_eval_path_relative"] = str(eval_p.resolve().relative_to(run_dir.resolve()))
+    except ValueError:
+      # Fall back: if the eval file is not under the run dir, use the
+      # filename only and hope it lives in inspect_logs/.
+      result["generation_eval_path_relative"] = f"inspect_logs/{eval_p.name}"
+
+  # Shorten absolute sandbox paths (e.g. "docker:/full/path/compose.yaml" → "docker:compose.yaml")
+  def _shorten_sandbox(val: str | None) -> str | None:
+    if not val or ":" not in val:
+      return val
+    provider, path_part = val.split(":", 1)
+    if "/" in path_part or "\\" in path_part:
+      return f"{provider}:{Path(path_part).name}"
+    return val
+
+  for result in all_results:
+    gen = result.get("generation") or {}
+    if gen.get("agent_sandbox"):
+      gen["agent_sandbox"] = _shorten_sandbox(gen["agent_sandbox"])
 
   def _split_message_items(text: str) -> list[str]:
     items = []
@@ -2534,7 +2576,7 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         "description": pv.get("description"),
         "n_samples_requested": pv.get("n_samples_requested"),
         "generation_mode": pv.get("generation_mode"),
-        "agent_sandbox": pv.get("agent_sandbox"),
+        "agent_sandbox": _shorten_sandbox(pv.get("agent_sandbox")),
         "agent_limits": pv.get("agent_limits"),
         "custom_instructions_path": custom_instructions_path,
         "custom_instructions_markdown": custom_instructions_markdown,
