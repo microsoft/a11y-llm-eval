@@ -79,20 +79,24 @@ def atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
 
 
 def check_docker_network_pool(*, max_networks: int = 30) -> None:
-    """Fail early if Docker's network address pool is nearly exhausted.
+    """Fail early if Docker's bridge-network address pool is nearly exhausted.
 
     Docker's default address pool supports roughly 30 bridge networks.
     Each Inspect sandbox allocates one.  If most slots are already taken,
     new sandboxes will fail with ``RuntimeError: No services started``
     partway through a run, wasting time and API credits.
 
-    This function counts existing Docker networks and raises
-    ``RuntimeError`` when the count is at or above *max_networks*, giving
-    operators a clear message to clean up before proceeding.  It does
-    **not** remove any networks or containers itself.
+    Only *bridge* networks are counted — host, none, overlay, and other
+    driver types don't consume slots from the default address pool, so
+    machines with many unrelated networks won't trigger false positives.
+
+    This function raises ``RuntimeError`` when the bridge-network count
+    is at or above *max_networks*, giving operators a clear message to
+    clean up before proceeding.  It does **not** remove any networks or
+    containers itself.
 
     Raises:
-        RuntimeError: When the network count meets or exceeds *max_networks*.
+        RuntimeError: When the bridge-network count meets or exceeds *max_networks*.
     """
     import shutil
     import subprocess
@@ -103,7 +107,8 @@ def check_docker_network_pool(*, max_networks: int = 30) -> None:
 
     try:
         result = subprocess.run(
-            [docker, "network", "ls", "--format", "{{.Name}}"],
+            [docker, "network", "ls", "--filter", "driver=bridge",
+             "--format", "{{.Name}}"],
             capture_output=True, text=True, timeout=15,
         )
     except (subprocess.TimeoutExpired, OSError):
@@ -115,7 +120,7 @@ def check_docker_network_pool(*, max_networks: int = 30) -> None:
     network_count = sum(1 for line in result.stdout.splitlines() if line.strip())
     if network_count >= max_networks:
         raise RuntimeError(
-            f"Docker has {network_count} networks (limit ~{max_networks}). "
+            f"Docker has {network_count} bridge networks (limit ~{max_networks}). "
             f"Agent sandboxes are likely to fail with address-pool exhaustion. "
             f"Free up networks before running agent generation:\n"
             f"  docker network prune --force\n"
