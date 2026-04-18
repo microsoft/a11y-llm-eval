@@ -123,8 +123,7 @@ def check_docker_network_pool(*, max_networks: int = 30) -> None:
             f"Docker has {network_count} bridge networks (limit ~{max_networks}). "
             f"Agent sandboxes are likely to fail with address-pool exhaustion. "
             f"Free up networks before running agent generation:\n"
-            f"  docker network prune --force\n"
-            f"  # or tear down stale Inspect sandboxes:\n"
+            f"  # tear down stale Inspect sandboxes, then prune unused networks:\n"
             f"  docker ps -a --filter 'name=inspect-sandboxed_ag-' -q | xargs -r docker rm -f\n"
             f"  docker network prune --force"
         )
