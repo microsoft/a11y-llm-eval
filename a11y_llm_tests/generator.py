@@ -1037,7 +1037,13 @@ def generate_html_with_meta(
         if is_probably_complete_html(html):
             break
         if trunc_attempt < TRUNCATION_RETRY_MAX:
-            print("Detected truncated/incomplete HTML; retrying generation once...")
+            print(f"Detected truncated/incomplete HTML (attempt {trunc_attempt + 1}/{TRUNCATION_RETRY_MAX + 1}); retrying...")
+    else:
+        if not is_probably_complete_html(html):
+            print(
+                f"WARNING: HTML still truncated/incomplete after {TRUNCATION_RETRY_MAX + 1} attempts "
+                f"for model={model_debug_label}, seed={seed}. Proceeding with incomplete output."
+            )
 
     elapsed = time.time() - start
 
@@ -1181,7 +1187,14 @@ def generate_html_with_agent_meta(
         if is_probably_complete_html(html):
             break
         if trunc_attempt < TRUNCATION_RETRY_MAX:
-            print("Detected truncated/incomplete agent HTML; retrying generation once...")
+            print(f"Detected truncated/incomplete agent HTML (attempt {trunc_attempt + 1}/{TRUNCATION_RETRY_MAX + 1}); retrying...")
+    else:
+        if not is_probably_complete_html(html):
+            print(
+                f"WARNING: Agent HTML still truncated/incomplete after {TRUNCATION_RETRY_MAX + 1} attempts "
+                f"for model={_format_model_debug_label(model, model_display_name)}, seed={seed}. "
+                f"Proceeding with incomplete output."
+            )
 
     assert result is not None
     meta = _build_generation_meta(

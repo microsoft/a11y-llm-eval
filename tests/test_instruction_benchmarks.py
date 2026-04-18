@@ -878,13 +878,14 @@ def test_agent_generation_does_not_cache_persistently_incomplete_html(monkeypatc
     h, cache_file, _meta_file = generator._cache_artifacts("test-model", "Build an accessible page", 0, None, generation_mode="agent")
 
     assert h
-    assert calls["count"] == 4
+    attempts_per_call = generator.TRUNCATION_RETRY_MAX + 1
+    assert calls["count"] == 2 * attempts_per_call
     assert meta1["cached"] is False
     assert meta2["cached"] is False
     assert html1 == bad_html
     assert html2 == bad_html
-    assert transcript1["messages"][0]["content"] == "attempt 2"
-    assert transcript2["messages"][0]["content"] == "attempt 4"
+    assert transcript1["messages"][0]["content"] == f"attempt {attempts_per_call}"
+    assert transcript2["messages"][0]["content"] == f"attempt {2 * attempts_per_call}"
     assert not cache_file.exists()
     assert not cache_file.with_suffix(cache_file.suffix + ".meta.json").exists()
     assert not cache_file.with_suffix(cache_file.suffix + ".agent.json").exists()

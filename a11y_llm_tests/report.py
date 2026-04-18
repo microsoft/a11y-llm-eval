@@ -667,30 +667,6 @@ details li { margin-bottom: 0.35rem; }
         </details>
       {% endfor %}
     {% endif %}
-
-    <h3>Results</h3>
-    <table>
-      <thead>
-        <tr>
-          <th>Model</th>
-          <th>Instruction Set</th>
-          <th>Control Pass Rate</th>
-          <th>Instruction Set Pass Rate</th>
-          <th>Δ Pass Rate</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in instruction_benchmark_rows %}
-        <tr>
-          <th>{{ row.model_display }}</th>
-          <td>{{ row.variant_name }}</td>
-          <td class="pass-at-k-cell" data-pass="{{ '%.4f'|format(row.control_pass_rate) }}">{{ '%.0f%%'|format(row.control_pass_rate * 100) }}</td>
-          <td class="pass-at-k-cell" data-pass="{{ '%.4f'|format(row.variant_pass_rate) }}">{{ '%.0f%%'|format(row.variant_pass_rate * 100) }}</td>
-          <td>{{ '%+.1fpp'|format(row.delta_pass_rate * 100) }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
 </section>
 {% endif %}
 
