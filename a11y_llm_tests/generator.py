@@ -35,7 +35,7 @@ RETRY_MAX_DELAY = 60.0  # seconds
 
 # If we detect a truncated HTML document (often from partial writes or model cutoffs),
 # regenerate once before returning.
-TRUNCATION_RETRY_MAX = 1
+TRUNCATION_RETRY_MAX = 3
 
 # Default output budget. Many Anthropic/Claude routes default to ~4096 if not explicitly set.
 DEFAULT_MAX_TOKENS = 32768
