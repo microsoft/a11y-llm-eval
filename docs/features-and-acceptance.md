@@ -23,6 +23,8 @@ This document covers:
 
 It does **not** attempt to specify the internal HTML report layout pixel-perfect; instead it specifies the report output location and key data it summarizes.
 
+Inspect runtime logs may be written as additive metadata and files under the run directory. Current implementations may write structured JSONL generation logs under `inspect_logs/`. These logs are not part of the compatibility-critical artifact contract unless explicitly documented otherwise.
+
 ---
 
 ## Glossary
@@ -55,6 +57,8 @@ The harness supports a two-phase workflow:
   - Writes `<run_dir>/results.json` with:
     - `meta.status == "GENERATED_ONLY"`.
     - `aggregates == []` (must be empty pre-evaluation).
+  - `--test-cases single-checkbox,modal-dialog` limits generation to only the named base test cases. All dimension variants of the selected tests are still generated. Defaults to all test cases when omitted.
+    - Unknown test case names produce a clear error listing available names.
 - `python -m a11y_llm_tests.cli evaluate <run_dir> ...`:
   - Requires an existing run directory.
   - Writes/overwrites `<run_dir>/results.json` with:
@@ -62,6 +66,7 @@ The harness supports a two-phase workflow:
     - `results` containing evaluated records.
     - `aggregates` containing pass@k records (see Sampling section).
   - If report generation is enabled (default), writes `<run_dir>/index.html`.
+  - `--test-cases single-checkbox,modal-dialog` limits evaluation to only the named base test cases from the existing run. Defaults to all test cases when omitted.
 
 ---
 
@@ -97,12 +102,14 @@ During evaluation, `test.js` is loaded and executed by the Node runner.
 
 ### Behavior
 
-Generation uses `litellm.completion(...)` with:
+Generation uses the Inspect-backed harness runtime with:
 
 - A system message that is the **effective system prompt**.
 - A user message that is the composed prompt case text built from `prompt.yaml` plus the configured global prompt dimensions.
 
-For providers that do not opt out, generation may use LiteLLM's same-model batch completion helper to submit multiple uncached prompts together when their effective request settings match.
+For providers that do not opt out, generation may submit multiple uncached prompts together for the same model when their effective request settings match.
+
+Mixed direct-plus-agent runs may batch eligible non-agent requests while agent requests execute per-request.
 
 The effective system prompt is:
 
@@ -117,17 +124,18 @@ The effective system prompt is:
 
 `config/models.yaml` may also define provider-level configuration under `providers.<provider>`.
 
-- `providers.<provider>.auth.mode` may be omitted or set to `env` to preserve LiteLLM's existing environment-based behavior.
-- `providers.<provider>.batch.enabled` may be omitted or set to `true` to allow LiteLLM batch submission for eligible generation groups; set it to `false` to force per-request generation for that provider.
-- `providers.azure.auth.mode` and `providers.azure_ai.auth.mode` may be set to `default_azure_credential` to pass an Azure bearer token provider from `azure.identity.DefaultAzureCredential()` into LiteLLM.
-- For `default_azure_credential`, the harness reads `api_base` from `api_base_env` and optionally reads `api_version` from `api_version_env`, defaulting to `AZURE_API_BASE` / `AZURE_API_VERSION` for `azure` and `AZURE_AI_API_BASE` / `AZURE_AI_API_VERSION` for `azure_ai`.
+- `providers.<provider>.auth.mode` may be omitted or set to `env` to preserve the runtime's existing environment-based behavior.
+- `providers.<provider>.batch.enabled` may be omitted or set to `true` to allow grouped batch submission for eligible generation groups; set it to `false` to force per-request generation for that provider.
+- `providers.azure.auth.mode`, `providers.azure_ai.auth.mode`, and `providers.azureai.auth.mode` may be set to `default_azure_credential`.
+- For `azure`, the harness reads `api_base` from `api_base_env` and optionally reads `api_version` from `api_version_env`, defaulting to `AZURE_API_BASE` / `AZURE_API_VERSION`, and passes an Azure bearer token provider into the runtime.
+- For `azure_ai` and `azureai`, the harness reads the base URL from `api_base_env`, defaulting to `AZUREAI_BASE_URL`, and sets the Inspect Azure AI managed-identity audience via `audience_env`, defaulting to `AZUREAI_AUDIENCE`.
 - When `default_azure_credential` is configured, `azure-identity` must be installed; otherwise generation fails with a clear error.
 
 If `run --temperature` is not provided, the effective temperature defaults to `defaults.temperature` if present.
 
-If neither `run --temperature` nor `defaults.temperature` is provided, the harness omits `temperature` from the LiteLLM request so the provider/model default temperature is used.
+If neither `run --temperature` nor `defaults.temperature` is provided, the harness omits `temperature` from the generation request so the provider/model default temperature is used.
 
-Note: some Codex-style deployments (e.g., certain `*-codex` models) do not accept sampling parameters like `temperature`. For these models, the harness omits `temperature` from the LiteLLM request to avoid provider errors.
+Note: some Codex-style deployments (e.g., certain `*-codex` models) do not accept sampling parameters like `temperature`. For these models, the harness omits `temperature` from the generation request to avoid provider errors.
 
 ### Acceptance criteria
 
@@ -148,27 +156,34 @@ Note: some Codex-style deployments (e.g., certain `*-codex` models) do not accep
 
 Generated HTML is cached under `.cache/generations/`.
 
+Agent-backed generations use a separate cache identity from direct generations. When an agent generation is cached, the harness also caches the agent conversation payload needed to recreate the per-run `.agent.json` sidecar. Cached agent hits do not create a fresh Inspect eval log for the new run.
+
 Cache identity includes:
 
 - Model name
 - Prompt hash
 - Seed (if provided)
 - Sample iteration index
+- Generation mode (agent vs. direct)
 
 On cache hits, the generator returns `cached: True` and can optionally load token/cost metadata from a `.meta.json` file.
 
-When LiteLLM batching is enabled for a provider, cache identity and cache validation remain per request. Cached requests are not submitted to LiteLLM batching; only cache misses are sent.
+When batch generation is enabled for a provider, cache identity and cache validation remain per request. Cached requests are not submitted to grouped batch generation; only cache misses are sent.
 
 ### Acceptance criteria
 
 - Cache files are created at:
   - `.cache/generations/<model>_<promptHash>_s<seed>_i<iteration>.html` (when seed is provided)
   - `.cache/generations/<model>_<promptHash>_i<iteration>.html` (when seed is not provided)
+  - `.cache/generations/<model>_<promptHash>_s<seed>_i<iteration>_agent.html` (agent mode with seed)
+  - `.cache/generations/<model>_<promptHash>_i<iteration>_agent.html` (agent mode without seed)
 - The cache directory may also contain sidecar integrity files (e.g., `.sha256`) alongside cached HTML.
+- Agent-mode cache entries may additionally include a cached transcript sidecar used to recreate the run-local `.agent.json` artifact on cache hits.
+- Direct and agent mode cache entries are independent; running one mode does not invalidate the other.
 - If a cached HTML file is incomplete/corrupted, it is treated as a cache miss and a fresh generation is performed.
 - Debugging: `run --debug-truncated-cache` prints a list of truncated/corrupted cached HTML files at the end of generation and preserves them for inspection.
 - The `--disable-cache` flag forces fresh generation even if a cache entry exists.
-- If LiteLLM batching is attempted for a group and the batch call or an individual item fails, the harness falls back to the existing per-request generation path for the affected requests.
+- If grouped batch generation is attempted for a group and the batch call or an individual item fails, the harness falls back to the existing per-request generation path for the affected requests.
 
 ---
 
@@ -214,19 +229,26 @@ This is enabled via `run --instruction-sets-file <path>`.
   - Control is generated using the configured base system prompt **with no custom instructions**.
 - Each instruction set is benchmarked **separately** (no combining instruction sets).
 - Instruction sets may request a different number of samples than control.
+- Instruction sets always use the sandboxed Inspect ReAct agent path.
+- Instruction-set YAML does not support `generation_mode`; configs that specify it are invalid.
+- Instruction sets may declare `agent.sandbox` as an Inspect sandbox spec (for Docker compose, a two-item value equivalent to `("docker", "compose.yaml")`) plus additive `agent.limits` overrides.
 
 Artifacts for variants are written under separate directories:
 
 - Variant HTML: `<run_dir>/raw_variants/<variant_id>/<prompt_case_id>/<model>__s<sample_index>.html`
+- Agent conversation sidecar for agent-mode variants: `<run_dir>/raw_variants/<variant_id>/<prompt_case_id>/<model>__s<sample_index>.agent.json`
 - Variant screenshots: `<run_dir>/screenshots_variants/<variant_id>/<prompt_case_id>__<model>__s<sample_index>.png`
 
 Schema additions:
 
 - Each `results[]` record includes `prompt_variant_id` ("control" or the instruction set id).
 - Each `results[]` record includes `base_test_name`, `prompt_case_id`, and `prompt_dimensions` for the composed prompt case.
+- Each `results[]` record may include `generation_conversation_path` for instruction-set samples.
+- Each `results[]` record may include `generation_eval_path` for instruction-set samples when an Inspect eval log file is produced or restored from cache.
 - Each `aggregates[]` record includes `prompt_variant_id`.
 - Each `aggregates[]` record includes `base_test_name`, `prompt_case_id`, and `prompt_dimensions` for the composed prompt case.
-- `meta.prompt_variants` describes the variants included in the run (id/name/description/custom instruction path/sample count).
+- `generation` metadata may additionally include `generation_mode`, `agent_sandbox`, `agent_limit_error`, and `agent_limits`.
+- `meta.prompt_variants` describes the variants included in the run (id/name/description/custom instruction path/sample count, and agent metadata for instruction sets).
 - `meta.prompt_cases` describes the expanded prompt cases included in the run.
 
 ### Acceptance criteria
@@ -234,6 +256,8 @@ Schema additions:
 - When `--instruction-sets-file` is provided:
   - Control samples are still written to `<run_dir>/raw/` using existing naming rules.
   - Variant samples are written to `<run_dir>/raw_variants/<variant_id>/...` using `__s<idx>` naming.
+  - Instruction-set variants additionally write a conversation JSON sidecar beside each generated HTML file.
+  - Instruction-set variants use the default generation cache across runs; on cache hits they still write the conversation JSON sidecar. When a cached `.eval` log exists, it is restored into the run's `inspect_logs/` directory and `generation_eval_path` is populated so the report can link to it. If no cached eval log is available, `generation_eval_path` is left unset.
   - `results.json` includes `meta.prompt_variants` with at least:
     - a `control` entry
     - one entry per configured instruction set
@@ -347,6 +371,7 @@ When prompt variants exist:
 - The main tables reflect the **control** results.
 - The report includes an additional section that compares each variant against control.
 - Each composed prompt case is displayed as its own test entry and surfaces the base test name plus applied prompt dimensions.
+- If a sample includes `generation_conversation_path`, the sample details show an agent conversation section with a transcript preview.
 
 ### Acceptance criteria
 

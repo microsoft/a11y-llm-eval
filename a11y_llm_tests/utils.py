@@ -8,16 +8,6 @@ import tempfile
 from pathlib import Path
 
 
-def ensure_single_html(doc: str) -> str:
-    """Return only the first <html>...</html> segment if multiple exist."""
-    lower = doc.lower()
-    if "<html" in lower and "</html>" in lower:
-        start = lower.index("<html")
-        end = lower.index("</html>") + len("</html>")
-        return doc[start:end]
-    return doc
-
-
 def is_probably_complete_html(html: str) -> bool:
     """Heuristic truncation detector for standalone HTML documents.
 
@@ -86,6 +76,57 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
 
 def atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
     atomic_write_bytes(path, text.encode(encoding))
+
+
+def check_docker_network_pool(*, max_networks: int = 30) -> None:
+    """Fail early if Docker's bridge-network address pool is nearly exhausted.
+
+    Docker's default address pool supports roughly 30 bridge networks.
+    Each Inspect sandbox allocates one.  If most slots are already taken,
+    new sandboxes will fail with ``RuntimeError: No services started``
+    partway through a run, wasting time and API credits.
+
+    Only *bridge* networks are counted — host, none, overlay, and other
+    driver types don't consume slots from the default address pool, so
+    machines with many unrelated networks won't trigger false positives.
+
+    This function raises ``RuntimeError`` when the bridge-network count
+    is at or above *max_networks*, giving operators a clear message to
+    clean up before proceeding.  It does **not** remove any networks or
+    containers itself.
+
+    Raises:
+        RuntimeError: When the bridge-network count meets or exceeds *max_networks*.
+    """
+    import shutil
+    import subprocess
+
+    docker = shutil.which("docker")
+    if docker is None:
+        return
+
+    try:
+        result = subprocess.run(
+            [docker, "network", "ls", "--filter", "driver=bridge",
+             "--format", "{{.Name}}"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return
+
+    if result.returncode != 0:
+        return
+
+    network_count = sum(1 for line in result.stdout.splitlines() if line.strip())
+    if network_count >= max_networks:
+        raise RuntimeError(
+            f"Docker has {network_count} bridge networks (limit ~{max_networks}). "
+            f"Agent sandboxes are likely to fail with address-pool exhaustion. "
+            f"Free up networks before running agent generation:\n"
+            f"  # tear down stale Inspect sandboxes, then prune unused networks:\n"
+            f"  docker ps -a --filter 'name=inspect-sandboxed_ag-' -q | xargs -r docker rm -f\n"
+            f"  docker network prune --force"
+        )
 
 
 def write_sha256_sidecar(target_path: Path, data: bytes) -> None:

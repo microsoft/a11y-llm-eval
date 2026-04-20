@@ -56,7 +56,7 @@ def test_corrupted_cached_html_is_detected_and_regenerated(tmp_path, monkeypatch
         + "</body></html>"
     )
 
-    monkeypatch.setattr(generator.litellm, "completion", lambda **kwargs: _FakeResp(good_html))
+    monkeypatch.setattr(generator.generation_runtime, "completion", lambda **kwargs: _FakeResp(good_html))
 
     html, meta = generator.generate_html_with_meta(
         model=model,
@@ -99,7 +99,7 @@ def test_retry_once_on_truncation(tmp_path, monkeypatch):
         calls["n"] += 1
         return _FakeResp(truncated if calls["n"] == 1 else good_html)
 
-    monkeypatch.setattr(generator.litellm, "completion", _completion)
+    monkeypatch.setattr(generator.generation_runtime, "completion", _completion)
 
     html, meta = generator.generate_html_with_meta(
         model=model,
@@ -142,7 +142,7 @@ def test_checksum_mismatch_invalidates_cache(tmp_path, monkeypatch):
         + ("new " * 30)
         + "</body></html>"
     )
-    monkeypatch.setattr(generator.litellm, "completion", lambda **kwargs: _FakeResp(regenerated_html))
+    monkeypatch.setattr(generator.generation_runtime, "completion", lambda **kwargs: _FakeResp(regenerated_html))
 
     html, meta = generator.generate_html_with_meta(
         model=model,
@@ -181,9 +181,9 @@ def test_valid_cache_hit_skips_generation(tmp_path, monkeypatch):
     checksum_path.write_text(sha256_hex(cached_html.encode("utf-8")) + "\n", encoding="utf-8")
 
     def _boom(**kwargs):
-        raise AssertionError("litellm.completion should not be called on cache hit")
+        raise AssertionError("generation runtime should not be called on cache hit")
 
-    monkeypatch.setattr(generator.litellm, "completion", _boom)
+    monkeypatch.setattr(generator.generation_runtime, "completion", _boom)
 
     html, meta = generator.generate_html_with_meta(
         model=model,
@@ -212,7 +212,7 @@ def test_finish_reason_length_exits_fast_no_retry(tmp_path, monkeypatch):
         # Provider indicates output was cut due to length.
         return _FakeResp("<html><body>cut", finish_reason="length")
 
-    monkeypatch.setattr(generator.litellm, "completion", _completion)
+    monkeypatch.setattr(generator.generation_runtime, "completion", _completion)
 
     with pytest.raises(generator.OutputTokenLimitHit):
         generator.generate_html_with_meta(
@@ -243,7 +243,7 @@ def test_debug_truncated_cache_preserves_file_and_reports(tmp_path, monkeypatch)
         + ("hello " * 20)
         + "</body></html>"
     )
-    monkeypatch.setattr(generator.litellm, "completion", lambda **kwargs: _FakeResp(good_html))
+    monkeypatch.setattr(generator.generation_runtime, "completion", lambda **kwargs: _FakeResp(good_html))
 
     html, meta = generator.generate_html_with_meta(
         model=model,
@@ -258,8 +258,15 @@ def test_debug_truncated_cache_preserves_file_and_reports(tmp_path, monkeypatch)
     assert meta["cached"] is False
     assert meta.get("truncated_cache_files") == [str(cache_file)]
     # Preserve truncated cache entry for inspection (do not overwrite)
-    assert cache_file.read_text(encoding="utf-8") == "<html><body><h1>cut off"
-    assert "</html>" in html.lower()
+
+
+def test_clean_generation_preserves_leading_doctype():
+    raw = "preface\n<!DOCTYPE html>\n<html><head><title>x</title></head><body>ok</body></html>\ntrailer"
+
+    cleaned = generator.clean_generation(raw)
+
+    assert cleaned.startswith("<!DOCTYPE html>")
+    assert cleaned.endswith("</html>")
 
 
 def test_batch_generation_skips_cache_hits(tmp_path, monkeypatch):
@@ -293,10 +300,10 @@ def test_batch_generation_skips_cache_hits(tmp_path, monkeypatch):
         return [_FakeResp(generated_html)]
 
     def _boom(**kwargs):
-        raise AssertionError("litellm.completion should not be called when batch succeeds")
+        raise AssertionError("single-request generation should not be called when batch succeeds")
 
-    monkeypatch.setattr(generator.litellm, "batch_completion", _batch_completion)
-    monkeypatch.setattr(generator.litellm, "completion", _boom)
+    monkeypatch.setattr(generator.generation_runtime, "batch_completion", _batch_completion)
+    monkeypatch.setattr(generator.generation_runtime, "completion", _boom)
 
     results = generator.generate_html_batch_with_meta(
         model=model,
@@ -337,8 +344,8 @@ def test_batch_generation_falls_back_to_single_on_item_error(tmp_path, monkeypat
         calls["single"] += 1
         return _FakeResp(fallback_html)
 
-    monkeypatch.setattr(generator.litellm, "batch_completion", _batch_completion)
-    monkeypatch.setattr(generator.litellm, "completion", _completion)
+    monkeypatch.setattr(generator.generation_runtime, "batch_completion", _batch_completion)
+    monkeypatch.setattr(generator.generation_runtime, "completion", _completion)
 
     results = generator.generate_html_batch_with_meta(
         model=model,

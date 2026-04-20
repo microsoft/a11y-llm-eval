@@ -6,12 +6,21 @@ defaults:
 providers:
   #openai:
   #  batch:
+  #    # Disable grouped same-model batch generation for this provider.
   #    enabled: false
   #azure:
   #  auth:
+  #    # Use Azure DefaultAzureCredential for the Inspect-backed runtime.
   #    mode: default_azure_credential
   #    scope: https://cognitiveservices.azure.com/.default
   #    api_base_env: AZURE_API_BASE
+  #azureai:
+  #  auth:
+  #    # Inspect provider prefix for Azure AI model endpoints.
+  #    mode: default_azure_credential
+  #    scope: https://cognitiveservices.azure.com/.default
+  #    api_base_env: AZUREAI_BASE_URL
+  #    audience_env: AZUREAI_AUDIENCE
   #    api_version_env: AZURE_API_VERSION
 models:
   - name: azure_ai/gpt-5-mini

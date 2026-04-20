@@ -4,8 +4,17 @@ import hashlib, os, time, random
 from pathlib import Path
 from typing import Tuple, Dict, Any, Optional
 import json
-import litellm
 
+from .inspect_runtime import (
+    AgentGenerationResult,
+    GenerationRequest,
+    InspectGenerationRuntime,
+    extract_agent_html_from_transcript,
+    normalize_agent_transcript,
+    normalize_agent_limits,
+    run_agent_generation,
+)
+from .model_config import get_model_provider
 from .utils import (
     atomic_write_bytes,
     atomic_write_text,
@@ -17,14 +26,16 @@ from .utils import (
 CACHE_DIR = Path(".cache/generations")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-# Retry policy for litellm calls
+generation_runtime = InspectGenerationRuntime()
+
+# Retry policy for generation calls
 RETRY_MAX_ATTEMPTS = 5
 RETRY_BASE_DELAY = 1.0  # seconds
 RETRY_MAX_DELAY = 60.0  # seconds
 
 # If we detect a truncated HTML document (often from partial writes or model cutoffs),
 # regenerate once before returning.
-TRUNCATION_RETRY_MAX = 1
+TRUNCATION_RETRY_MAX = 3
 
 # Default output budget. Many Anthropic/Claude routes default to ~4096 if not explicitly set.
 DEFAULT_MAX_TOKENS = 32768
@@ -32,6 +43,7 @@ DEFAULT_MAX_TOKENS = 32768
 _PROVIDER_ENV_DEBUG_VARS: dict[str, tuple[str, ...]] = {
     "azure": ("AZURE_API_BASE", "AZURE_API_KEY", "AZURE_API_VERSION"),
     "azure_ai": ("AZURE_AI_API_BASE", "AZURE_AI_API_KEY", "AZURE_AI_API_VERSION"),
+    "azureai": ("AZUREAI_BASE_URL", "AZUREAI_API_KEY", "AZUREAI_AUDIENCE"),
     "anthropic": ("ANTHROPIC_API_KEY",),
     "vertex_ai": ("VERTEXAI_PROJECT", "VERTEXAI_LOCATION", "GOOGLE_APPLICATION_CREDENTIALS"),
     "openai": ("OPENAI_API_KEY",),
@@ -51,11 +63,7 @@ def _load_optional_env(env_name: str) -> Optional[str]:
 
 
 def _is_anthropic_model(model: str) -> bool:
-    """Heuristic for whether a LiteLLM model routes to Anthropic.
-
-    In this repo, Anthropic models are typically configured as `claude-*` in
-    config/models.yaml, but LiteLLM also supports explicit provider prefixes.
-    """
+    """Heuristic for whether a configured model routes to Anthropic."""
 
     m = (model or "").strip().lower()
     return (
@@ -69,7 +77,7 @@ def _is_anthropic_model(model: str) -> bool:
 
 
 def _is_codex_model(model: str) -> bool:
-    """Heuristic for whether a LiteLLM model is a Codex-style deployment.
+    """Heuristic for whether a model is a Codex-style deployment.
 
     Some Codex / code-agent deployments (notably certain Azure GPT-* Codex models)
     reject sampling parameters like `temperature`. We omit those parameters to
@@ -110,11 +118,13 @@ class OutputTokenLimitHit(RuntimeError):
         self.tokens_out = tokens_out
 
 
-def _get_model_provider(model: str) -> str:
-    m = (model or "").strip()
-    if "/" in m:
-        return m.split("/", 1)[0].strip().lower() or "unknown"
-    return "unknown"
+def _is_azure_ai_provider(provider: str) -> bool:
+    return provider in {"azure_ai", "azureai"}
+
+
+def _is_openai_azure_model(model: str) -> bool:
+    parts = [part.strip().lower() for part in (model or "").split("/") if part.strip()]
+    return len(parts) >= 2 and parts[0] == "openai" and parts[1] == "azure"
 
 
 def _format_model_debug_label(model: str, model_display_name: Optional[str] = None) -> str:
@@ -125,7 +135,7 @@ def _format_model_debug_label(model: str, model_display_name: Optional[str] = No
 
 
 def _format_provider_auth_debug(model: str) -> str:
-    provider = _get_model_provider(model)
+    provider = get_model_provider(model)
     env_names = _PROVIDER_ENV_DEBUG_VARS.get(provider)
     if not env_names:
         return f"provider={provider}"
@@ -136,7 +146,7 @@ def _format_provider_auth_debug(model: str) -> str:
 
 
 def _build_provider_completion_kwargs(model: str, provider_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    provider = _get_model_provider(model)
+    provider = get_model_provider(model)
     config = provider_config or {}
     auth_cfg = config.get("auth") if isinstance(config, dict) else None
     if not isinstance(auth_cfg, dict):
@@ -149,10 +159,48 @@ def _build_provider_completion_kwargs(model: str, provider_config: Optional[Dict
     if mode != "default_azure_credential":
         raise RuntimeError(f"Unsupported auth mode for provider '{provider}': {mode}")
 
-    if provider not in {"azure", "azure_ai"}:
+    if provider != "azure" and not _is_azure_ai_provider(provider):
         raise RuntimeError(
             f"auth.mode=default_azure_credential is only supported for Azure providers, got '{provider}'"
         )
+
+    if _is_azure_ai_provider(provider):
+        try:
+            import azure.identity  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError(
+                "Model provider is configured with auth.mode=default_azure_credential, but azure-identity is not installed"
+            ) from exc
+
+        api_base_env = str(auth_cfg.get("api_base_env") or "AZUREAI_BASE_URL")
+        audience_env = str(auth_cfg.get("audience_env") or "AZUREAI_AUDIENCE")
+        scope = str(auth_cfg.get("scope") or "https://cognitiveservices.azure.com/.default")
+        os.environ[audience_env] = scope
+        return {
+            "api_base": _load_required_env(api_base_env),
+        }
+
+    if provider == "azure" and _is_openai_azure_model(model):
+        try:
+            import azure.identity  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError(
+                "Model provider is configured with auth.mode=default_azure_credential, but azure-identity is not installed"
+            ) from exc
+
+        api_base_env = str(auth_cfg.get("api_base_env") or "AZUREAI_OPENAI_BASE_URL")
+        api_version_env = str(auth_cfg.get("api_version_env") or "AZUREAI_OPENAI_API_VERSION")
+        audience_env = str(auth_cfg.get("audience_env") or "AZUREAI_AUDIENCE")
+        scope = str(auth_cfg.get("scope") or "https://cognitiveservices.azure.com/.default")
+        os.environ[audience_env] = scope
+
+        kwargs = {
+            "api_base": _load_required_env(api_base_env),
+        }
+        api_version = _load_optional_env(api_version_env)
+        if api_version is not None:
+            kwargs["api_version"] = api_version
+        return kwargs
 
     try:
         from azure.identity import DefaultAzureCredential, get_bearer_token_provider
@@ -161,13 +209,8 @@ def _build_provider_completion_kwargs(model: str, provider_config: Optional[Dict
             "Model provider is configured with auth.mode=default_azure_credential, but azure-identity is not installed"
         ) from exc
 
-    if provider == "azure_ai":
-        default_api_base_env = "AZURE_AI_API_BASE"
-        default_api_version_env = "AZURE_AI_API_VERSION"
-    else:
-        default_api_base_env = "AZURE_API_BASE"
-        default_api_version_env = "AZURE_API_VERSION"
-
+    default_api_base_env = "AZURE_API_BASE"
+    default_api_version_env = "AZURE_API_VERSION"
     api_base_env = str(auth_cfg.get("api_base_env") or default_api_base_env)
     api_version_env = str(auth_cfg.get("api_version_env") or default_api_version_env)
     scope = str(auth_cfg.get("scope") or "https://cognitiveservices.azure.com/.default")
@@ -182,6 +225,14 @@ def _build_provider_completion_kwargs(model: str, provider_config: Optional[Dict
     if api_version is not None:
         kwargs["api_version"] = api_version
     return kwargs
+
+
+def supports_batch_generation() -> bool:
+    return bool(getattr(generation_runtime, "supports_batch_generation", lambda: False)())
+
+
+def configure_runtime(log_dir: Optional[str] = None) -> None:
+    generation_runtime.set_log_dir(log_dir)
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are generating a single standalone HTML document. "
@@ -246,10 +297,12 @@ def clean_generation(raw: str) -> str:
                 parts.append(line)
         if parts:
             raw = "\n".join(parts)
-    # Keep only first <html>...</html>
+    # Keep only first HTML document, preserving a leading doctype when present.
     lower = raw.lower()
     if "<html" in lower and "</html>" in lower:
-        start = lower.index("<html")
+        html_start = lower.index("<html")
+        doctype_start = lower.rfind("<!doctype", 0, html_start)
+        start = doctype_start if doctype_start != -1 else html_start
         end = lower.index("</html>") + len("</html>")
         raw = raw[start:end]
     return raw.strip()
@@ -259,11 +312,26 @@ def _meta_path(cache_file: Path) -> Path:
     return cache_file.with_suffix(cache_file.suffix + ".meta.json")
 
 
-def _cache_artifacts(model: str, user_prompt: str, iteration: int, seed: Optional[int]) -> tuple[str, Path, Path]:
+def _agent_transcript_cache_path(cache_file: Path) -> Path:
+    return cache_file.with_suffix(cache_file.suffix + ".agent.json")
+
+
+def _agent_eval_cache_path(cache_file: Path) -> Path:
+    return cache_file.with_suffix(cache_file.suffix + ".eval")
+
+
+def _cache_artifacts(
+    model: str,
+    user_prompt: str,
+    iteration: int,
+    seed: Optional[int],
+    generation_mode: Optional[str] = None,
+) -> tuple[str, Path, Path]:
     prompt_hash_value = compute_prompt_hash(user_prompt)
     seed_part = f"_s{seed}" if seed is not None else ""
     iteration_part = f"_i{iteration}"
-    cache_file = CACHE_DIR / f"{model}_{prompt_hash_value}{seed_part}{iteration_part}.html"
+    mode_part = "_agent" if generation_mode == "agent" else ""
+    cache_file = CACHE_DIR / f"{model}_{prompt_hash_value}{seed_part}{iteration_part}{mode_part}.html"
     return prompt_hash_value, cache_file, _meta_path(cache_file)
 
 
@@ -345,6 +413,10 @@ def _load_cached_generation(
                     "system_prompt",
                     "custom_instructions",
                     "effective_system_prompt",
+                    "generation_mode",
+                    "agent_sandbox",
+                    "agent_limit_error",
+                    "agent_limits",
                 ]
             })
         except Exception:
@@ -352,11 +424,79 @@ def _load_cached_generation(
     return cached_html, meta, None
 
 
+def _load_cached_agent_generation(
+    *,
+    cache_file: Path,
+    meta_file: Path,
+    prompt_hash_value: str,
+    temperature: Optional[float],
+    seed: Optional[int],
+    model_display_name: Optional[str],
+    base_system_prompt: str,
+    custom_instructions: Optional[str],
+    effective_system_prompt: str,
+    runtime_log_dir: Optional[str] = None,
+) -> tuple[Optional[str], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[str]]:
+    cached_html, meta, reason = _load_cached_generation(
+        cache_file=cache_file,
+        meta_file=meta_file,
+        prompt_hash_value=prompt_hash_value,
+        temperature=temperature,
+        seed=seed,
+        model_display_name=model_display_name,
+        base_system_prompt=base_system_prompt,
+        custom_instructions=custom_instructions,
+        effective_system_prompt=effective_system_prompt,
+    )
+    if cached_html is None or meta is None:
+        return None, None, None, reason
+
+    transcript_file = _agent_transcript_cache_path(cache_file)
+    try:
+        transcript = json.loads(transcript_file.read_text(encoding="utf-8"))
+    except Exception:
+        return None, None, None, "missing_or_invalid_agent_transcript"
+
+    if not isinstance(transcript, dict):
+        return None, None, None, "missing_or_invalid_agent_transcript"
+
+    repaired_html = clean_generation(extract_agent_html_from_transcript(transcript, fallback_html=cached_html))
+    if is_probably_complete_html(repaired_html):
+        cached_html = repaired_html
+        try:
+            html_bytes = cached_html.encode("utf-8")
+            atomic_write_bytes(cache_file, html_bytes)
+            write_sha256_sidecar(cache_file, html_bytes)
+        except Exception:
+            pass
+
+    transcript = normalize_agent_transcript(transcript, cached_html)
+
+    meta["generation_mode"] = meta.get("generation_mode") or "inspect_react_agent"
+
+    # Restore the cached .eval log into this run's inspect_logs/ directory
+    # so the report can link to it.
+    eval_cache = _agent_eval_cache_path(cache_file)
+    restored_eval_path = None
+    if eval_cache.exists() and runtime_log_dir:
+        try:
+            import shutil
+            dest_dir = Path(runtime_log_dir)
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / eval_cache.name
+            shutil.copy2(str(eval_cache), str(dest))
+            restored_eval_path = str(dest)
+        except Exception:
+            pass
+    meta["agent_eval_path"] = restored_eval_path
+    return cached_html, meta, transcript, None
+
+
 def _effective_max_tokens_for_model(model: str) -> Optional[int]:
     return DEFAULT_MAX_TOKENS if _is_anthropic_model(model) else None
 
 
-def _build_completion_kwargs(
+def _build_generation_request(
     *,
     model: str,
     messages: Any,
@@ -364,18 +504,20 @@ def _build_completion_kwargs(
     seed: Optional[int],
     effective_max_tokens: Optional[int],
     provider_config: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
-    kwargs: Dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "seed": seed,
-    }
-    if temperature is not None and not _is_codex_model(model):
-        kwargs["temperature"] = temperature
-    if effective_max_tokens is not None:
-        kwargs["max_tokens"] = effective_max_tokens
-    kwargs.update(_build_provider_completion_kwargs(model, provider_config))
-    return kwargs
+    max_workers: Optional[int] = None,
+) -> GenerationRequest:
+    provider_kwargs = _build_provider_completion_kwargs(model, provider_config)
+    return GenerationRequest(
+        model=model,
+        messages=messages,
+        seed=seed,
+        temperature=(None if temperature is None or _is_codex_model(model) else temperature),
+        max_tokens=effective_max_tokens,
+        api_base=provider_kwargs.get("api_base"),
+        api_version=provider_kwargs.get("api_version"),
+        azure_ad_token_provider=provider_kwargs.get("azure_ad_token_provider"),
+        max_workers=max_workers,
+    )
 
 
 def _extract_finish_and_stop_reason(resp) -> tuple[Optional[str], Optional[str]]:
@@ -492,11 +634,56 @@ def _write_generation_cache(
         "system_prompt": meta.get("system_prompt"),
         "custom_instructions": meta.get("custom_instructions"),
         "effective_system_prompt": meta.get("effective_system_prompt"),
+        "generation_mode": meta.get("generation_mode"),
+        "agent_sandbox": meta.get("agent_sandbox"),
+        "agent_limit_error": meta.get("agent_limit_error"),
+        "agent_limits": meta.get("agent_limits"),
     }
     try:
         atomic_write_text(meta_file, json.dumps(meta_payload, indent=2), encoding="utf-8")
     except Exception:
         pass
+
+
+def _write_agent_generation_cache(
+    *,
+    cache_file: Path,
+    meta_file: Path,
+    html: str,
+    model: str,
+    model_display_name: Optional[str],
+    prompt_hash_value: str,
+    meta: Dict[str, Any],
+    transcript: Dict[str, Any],
+    eval_log_path: Optional[str] = None,
+) -> None:
+    _write_generation_cache(
+        cache_file=cache_file,
+        meta_file=meta_file,
+        html=html,
+        model=model,
+        model_display_name=model_display_name,
+        prompt_hash_value=prompt_hash_value,
+        meta=meta,
+    )
+    try:
+        atomic_write_text(
+            _agent_transcript_cache_path(cache_file),
+            json.dumps(transcript, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+    # Cache the Inspect AI .eval log alongside other sidecars so it can be
+    # restored on future cache hits.
+    if eval_log_path:
+        src = Path(eval_log_path)
+        if src.exists():
+            try:
+                import shutil
+                shutil.copy2(str(src), str(_agent_eval_cache_path(cache_file)))
+            except Exception:
+                pass
 
 
 def _invalidate_cache_entry(cache_file: Path) -> None:
@@ -505,6 +692,8 @@ def _invalidate_cache_entry(cache_file: Path) -> None:
         cache_file,
         cache_file.with_suffix(cache_file.suffix + ".sha256"),
         _meta_path(cache_file),
+        _agent_transcript_cache_path(cache_file),
+        _agent_eval_cache_path(cache_file),
     ]:
         try:
             if p.exists():
@@ -522,11 +711,12 @@ def generate_html_batch_with_meta(
     debug_truncated_cache: bool = False,
     model_display_name: Optional[str] = None,
     provider_config: Optional[Dict[str, Any]] = None,
+    runtime_log_dir: Optional[str] = None,
 ) -> list[Dict[str, Any]]:
-    """Generate multiple prompts for the same model using LiteLLM batch completion.
+    """Generate multiple prompts for the same model using the Inspect runtime batch path.
 
     Each request must include `user_prompt` and `iteration`. Cache hits are returned
-    immediately and only cache misses are submitted through LiteLLM batching.
+    immediately and only cache misses are submitted through grouped batch generation.
     Individual item failures fall back to `generate_html_with_meta`.
     """
     if not requests:
@@ -535,8 +725,9 @@ def generate_html_batch_with_meta(
     base_system_prompt = get_base_system_prompt()
     custom_instructions = get_custom_instructions()
     effective_system_prompt = get_effective_system_prompt()
+    configure_runtime(runtime_log_dir)
     effective_max_tokens = _effective_max_tokens_for_model(model)
-    litellm.drop_params = True
+    generation_runtime.drop_params = True
     model_debug_label = _format_model_debug_label(model, model_display_name)
     provider_auth_debug = _format_provider_auth_debug(model)
 
@@ -604,6 +795,7 @@ def generate_html_batch_with_meta(
             debug_truncated_cache=item["debug_truncated_cache"],
             model_display_name=model_display_name,
             provider_config=provider_config,
+            runtime_log_dir=runtime_log_dir,
         )
         return {"html": html, "meta": meta}
 
@@ -619,19 +811,32 @@ def generate_html_batch_with_meta(
         ]
         for item in misses
     ]
-    batch_kwargs = _build_completion_kwargs(
+    batch_request = _build_generation_request(
         model=model,
         messages=batch_messages,
         temperature=temperature,
         seed=seed,
         effective_max_tokens=effective_max_tokens,
         provider_config=provider_config,
+        max_workers=min(100, len(misses)),
     )
-    batch_kwargs["max_workers"] = min(100, len(misses))
 
     batch_start = time.time()
     try:
-        batch_responses = litellm.batch_completion(**batch_kwargs)
+        batch_responses = generation_runtime.generate_batch([
+            GenerationRequest(
+                model=batch_request.model,
+                messages=messages,
+                seed=batch_request.seed,
+                temperature=batch_request.temperature,
+                max_tokens=batch_request.max_tokens,
+                api_base=batch_request.api_base,
+                api_version=batch_request.api_version,
+                azure_ad_token_provider=batch_request.azure_ad_token_provider,
+                max_workers=batch_request.max_workers,
+            )
+            for messages in batch_messages
+        ])
     except Exception:
         batch_responses = None
     batch_elapsed = time.time() - batch_start
@@ -702,6 +907,7 @@ def generate_html_with_meta(
     debug_truncated_cache: bool = False,
     model_display_name: Optional[str] = None,
     provider_config: Optional[Dict[str, Any]] = None,
+    runtime_log_dir: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Generate (or load cached) HTML plus metadata including token usage & cost.
 
@@ -720,6 +926,7 @@ def generate_html_with_meta(
     base_system_prompt = get_base_system_prompt()
     custom_instructions = get_custom_instructions()
     effective_system_prompt = get_effective_system_prompt()
+    configure_runtime(runtime_log_dir)
     h, cache_file, meta_file = _cache_artifacts(model, user_prompt, iteration, seed)
 
     truncated_cache_files: list[str] = []
@@ -747,7 +954,7 @@ def generate_html_with_meta(
             _invalidate_cache_entry(cache_file)
 
     start = time.time()
-    litellm.drop_params = True
+    generation_runtime.drop_params = True
     model_debug_label = _format_model_debug_label(model, model_display_name)
     provider_auth_debug = _format_provider_auth_debug(model)
     print(
@@ -757,30 +964,27 @@ def generate_html_with_meta(
 
     effective_max_tokens = _effective_max_tokens_for_model(model)
 
-    def _call_litellm_with_retries():
+    def _call_generation_runtime_with_retries():
         resp = None
         last_exc: Optional[BaseException] = None
         for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
             try:
-                kwargs: Dict[str, Any] = {
-                    "messages": [
+                request = _build_generation_request(
+                    model=model,
+                    messages=[
                         {"role": "system", "content": effective_system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                }
-                kwargs = _build_completion_kwargs(
-                    model=model,
-                    messages=kwargs["messages"],
                     temperature=temperature,
                     seed=seed,
                     effective_max_tokens=effective_max_tokens,
                     provider_config=provider_config,
                 )
 
-                resp = litellm.completion(**kwargs)
+                resp = generation_runtime.generate(request)
                 if resp and getattr(resp, "choices", None) and len(resp.choices) > 0:
                     return resp
-                last_exc = RuntimeError("litellm returned no choices")
+                last_exc = RuntimeError("generation runtime returned no choices")
             except Exception as e:
                 last_exc = e
 
@@ -790,7 +994,7 @@ def generate_html_with_meta(
             jitter = random.uniform(0, delay * 0.1)
             sleep_for = delay + jitter
             print(
-                f"litellm call failed for model={model_debug_label} ({provider_auth_debug}) "
+                f"generation call failed for model={model_debug_label} ({provider_auth_debug}) "
                 f"(attempt {attempt}/{RETRY_MAX_ATTEMPTS}): {last_exc}; "
                 f"retrying in {sleep_for:.1f}s..."
             )
@@ -798,7 +1002,7 @@ def generate_html_with_meta(
 
         if last_exc:
             raise last_exc
-        raise RuntimeError("litellm.completion failed with no response")
+        raise RuntimeError("generation failed with no response")
 
     resp = None
     html = None
@@ -815,7 +1019,7 @@ def generate_html_with_meta(
     )
 
     for trunc_attempt in range(TRUNCATION_RETRY_MAX + 1):
-        resp = _call_litellm_with_retries()
+        resp = _call_generation_runtime_with_retries()
         html, meta = _response_to_generation_result(
             resp=resp,
             model=model,
@@ -872,3 +1076,147 @@ def generate_html(model: str, user_prompt: str, temperature: float = None, seed:
         disable_cache=disable_cache,
     )
     return html, meta["cached"], meta["latency_s"]
+
+
+def _normalize_agent_sandbox_spec(value: Any) -> Any:
+    if isinstance(value, tuple) and len(value) == 2:
+        return (str(value[0]), str(value[1]))
+    if isinstance(value, list) and len(value) == 2:
+        return (str(value[0]), str(value[1]))
+    return value
+
+
+def format_agent_sandbox(value: Any) -> Optional[str]:
+    normalized = _normalize_agent_sandbox_spec(value)
+    if normalized is None:
+        return None
+    if isinstance(normalized, tuple) and len(normalized) == 2:
+        return f"{normalized[0]}:{normalized[1]}"
+    return str(normalized)
+
+
+def default_agent_sandbox() -> tuple[str, str]:
+    return (
+        "docker",
+        (Path(__file__).resolve().parent.parent / "config" / "inspect_agent_sandbox" / "compose.yaml").as_posix(),
+    )
+
+
+def generate_html_with_agent_meta(
+    model: str,
+    user_prompt: str,
+    iteration: int,
+    temperature: Optional[float] = None,
+    seed: Optional[int] = None,
+    disable_cache: bool = False,
+    model_display_name: Optional[str] = None,
+    provider_config: Optional[Dict[str, Any]] = None,
+    runtime_log_dir: Optional[str] = None,
+    agent_config: Optional[Dict[str, Any]] = None,
+) -> tuple[str, Dict[str, Any], Dict[str, Any]]:
+    """Generate HTML through a sandboxed Inspect ReAct agent.
+
+    Agent generations use the same cross-run cache identity as direct generation
+    and additionally cache a transcript sidecar so agent-mode artifacts can be
+    reconstructed without re-running the sandbox.
+    """
+    base_system_prompt = get_base_system_prompt()
+    custom_instructions = get_custom_instructions()
+    effective_system_prompt = get_effective_system_prompt()
+    prompt_hash_value, cache_file, meta_file = _cache_artifacts(model, user_prompt, iteration, seed, generation_mode="agent")
+
+    if not disable_cache and cache_file.exists():
+        cached_html, cached_meta, cached_transcript, reason = _load_cached_agent_generation(
+            cache_file=cache_file,
+            meta_file=meta_file,
+            prompt_hash_value=prompt_hash_value,
+            temperature=temperature,
+            seed=seed,
+            model_display_name=model_display_name,
+            base_system_prompt=base_system_prompt,
+            custom_instructions=custom_instructions,
+            effective_system_prompt=effective_system_prompt,
+            runtime_log_dir=runtime_log_dir,
+        )
+        if cached_html is not None and cached_meta is not None and cached_transcript is not None:
+            return cached_html, cached_meta, cached_transcript
+        if reason is not None:
+            _invalidate_cache_entry(cache_file)
+
+    config = agent_config or {}
+    user_limits = config.get("limits")
+    limits_cfg = normalize_agent_limits(user_limits if isinstance(user_limits, dict) else None)
+
+    sandbox_spec = _normalize_agent_sandbox_spec(config.get("sandbox") or default_agent_sandbox())
+    use_browser = bool(config.get("use_browser", True))
+
+    provider_kwargs = _build_provider_completion_kwargs(model, provider_config)
+    model_args = {
+        k: v
+        for k, v in provider_kwargs.items()
+        if k not in {"api_base"} and v is not None
+    }
+
+    result: AgentGenerationResult | None = None
+    html = ""
+    transcript: Dict[str, Any] = {}
+    for trunc_attempt in range(TRUNCATION_RETRY_MAX + 1):
+        result = run_agent_generation(
+            model=model,
+            prompt=user_prompt,
+            sandbox=sandbox_spec,
+            system_prompt=effective_system_prompt,
+            log_dir=runtime_log_dir,
+            model_base_url=provider_kwargs.get("api_base"),
+            model_args=model_args,
+            agent_limits=limits_cfg,
+            use_browser=use_browser,
+            temperature=temperature,
+            seed=seed,
+        )
+        html = clean_generation(
+            extract_agent_html_from_transcript(result.transcript, fallback_html=result.html)
+        )
+        transcript = normalize_agent_transcript(result.transcript, html)
+        if is_probably_complete_html(html):
+            break
+        if trunc_attempt < TRUNCATION_RETRY_MAX:
+            print("Detected truncated/incomplete agent HTML; retrying generation once...")
+
+    assert result is not None
+    meta = _build_generation_meta(
+        cached=False,
+        latency_s=result.elapsed_s,
+        prompt_hash_value=prompt_hash_value,
+        model_display_name=model_display_name,
+        tokens_in=result.usage.get("prompt_tokens"),
+        tokens_out=result.usage.get("completion_tokens"),
+        total_tokens=result.usage.get("total_tokens"),
+        cost_usd=result.usage.get("total_cost"),
+        seed=seed,
+        temperature=temperature,
+        system_prompt=base_system_prompt,
+        custom_instructions=custom_instructions,
+        effective_system_prompt=effective_system_prompt,
+    )
+    meta["generation_mode"] = "inspect_react_agent"
+    meta["agent_sandbox"] = format_agent_sandbox(result.sandbox)
+    meta["agent_limit_error"] = result.limit_error
+    meta["agent_limits"] = limits_cfg
+    meta["agent_eval_path"] = result.eval_log_path
+    meta["iteration"] = iteration
+
+    if html and is_probably_complete_html(html):
+        _write_agent_generation_cache(
+            cache_file=cache_file,
+            meta_file=meta_file,
+            html=html,
+            model=model,
+            model_display_name=model_display_name,
+            prompt_hash_value=prompt_hash_value,
+            meta=meta,
+            transcript=transcript,
+            eval_log_path=result.eval_log_path,
+        )
+
+    return html, meta, transcript

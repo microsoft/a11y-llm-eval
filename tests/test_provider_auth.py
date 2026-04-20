@@ -1,4 +1,5 @@
 import builtins
+import os
 import sys
 import types
 
@@ -48,7 +49,7 @@ def test_generate_html_with_meta_uses_provider_default_azure_credential(monkeypa
         captured.update(kwargs)
         return _FakeResp("<html><head></head><body>ok</body></html>")
 
-    monkeypatch.setattr(generator.litellm, "completion", _completion)
+    monkeypatch.setattr(generator.generation_runtime, "completion", _completion)
 
     fake_azure = types.ModuleType("azure")
     fake_identity = types.ModuleType("azure.identity")
@@ -98,7 +99,7 @@ def test_generate_html_with_meta_omits_optional_api_version(monkeypatch, tmp_pat
         captured.update(kwargs)
         return _FakeResp("<html><head></head><body>ok</body></html>")
 
-    monkeypatch.setattr(generator.litellm, "completion", _completion)
+    monkeypatch.setattr(generator.generation_runtime, "completion", _completion)
 
     fake_azure = types.ModuleType("azure")
     fake_identity = types.ModuleType("azure.identity")
@@ -128,6 +129,84 @@ def test_generate_html_with_meta_omits_optional_api_version(monkeypatch, tmp_pat
 
     assert captured["api_base"] == "https://example.openai.azure.com"
     assert "api_version" not in captured
+
+
+def test_generate_html_with_meta_supports_azureai_provider_alias(monkeypatch, tmp_path):
+    monkeypatch.setattr(generator, "CACHE_DIR", tmp_path / "generations")
+    generator.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("AZUREAI_BASE_URL", "https://example.services.ai.azure.com")
+    monkeypatch.delenv("AZUREAI_AUDIENCE", raising=False)
+
+    captured = {}
+
+    def _completion(**kwargs):
+        captured.update(kwargs)
+        return _FakeResp("<html><head></head><body>ok</body></html>")
+
+    monkeypatch.setattr(generator.generation_runtime, "completion", _completion)
+
+    fake_azure = types.ModuleType("azure")
+    fake_identity = types.ModuleType("azure.identity")
+
+    monkeypatch.setitem(sys.modules, "azure", fake_azure)
+    monkeypatch.setitem(sys.modules, "azure.identity", fake_identity)
+
+    generator.generate_html_with_meta(
+        model="azureai/my-deployment",
+        user_prompt="make a page",
+        iteration=0,
+        disable_cache=True,
+        provider_config={
+            "auth": {
+                "mode": "default_azure_credential",
+            }
+        },
+    )
+
+    assert captured["api_base"] == "https://example.services.ai.azure.com"
+    assert "api_version" not in captured
+    assert "azure_ad_token_provider" not in captured
+    assert os.environ["AZUREAI_AUDIENCE"] == "https://cognitiveservices.azure.com/.default"
+
+
+def test_generate_html_with_meta_supports_openai_azure_managed_identity(monkeypatch, tmp_path):
+    monkeypatch.setattr(generator, "CACHE_DIR", tmp_path / "generations")
+    generator.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("AZUREAI_OPENAI_BASE_URL", "https://example.openai.azure.com/openai/v1")
+    monkeypatch.setenv("AZUREAI_OPENAI_API_VERSION", "2025-03-01-preview")
+    monkeypatch.delenv("AZUREAI_AUDIENCE", raising=False)
+
+    captured = {}
+
+    def _completion(**kwargs):
+        captured.update(kwargs)
+        return _FakeResp("<html><head></head><body>ok</body></html>")
+
+    monkeypatch.setattr(generator.generation_runtime, "completion", _completion)
+
+    fake_azure = types.ModuleType("azure")
+    fake_identity = types.ModuleType("azure.identity")
+    monkeypatch.setitem(sys.modules, "azure", fake_azure)
+    monkeypatch.setitem(sys.modules, "azure.identity", fake_identity)
+
+    generator.generate_html_with_meta(
+        model="openai/azure/gpt-5.4-mini",
+        user_prompt="make a page",
+        iteration=0,
+        disable_cache=True,
+        provider_config={
+            "auth": {
+                "mode": "default_azure_credential",
+            }
+        },
+    )
+
+    assert captured["api_base"] == "https://example.openai.azure.com/openai/v1"
+    assert captured["api_version"] == "2025-03-01-preview"
+    assert "azure_ad_token_provider" not in captured
+    assert os.environ["AZUREAI_AUDIENCE"] == "https://cognitiveservices.azure.com/.default"
 
 
 def test_generate_html_with_meta_raises_when_optional_dependency_missing(monkeypatch, tmp_path):

@@ -16,12 +16,13 @@ Create a public test suite which can be used to benchmark how well various LLMs 
 - Tests only pass if zero axe-core failures are found AND all *requirement* assertions pass. Best Practice (BP) assertion failures do not fail the test but are tracked separately.
 
 ## Features
-- Python orchestrator (generation, execution, reporting)
+- Python orchestrator with Inspect AI-backed generation
 - Node.js Playwright + axe-core evaluation
 - Per-test prompts & injected JS assertions
 - HTML report summarizing performance
 - Token + cost tracking (tokens in/out/total, per-generation cost, aggregated per model)
 - Multi-sample generation with pass@k metrics (probability at least one passing generation in k draws)
+- Additive Inspect runtime JSONL logs under each run directory
 
 ## Sampling & pass@k Metrics
 You can request multiple independent generations ("samples") per (test, model). This enables computation of pass@k metrics similar to code evaluation benchmarks.
@@ -81,7 +82,24 @@ instruction_sets:
     description: Strong ARIA guidance; avoid invalid ARIA.
     system_prompt_append_markdown: config/instructions/aria_guardrails.md
     samples: 20
+
+  - id: agentic_accessibility
+    name: Agentic Accessibility
+    description: Use a sandboxed Inspect ReAct agent to iteratively refine the page.
+    system_prompt_append_markdown: config/instructions/accessible-minimal.md
+    samples: 5
+    agent:
+      sandbox:
+        - docker
+        - config/inspect_agent_sandbox/compose.yaml
+      limits:
+        message_limit: 50
+        token_limit: 120000
+        time_limit: 600
+        working_limit: 420
 ```
+
+Instruction sets always use Inspect AI's sandboxed ReAct agent path instead of the direct completion path. The instruction-set YAML format does not support `generation_mode`. If you specify `agent.sandbox`, use the Inspect two-item form `[docker, <compose file>]`. If `agent.sandbox` is omitted, the harness defaults to `config/inspect_agent_sandbox/compose.yaml`. `agent.limits.cost_limit` is optional and should only be set when model pricing is configured for every model in the run.
 
 Step 1: Generate control + instruction set variants
 
@@ -102,11 +120,13 @@ python -m a11y_llm_tests.cli evaluate \
 Variant artifacts:
 
 - Variant HTML: `runs/<ts>/raw_variants/<variant_id>/<test>/<model>__s<idx>.html`
+- Agent conversation sidecar for instruction-set variants: `runs/<ts>/raw_variants/<variant_id>/<test>/<model>__s<idx>.agent.json`
 - Variant screenshots: `runs/<ts>/screenshots_variants/<variant_id>/<test>__<model>__s<idx>.png`
 
 Report:
 
 - The main tables reflect the **control** results.
+- Each instruction-set sample card shows a transcript preview and links to the saved conversation JSON.
 - If variants are present, the report includes an **“Instruction Benchmarks (vs Control)”** section with side-by-side metrics and deltas.
 
 
