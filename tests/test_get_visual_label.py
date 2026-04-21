@@ -83,6 +83,11 @@ CASES = [
         '<label class="option"><input id="i" type="checkbox" aria-label="Python"><span class="option-label"><span class="option-title">Python<span aria-hidden="true">*</span></span><span class="option-desc">A valid language or technology in this context.</span></span></label>',
         'python*',
     ),
+    (
+        'inline_elements_with_block_display_separated_by_space',
+        '<style>label strong { display: block; }</style><label for="i"><strong>Python</strong><span>General-purpose language.</span></label><input id="i" type="checkbox">',
+        'python general-purpose language.',
+    ),
 ]
 
 @pytest.mark.parametrize('name,html_snippet,expected', CASES, ids=[c[0] for c in CASES])
