@@ -73,10 +73,11 @@ class PromptVariant(BaseModel):
     """Defines a prompt variant for a run.
 
     A run can include the implicit "control" variant plus zero or more variants that
-    append custom instructions at the system prompt level.
+    append custom instructions at the system prompt level (instruction sets) or mount
+    a skill package into a sandboxed multi-turn agent (skills).
     """
 
-    id: str  # e.g. "control" or a stable instruction set id
+    id: str  # e.g. "control", an instruction set id, or a skill id
     name: Optional[str] = None
     description: Optional[str] = None
     custom_instructions_path: Optional[str] = None
@@ -84,6 +85,15 @@ class PromptVariant(BaseModel):
     generation_mode: Optional[str] = None
     agent_sandbox: Optional[str] = None
     agent_limits: Optional[Dict[str, Any]] = None
+    # Variant kind. One of "control", "instruction_set", "skill". Defaults to the
+    # legacy interpretation (instruction_set for non-control variants with
+    # custom_instructions_path set) when None for backward compatibility.
+    kind: Optional[str] = None
+    # For kind == "skill": path to the skill directory on disk (host side).
+    skill_path: Optional[str] = None
+    # For kind == "skill": the turns definition from the skills YAML.
+    # Each entry is a dict with keys: id (str), name (Optional[str]), prompt (str).
+    turns: Optional[List[Dict[str, Any]]] = None
 
 
 class PromptDimensionAssignment(BaseModel):
@@ -119,6 +129,15 @@ class ResultRecord(BaseModel):
     sample_index: Optional[int] = None
     # Prompt variant identifier. None or "control" for baseline runs.
     prompt_variant_id: Optional[str] = None
+    # Prompt variant kind discriminator. One of "control", "instruction_set", "skill".
+    # Optional/additive for backward compatibility with older results.json files.
+    prompt_variant_kind: Optional[str] = None
+    # For skill variants: stable per-skill turn id (e.g. "generate", "review").
+    turn_id: Optional[str] = None
+    # For skill variants: 0-based turn index.
+    turn_index: Optional[int] = None
+    # For skill variants: total turns defined by the skill.
+    turn_count_total: Optional[int] = None
 
 
 class AggregateRecord(BaseModel):
@@ -130,6 +149,12 @@ class AggregateRecord(BaseModel):
     model_name: str
     # Prompt variant identifier. None or "control" for baseline runs.
     prompt_variant_id: Optional[str] = None
+    # Prompt variant kind discriminator. One of "control", "instruction_set", "skill".
+    prompt_variant_kind: Optional[str] = None
+    # For skill variants: stable per-skill turn id (e.g. "generate", "review").
+    turn_id: Optional[str] = None
+    # For skill variants: 0-based turn index.
+    turn_index: Optional[int] = None
     n_samples: int
     n_applicable: Optional[int] = None
     n_not_applicable: int = 0

@@ -130,6 +130,99 @@ Report:
 - If variants are present, the report includes an **“Instruction Benchmarks (vs Control)”** section with side-by-side metrics and deltas.
 
 
+### Skills benchmarking
+
+A **skill** is a self-contained package (a directory containing at minimum a `SKILL.md` plus any support files) that is mounted into the sandboxed agent at runtime. Unlike instruction sets, a skill declares a sequence of user **turns**, and the agent's submission at the end of each turn is evaluated **independently** so the report can compare `control | turn 1 | turn 2 | …` per (test, model).
+
+- Skills always use the sandboxed Inspect ReAct agent path. `generation_mode` is not supported.
+- The skill directory is mounted at `/workspace/.skills/<skill_id>/` inside the sandbox.
+- Exactly one turn prompt must contain `{{test_case_prompt}}` (typically turn 1). Other supported tokens: `{{skill_id}}`, `{{skill_path}}`, `{{previous_submission}}`.
+- Skills and instruction sets share an id namespace and can be enabled together in the same run.
+- Per-turn caching: changing turn 2's prompt invalidates turn 2's cache but not turn 1's.
+
+Step 0: Start from the default skills file
+
+- Use `config/default_skills.yaml` as a starting point. It defines a single `a11y-reviewer` skill that first generates a page (turn 1) and then is asked to review and remediate its own HTML (turn 2), using `config/skills/a11y-reviewer/SKILL.md` as guidance.
+
+Example `skills.yaml`:
+
+```yaml
+skills:
+  - id: a11y-reviewer
+    name: Accessibility Reviewer
+    description: Generate, then self-review using SKILL.md guidance.
+    skill_dir: config/skills/a11y-reviewer
+    # samples: 10                     # optional; defaults to --samples
+    agent:                            # optional; same shape as instruction sets
+      sandbox: [docker, config/inspect_agent_sandbox/compose.yaml]
+      limits:
+        message_limit: 50
+        token_limit: 120000
+        time_limit: 600
+    turns:
+      - id: generate
+        name: Generate
+        prompt: |
+          {{test_case_prompt}}
+      - id: review
+        name: Review & remediate
+        prompt: |
+          Review the HTML you just produced against the accessibility checklist
+          in {{skill_path}}/SKILL.md. Fix any issues you find and output the
+          complete, updated HTML document.
+```
+
+Step 1: Generate control + skill turns
+
+```bash
+python -m a11y_llm_tests.cli run \
+  --samples 5 \
+  --skills-file config/default_skills.yaml
+```
+
+Step 2: Evaluate and generate the report
+
+```bash
+python -m a11y_llm_tests.cli evaluate \
+  <path to run directory> \
+  --k 1,5,10
+```
+
+Skill artifacts:
+
+- Per-turn HTML: `runs/<ts>/raw_skills/<skill_id>/<test>/<model>__s<idx>__t<turn_index>.html`
+- One stitched conversation sidecar per sample: `runs/<ts>/raw_skills/<skill_id>/<test>/<model>__s<idx>.agent.json`
+- Per-turn screenshots: `runs/<ts>/screenshots_skills/<skill_id>/<test>__<model>__s<idx>__t<turn_index>.png`
+- `results.json` emits one record per (test, model, sample, turn) with `prompt_variant_kind = "skill"`, `turn_id`, `turn_index`, and `turn_count_total`, plus one aggregate per (test, model, skill, turn).
+
+Report:
+
+- A new **Skills** section renders one table per configured skill with dynamic columns: `Control | turn 1 | … | turn N | Δ last vs control | Δ last vs turn 1`.
+- The skill details panel previews each turn's prompt template and the mounted `SKILL.md`.
+
+### Combined run (instruction sets + skills)
+
+Both flags can be supplied at once; each variant is benchmarked separately against the same control, and each renders its own section in the report.
+
+```bash
+python -m a11y_llm_tests.cli run \
+  --samples 5 \
+  --instruction-sets-file config/default_instruction_sets.yaml \
+  --skills-file config/default_skills.yaml
+
+python -m a11y_llm_tests.cli evaluate \
+  <path to run directory> \
+  --k 1,5
+```
+
+This produces, in a single run directory:
+
+- `raw/…` — control samples
+- `raw_variants/<instruction_set_id>/…` — instruction-set samples (one HTML + `.agent.json` per sample)
+- `raw_skills/<skill_id>/…` — skill samples (one HTML per turn + one stitched `.agent.json` per sample)
+- A report with three comparison sections: Control summary, **Instruction Benchmarks (vs Control)**, and **Skills (vs Control)**.
+
+
 ## Quick Start
 ```bash
 python3 -m venv .venv

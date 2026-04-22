@@ -1,0 +1,36 @@
+# Default skills for benchmarking against control.
+# Use with:
+#   python -m a11y_llm_tests.cli run --skills-file config/default_skills.yaml ...
+#
+# Each skill mounts a directory (containing SKILL.md and any support files) into the
+# sandboxed agent at /workspace/.skills/<id>/ and runs an N-turn conversation. The
+# agent's submission at the end of each turn is captured and evaluated as its own
+# artifact so the report can show control | turn 1 | turn 2 | ... deltas.
+#
+# Template tokens supported in turn prompts:
+#   {{test_case_prompt}}   - the user prompt composed from prompt.yaml (exactly one
+#                            turn must reference this, typically turn 0).
+#   {{skill_id}}           - the skill id.
+#   {{skill_path}}         - /workspace/.skills/<id>
+#   {{previous_submission}} - the HTML submitted on the previous turn (turns >= 1).
+
+skills:
+  - id: a11y-wizard
+    name: Accessibility Wizard
+    description: >-
+      A skill that implicitly steers generation toward accessible HTML and can be
+      explicitly invoked to review and remediate previously produced HTML.
+    skill_dir: skills/a11y-wizard
+    # Optional. Defaults to --samples.
+    # samples: 10
+    turns:
+      - id: generate
+        name: Generate
+        prompt: |
+          {{test_case_prompt}}
+          Plan:
+            1. Generate a standalone HTML document based on the above.
+            2. Add and run accessibility tests, review results, and remediate the HTML.
+                Fix any real accessibility issues you find. Leave correct markup
+                alone. Submit one corrected standalone HTML document as your final
+                answer. Do not wrap it in markdown fences or add commentary.

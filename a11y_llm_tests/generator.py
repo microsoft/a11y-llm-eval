@@ -451,6 +451,9 @@ def _load_cached_agent_generation(
     if cached_html is None or meta is None:
         return None, None, None, reason
 
+    if meta.get("agent_limit_error"):
+        return None, None, None, "agent_limit_error_in_cache"
+
     transcript_file = _agent_transcript_cache_path(cache_file)
     try:
         transcript = json.loads(transcript_file.read_text(encoding="utf-8"))
@@ -1206,7 +1209,7 @@ def generate_html_with_agent_meta(
     meta["agent_eval_path"] = result.eval_log_path
     meta["iteration"] = iteration
 
-    if html and is_probably_complete_html(html):
+    if html and is_probably_complete_html(html) and not result.limit_error:
         _write_agent_generation_cache(
             cache_file=cache_file,
             meta_file=meta_file,
@@ -1220,3 +1223,333 @@ def generate_html_with_agent_meta(
         )
 
     return html, meta, transcript
+
+
+SKILL_TOKEN_TEST_CASE_PROMPT = "{{test_case_prompt}}"
+SKILL_TOKEN_SKILL_ID = "{{skill_id}}"
+SKILL_TOKEN_SKILL_PATH = "{{skill_path}}"
+SKILL_TOKEN_PREVIOUS_SUBMISSION = "{{previous_submission}}"
+
+
+def render_skill_turn_prompt(
+    template: str,
+    *,
+    test_case_prompt: str,
+    skill_id: str,
+    skill_path: str,
+    previous_submission: Optional[str],
+) -> str:
+    """Substitute supported skill-turn tokens."""
+    out = template
+    out = out.replace(SKILL_TOKEN_TEST_CASE_PROMPT, test_case_prompt)
+    out = out.replace(SKILL_TOKEN_SKILL_ID, skill_id)
+    out = out.replace(SKILL_TOKEN_SKILL_PATH, skill_path)
+    out = out.replace(SKILL_TOKEN_PREVIOUS_SUBMISSION, previous_submission or "")
+    return out
+
+
+def _skill_turn_cache_file(
+    model: str,
+    prompt_hash_value: str,
+    iteration: int,
+    seed: Optional[int],
+    skill_id: str,
+    skill_files_hash: str,
+    turn_index: int,
+    cumulative_turn_hash: str,
+) -> tuple[Path, Path]:
+    seed_part = f"_s{seed}" if seed is not None else ""
+    cache_file = CACHE_DIR / (
+        f"{model}_{prompt_hash_value}{seed_part}_i{iteration}_agent_skill-{skill_id}"
+        f"_sh{skill_files_hash}_t{turn_index}_{cumulative_turn_hash}.html"
+    )
+    return cache_file, _meta_path(cache_file)
+
+
+def generate_html_with_skill_multi_turn(
+    model: str,
+    test_case_prompt: str,
+    iteration: int,
+    *,
+    temperature: Optional[float] = None,
+    seed: Optional[int] = None,
+    disable_cache: bool = False,
+    model_display_name: Optional[str] = None,
+    provider_config: Optional[Dict[str, Any]] = None,
+    runtime_log_dir: Optional[str] = None,
+    agent_config: Optional[Dict[str, Any]] = None,
+    skill_config: Dict[str, Any],
+) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
+    """Run a skill's multi-turn agent conversation.
+
+    ``skill_config`` is a dict with keys:
+      - id (str), host_dir (str), sandbox_mount_path (str),
+        system_prompt_preamble (str), skill_files_hash (str),
+        turns (list of {id, name, prompt}).
+
+    Returns a tuple ``(turn_records, aggregate_conversation_payload)`` where
+    ``turn_records`` is a list ordered by ``turn_index`` with entries::
+
+        {
+            "turn_id": str,
+            "turn_index": int,
+            "turn_name": str,
+            "html": str,
+            "meta": dict,             # generation meta for this turn
+            "conversation": dict,     # transcript fragment for this turn
+            "error": Optional[str],   # if the turn errored / was skipped
+        }
+
+    ``aggregate_conversation_payload`` stitches every turn's transcript into a
+    single JSON document suitable for the run directory's ``.agent.json`` sidecar.
+    """
+    base_system_prompt = get_base_system_prompt()
+    custom_instructions = get_custom_instructions()
+    effective_system_prompt = get_effective_system_prompt()
+
+    skill_id = skill_config["id"]
+    host_dir = skill_config["host_dir"]
+    sandbox_path = skill_config["sandbox_mount_path"]
+    skill_files_hash = skill_config.get("skill_files_hash") or ""
+    turns = list(skill_config.get("turns") or [])
+    if not turns:
+        raise ValueError(f"Skill '{skill_id}' has no turns configured")
+
+    config = agent_config or {}
+    user_limits = config.get("limits")
+    limits_cfg = normalize_agent_limits(user_limits if isinstance(user_limits, dict) else None)
+    sandbox_spec = _normalize_agent_sandbox_spec(config.get("sandbox") or default_agent_sandbox())
+    use_browser = bool(config.get("use_browser", True))
+    skill_mount = {"host_dir": host_dir, "sandbox_path": sandbox_path}
+
+    provider_kwargs = _build_provider_completion_kwargs(model, provider_config)
+    model_args = {
+        k: v for k, v in provider_kwargs.items()
+        if k not in {"api_base"} and v is not None
+    }
+
+    # We base the per-turn cache identity on the compute_prompt_hash of the
+    # underlying test case prompt (which already incorporates system prompt +
+    # skill preamble because they are set via configure_prompts) plus the
+    # cumulative hash of rendered turn prompts up to and including this turn.
+    base_prompt_hash_value = compute_prompt_hash(test_case_prompt)
+
+    turn_records: list[Dict[str, Any]] = []
+    rendered_prompts: list[str] = []
+    seed_messages: list[Dict[str, str]] = []
+    previous_submission: Optional[str] = None
+    aborted_reason: Optional[str] = None
+
+    for turn_index, turn in enumerate(turns):
+        tid = turn["id"]
+        tname = turn.get("name") or tid
+        rendered = render_skill_turn_prompt(
+            turn["prompt"],
+            test_case_prompt=test_case_prompt,
+            skill_id=skill_id,
+            skill_path=sandbox_path,
+            previous_submission=previous_submission,
+        )
+        rendered_prompts.append(rendered)
+        cumulative_turn_hash = prompt_hash(_PROMPT_JOINER.join(rendered_prompts))
+
+        if aborted_reason is not None:
+            turn_records.append({
+                "turn_id": tid,
+                "turn_index": turn_index,
+                "turn_name": tname,
+                "html": "",
+                "meta": _build_generation_meta(
+                    cached=False,
+                    latency_s=0.0,
+                    prompt_hash_value=base_prompt_hash_value,
+                    model_display_name=model_display_name,
+                    seed=seed,
+                    temperature=temperature,
+                    system_prompt=base_system_prompt,
+                    custom_instructions=custom_instructions,
+                    effective_system_prompt=effective_system_prompt,
+                ) | {
+                    "generation_mode": "inspect_react_agent",
+                    "agent_sandbox": format_agent_sandbox(sandbox_spec),
+                    "agent_limit_error": aborted_reason,
+                    "agent_limits": limits_cfg,
+                    "iteration": iteration,
+                },
+                "conversation": {
+                    "format": "inspect_agent_conversation/v1",
+                    "turn_index": turn_index,
+                    "turn_id": tid,
+                    "skipped": True,
+                    "skip_reason": aborted_reason,
+                },
+                "error": aborted_reason,
+            })
+            continue
+
+        cache_file, meta_file = _skill_turn_cache_file(
+            model,
+            base_prompt_hash_value,
+            iteration,
+            seed,
+            skill_id,
+            skill_files_hash,
+            turn_index,
+            cumulative_turn_hash,
+        )
+
+        used_cache = False
+        turn_html = ""
+        turn_meta: Dict[str, Any] = {}
+        turn_transcript: Dict[str, Any] = {}
+
+        if not disable_cache and cache_file.exists():
+            cached_html, cached_meta, cached_transcript, reason = _load_cached_agent_generation(
+                cache_file=cache_file,
+                meta_file=meta_file,
+                prompt_hash_value=base_prompt_hash_value,
+                temperature=temperature,
+                seed=seed,
+                model_display_name=model_display_name,
+                base_system_prompt=base_system_prompt,
+                custom_instructions=custom_instructions,
+                effective_system_prompt=effective_system_prompt,
+                runtime_log_dir=runtime_log_dir,
+            )
+            if cached_html is not None and cached_meta is not None and cached_transcript is not None:
+                turn_html = cached_html
+                turn_meta = cached_meta
+                turn_transcript = cached_transcript
+                used_cache = True
+            elif reason is not None:
+                _invalidate_cache_entry(cache_file)
+
+        if not used_cache:
+            try:
+                result: AgentGenerationResult = run_agent_generation(
+                    model=model,
+                    prompt=rendered,
+                    sandbox=sandbox_spec,
+                    system_prompt=effective_system_prompt,
+                    log_dir=runtime_log_dir,
+                    model_base_url=provider_kwargs.get("api_base"),
+                    model_args=model_args,
+                    agent_limits=limits_cfg,
+                    use_browser=use_browser,
+                    temperature=temperature,
+                    seed=seed,
+                    skill_mount=skill_mount,
+                    seed_messages=seed_messages if seed_messages else None,
+                )
+            except Exception as exc:  # hard failure during this turn
+                aborted_reason = f"turn-{turn_index}-error:{exc}"
+                turn_records.append({
+                    "turn_id": tid,
+                    "turn_index": turn_index,
+                    "turn_name": tname,
+                    "html": "",
+                    "meta": _build_generation_meta(
+                        cached=False,
+                        latency_s=0.0,
+                        prompt_hash_value=base_prompt_hash_value,
+                        model_display_name=model_display_name,
+                        seed=seed,
+                        temperature=temperature,
+                        system_prompt=base_system_prompt,
+                        custom_instructions=custom_instructions,
+                        effective_system_prompt=effective_system_prompt,
+                    ) | {
+                        "generation_mode": "inspect_react_agent",
+                        "agent_sandbox": format_agent_sandbox(sandbox_spec),
+                        "agent_limit_error": aborted_reason,
+                        "agent_limits": limits_cfg,
+                        "iteration": iteration,
+                    },
+                    "conversation": {
+                        "format": "inspect_agent_conversation/v1",
+                        "turn_index": turn_index,
+                        "turn_id": tid,
+                        "error": aborted_reason,
+                    },
+                    "error": aborted_reason,
+                })
+                continue
+
+            turn_html = clean_generation(
+                extract_agent_html_from_transcript(result.transcript, fallback_html=result.html)
+            )
+            turn_transcript = normalize_agent_transcript(result.transcript, turn_html)
+            turn_meta = _build_generation_meta(
+                cached=False,
+                latency_s=result.elapsed_s,
+                prompt_hash_value=base_prompt_hash_value,
+                model_display_name=model_display_name,
+                tokens_in=result.usage.get("prompt_tokens"),
+                tokens_out=result.usage.get("completion_tokens"),
+                total_tokens=result.usage.get("total_tokens"),
+                cost_usd=result.usage.get("total_cost"),
+                seed=seed,
+                temperature=temperature,
+                system_prompt=base_system_prompt,
+                custom_instructions=custom_instructions,
+                effective_system_prompt=effective_system_prompt,
+            )
+            turn_meta["generation_mode"] = "inspect_react_agent"
+            turn_meta["agent_sandbox"] = format_agent_sandbox(result.sandbox)
+            turn_meta["agent_limit_error"] = result.limit_error
+            turn_meta["agent_limits"] = limits_cfg
+            turn_meta["agent_eval_path"] = result.eval_log_path
+            turn_meta["iteration"] = iteration
+
+            if turn_html and is_probably_complete_html(turn_html) and not result.limit_error:
+                _write_agent_generation_cache(
+                    cache_file=cache_file,
+                    meta_file=meta_file,
+                    html=turn_html,
+                    model=model,
+                    model_display_name=model_display_name,
+                    prompt_hash_value=base_prompt_hash_value,
+                    meta=turn_meta,
+                    transcript=turn_transcript,
+                    eval_log_path=result.eval_log_path,
+                )
+
+            if result.limit_error:
+                aborted_reason = result.limit_error
+
+        turn_records.append({
+            "turn_id": tid,
+            "turn_index": turn_index,
+            "turn_name": tname,
+            "html": turn_html,
+            "meta": turn_meta,
+            "conversation": turn_transcript,
+            "error": None,
+        })
+
+        # Extend the conversation history seed for the next turn: the latest user
+        # prompt that was sent, plus the assistant's submitted HTML.
+        seed_messages.append({"role": "user", "content": rendered})
+        if turn_html:
+            seed_messages.append({"role": "assistant", "content": turn_html})
+        previous_submission = turn_html
+
+    aggregate_conversation = {
+        "format": "inspect_agent_conversation/v1+skill-multi-turn",
+        "skill_id": skill_id,
+        "sandbox": sandbox_spec if isinstance(sandbox_spec, tuple) else [str(sandbox_spec)],
+        "sandbox_mount_path": sandbox_path,
+        "turns": [
+            {
+                "turn_id": tr["turn_id"],
+                "turn_index": tr["turn_index"],
+                "turn_name": tr["turn_name"],
+                "rendered_prompt": rendered_prompts[tr["turn_index"]] if tr["turn_index"] < len(rendered_prompts) else None,
+                "conversation": tr["conversation"],
+                "error": tr.get("error"),
+            }
+            for tr in turn_records
+        ],
+    }
+
+    return turn_records, aggregate_conversation

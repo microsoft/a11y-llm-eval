@@ -1,4 +1,5 @@
 """Typer CLI for running evaluations and generating reports."""
+import hashlib
 import inspect
 import json
 import multiprocessing
@@ -6,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 import typer
 import yaml
-from typing import Any, List
+from typing import Any, Dict, List, Tuple
 
 from . import generator, node_bridge
 from .model_config import get_model_provider, load_models_config, normalize_models_config
@@ -32,18 +33,95 @@ load_dotenv()
 
 app = typer.Typer(add_completion=False)
 
-def _render_progress(prefix: str, done: int, total: int) -> None:
-    """Render an in-place progress indicator.
+# Tracks the last rendered progress tuple per prefix so we can dedupe updates
+# and avoid re-printing the same percent twice.  Keyed by the prefix string.
+_PROGRESS_LAST: Dict[str, Tuple[int, int, int]] = {}
 
-    Uses carriage returns to avoid spamming lines.
+
+def _render_progress(prefix: str, done: int, total: int) -> None:
+    """Render a progress indicator.
+
+    Prints a new line each time percent or done/total changes.  We intentionally
+    avoid the ``\\r``-overwrite trick: worker subprocesses, Docker/compose, and
+    the inspect_ai sandbox write their own lines to stdout/stderr during a run,
+    which would push an in-place progress line up and leave visible gaps.  A
+    deduped newline-per-change approach stays readable when interleaved and
+    bounds total output to ~100 lines regardless of ``total``.
     """
     if total <= 0:
         return
     done = max(0, min(done, total))
     pct = int((done / total) * 100)
-    typer.echo(f"\r{prefix}: {pct}% ({done}/{total})", nl=False)
+    last = _PROGRESS_LAST.get(prefix)
+    # Only emit when the visible state changes (percent, done, or total).  The
+    # final update (done == total) is always emitted so callers see completion.
+    if last == (pct, done, total) and done < total:
+        return
+    _PROGRESS_LAST[prefix] = (pct, done, total)
+    typer.echo(f"{prefix}: {pct}% ({done}/{total})")
     if done >= total:
-        typer.echo("")
+        # Reset so a subsequent phase with the same prefix starts clean.
+        _PROGRESS_LAST.pop(prefix, None)
+
+
+def _print_generation_summary(results: List[Dict[str, Any]], gen_tasks: List[Dict[str, Any]]) -> None:
+    """Echo a post-run summary highlighting errors, limit hits, and cache stats.
+
+    ``results`` is the in-memory list of ResultRecord dicts accumulated during
+    generation; ``gen_tasks`` is the list of planned tasks.  The summary is
+    advisory only and must not alter any artifact on disk.
+    """
+    total_planned = len(gen_tasks)
+    total_produced = len(results)
+    cached = 0
+    live = 0
+    agent_limit_hits: List[Tuple[str, str, str]] = []  # (variant, model, limit_error)
+    for r in results:
+        gen = r.get("generation") or {}
+        if gen.get("cached"):
+            cached += 1
+        else:
+            live += 1
+        lim = gen.get("agent_limit_error")
+        if lim:
+            agent_limit_hits.append(
+                (
+                    str(r.get("prompt_variant_id") or "control"),
+                    str(r.get("model_name") or "?"),
+                    str(lim),
+                )
+            )
+
+    typer.echo("")
+    typer.secho("Run summary", fg=typer.colors.CYAN, bold=True)
+    typer.echo(f"  Samples produced: {total_produced} (planned: {total_planned})")
+    typer.echo(f"  Cache hits: {cached} | Fresh generations: {live}")
+
+    if agent_limit_hits:
+        typer.secho(
+            f"  Agent limits hit: {len(agent_limit_hits)}",
+            fg=typer.colors.YELLOW,
+            bold=True,
+        )
+        # Group by (variant, model, limit_error) for a concise view.
+        from collections import Counter
+
+        grouped = Counter(agent_limit_hits)
+        for (variant, model, lim), count in grouped.most_common():
+            typer.secho(
+                f"    - {count}x {variant} / {model}: {lim}",
+                fg=typer.colors.YELLOW,
+            )
+    else:
+        typer.echo("  Agent limits hit: 0")
+
+    missing = total_planned - total_produced
+    if missing > 0:
+        typer.secho(
+            f"  Missing samples: {missing} (tasks planned but no result recorded)",
+            fg=typer.colors.RED,
+            bold=True,
+        )
 
 
 def _evaluate_worker(args_tuple):
@@ -60,6 +138,10 @@ def _evaluate_worker(args_tuple):
     gen_meta = args_tuple.get("gen_meta") or {}
     prompt_text = args_tuple.get("prompt_text") or ""
     prompt_variant_id = args_tuple.get("prompt_variant_id")
+    prompt_variant_kind = args_tuple.get("prompt_variant_kind")
+    turn_id = args_tuple.get("turn_id")
+    turn_index = args_tuple.get("turn_index")
+    turn_count_total = args_tuple.get("turn_count_total")
     generation_conversation_path = args_tuple.get("generation_conversation_path")
     generation_eval_path = args_tuple.get("generation_eval_path")
     html = Path(html_path).read_text(encoding="utf-8")
@@ -146,6 +228,10 @@ def _evaluate_worker(args_tuple):
         ),
         sample_index=sample_index,
         prompt_variant_id=prompt_variant_id,
+        prompt_variant_kind=prompt_variant_kind,
+        turn_id=turn_id,
+        turn_index=turn_index,
+        turn_count_total=turn_count_total,
     )
     return json.loads(rec.model_dump_json())
 
@@ -165,8 +251,9 @@ def _generate_worker(task):
     system_prompt_override = task.get("system_prompt_override")
     custom_instructions_text = task.get("custom_instructions_text")
     prompt_variant_id = task.get("prompt_variant_id")
+    prompt_variant_kind = task.get("prompt_variant_kind")
     debug_truncated_cache = task.get("debug_truncated_cache", False)
-    html_out_path = task["html_out_path"]
+    html_out_path = task.get("html_out_path")
     conversation_out_path = task.get("conversation_out_path")
     model_display_name = task.get("model_display_name")
     provider_config = task.get("provider_config")
@@ -177,6 +264,60 @@ def _generate_worker(task):
     # Configure prompts within this worker process for the specific variant.
     generator.configure_prompts(system_prompt_override, custom_instructions_text)
     generator.configure_runtime(runtime_log_dir)
+
+    # Skill variants: multi-turn. Emit one record per turn.
+    if prompt_variant_kind == "skill":
+        skill_config = task["skill_config"]
+        html_out_path_stub = task["html_out_path_stub"]
+        turn_records, aggregate_conversation = generator.generate_html_with_skill_multi_turn(
+            model,
+            prompt_text,
+            sample_index,
+            temperature=temperature,
+            seed=seed,
+            disable_cache=disable_cache,
+            model_display_name=model_display_name,
+            provider_config=provider_config,
+            runtime_log_dir=runtime_log_dir,
+            agent_config=agent_config,
+            skill_config=skill_config,
+        )
+
+        conversation_path = None
+        if conversation_out_path:
+            conversation_target = Path(conversation_out_path)
+            conversation_target.parent.mkdir(exist_ok=True, parents=True)
+            atomic_write_text(conversation_target, json.dumps(aggregate_conversation, indent=2), encoding="utf-8")
+            conversation_path = str(conversation_target)
+
+        skill_turn_records = []
+        total_turns = len(turn_records)
+        for tr in turn_records:
+            t_idx = tr["turn_index"]
+            html_path = Path(f"{html_out_path_stub}__t{t_idx}.html")
+            html_path.parent.mkdir(exist_ok=True, parents=True)
+            atomic_write_text(html_path, tr["html"] or "", encoding="utf-8")
+            meta = tr.get("meta") or {}
+            skill_turn_records.append({
+                "test_name": test_name,
+                "base_test_name": base_test_name,
+                "prompt_case_id": prompt_case_id,
+                "prompt_dimensions": prompt_dimensions,
+                "model": model,
+                "sample_index": sample_index,
+                "prompt_text": prompt_text,
+                "meta": meta,
+                "html_path": str(html_path),
+                "conversation_path": conversation_path,
+                "eval_path": meta.get("agent_eval_path"),
+                "prompt_variant_id": prompt_variant_id,
+                "prompt_variant_kind": "skill",
+                "turn_id": tr["turn_id"],
+                "turn_index": t_idx,
+                "turn_count_total": total_turns,
+                "turn_error": tr.get("error"),
+            })
+        return {"skill_turn_records": skill_turn_records}
 
     conversation_payload = None
     if generation_mode == "inspect_react_agent":
@@ -239,6 +380,7 @@ def _generate_worker(task):
         "conversation_path": conversation_path,
         "eval_path": meta.get("agent_eval_path"),
         "prompt_variant_id": prompt_variant_id,
+        "prompt_variant_kind": prompt_variant_kind,
     }
 
 
@@ -249,9 +391,18 @@ def _default_screenshot_path(
     model: str,
     sample_index: int | None,
     prompt_variant_id: str,
+    *,
+    prompt_variant_kind: str | None = None,
+    turn_index: int | None = None,
 ) -> Path:
     file_stem = prompt_case_id or test_name
-    file_name = f"{file_stem}__{model}__s{sample_index}.png" if sample_index is not None else f"{file_stem}__{model}.png"
+    turn_suffix = f"__t{turn_index}" if turn_index is not None else ""
+    if sample_index is not None:
+        file_name = f"{file_stem}__{model}__s{sample_index}{turn_suffix}.png"
+    else:
+        file_name = f"{file_stem}__{model}{turn_suffix}.png"
+    if prompt_variant_kind == "skill" or (turn_index is not None and prompt_variant_id not in {None, "control"}):
+        return run_dir / "screenshots_skills" / prompt_variant_id / file_name
     if prompt_variant_id == "control":
         return run_dir / "screenshots" / file_name
     return run_dir / "screenshots_variants" / prompt_variant_id / file_name
@@ -424,6 +575,146 @@ def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[d
     return out
 
 
+SKILL_SANDBOX_MOUNT_ROOT = "/workspace/.skills"
+# Exactly one turn per skill must reference this token. Earlier turns that produce
+# HTML the evaluator will score must embed the user's test case prompt.
+SKILL_TOKEN_TEST_CASE_PROMPT = "{{test_case_prompt}}"
+
+
+def _hash_skill_files(skill_dir: Path) -> str:
+    """Compute a stable digest over every file under the skill directory."""
+    sha = hashlib.sha256()
+    for rel in sorted(p.relative_to(skill_dir).as_posix() for p in skill_dir.rglob("*") if p.is_file()):
+        sha.update(rel.encode("utf-8"))
+        sha.update(b"\0")
+        sha.update((skill_dir / rel).read_bytes())
+        sha.update(b"\0")
+    return sha.hexdigest()[:16]
+
+
+def _skill_system_prompt_preamble(skill_id: str, skill_name: str, sandbox_path: str) -> str:
+    """Preamble appended to the system prompt when a skill variant is active."""
+    return (
+        f"A skill named `{skill_name}` ({skill_id}) is available inside the sandbox at "
+        f"`{sandbox_path}/SKILL.md`. Read it before producing output and follow its "
+        f"guidance. The skill directory and any support files live under `{sandbox_path}/`."
+    )
+
+
+def _load_skills(skills_file: str, base_dir: Path, existing_ids: set[str] | None = None) -> list[dict]:
+    """Load a skills YAML file.
+
+    Expected format::
+
+        skills:
+          - id: a11y-reviewer
+            name: Accessibility Reviewer
+            description: ...
+            skill_dir: skills/a11y-reviewer   # relative to base_dir or absolute
+            samples: 10                       # optional
+            agent:                            # optional; same shape as instruction sets
+              sandbox: [docker, path/to/compose.yaml]
+              limits: {...}
+            turns:
+              - id: generate
+                name: Generate
+                prompt: "{{test_case_prompt}}"
+              - id: review
+                name: Review & remediate
+                prompt: "Review using {{skill_path}}/SKILL.md ..."
+    """
+    reserved = set(existing_ids or set())
+    path = Path(skills_file)
+    if not path.is_absolute():
+        cwd_path = path.resolve()
+        if cwd_path.exists():
+            path = cwd_path
+        else:
+            path = (base_dir / path).resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Skills file not found: {path}")
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raw = data.get("skills") or []
+    if not isinstance(raw, list):
+        raise ValueError("skills must be a list")
+    out: list[dict] = []
+    seen_ids: set[str] = set()
+    for s in raw:
+        if not isinstance(s, dict):
+            continue
+        sid = (s.get("id") or "").strip()
+        if not sid:
+            raise ValueError("Each skill must include a non-empty 'id'")
+        if sid.lower() == "control":
+            raise ValueError("'control' is reserved; choose a different skill id")
+        if sid in seen_ids or sid in reserved:
+            raise ValueError(f"Duplicate variant id '{sid}' (skills and instruction sets share a namespace)")
+        seen_ids.add(sid)
+        if "generation_mode" in s:
+            raise ValueError(
+                f"Skill '{sid}' cannot specify generation_mode; skills always use the inspect_react_agent path"
+            )
+        skill_dir_raw = s.get("skill_dir")
+        if not skill_dir_raw:
+            raise ValueError(f"Skill '{sid}' must include skill_dir")
+        sdp = Path(skill_dir_raw)
+        if not sdp.is_absolute():
+            sdp = (base_dir / sdp).resolve()
+        if not sdp.exists() or not sdp.is_dir():
+            raise FileNotFoundError(f"Skill directory not found for '{sid}': {sdp}")
+        if not (sdp / "SKILL.md").exists():
+            raise FileNotFoundError(f"Skill '{sid}' is missing SKILL.md at {sdp / 'SKILL.md'}")
+
+        turns_raw = s.get("turns")
+        if not isinstance(turns_raw, list) or not turns_raw:
+            raise ValueError(f"Skill '{sid}' must include a non-empty 'turns' list")
+        turns: list[dict] = []
+        turn_ids: set[str] = set()
+        test_case_token_count = 0
+        for i, t in enumerate(turns_raw):
+            if not isinstance(t, dict):
+                raise ValueError(f"Skill '{sid}' turn #{i} must be a mapping")
+            tid = (t.get("id") or "").strip()
+            if not tid:
+                raise ValueError(f"Skill '{sid}' turn #{i} must include a non-empty 'id'")
+            if tid in turn_ids:
+                raise ValueError(f"Skill '{sid}' has duplicate turn id '{tid}'")
+            turn_ids.add(tid)
+            prompt_tmpl = t.get("prompt")
+            if not isinstance(prompt_tmpl, str) or not prompt_tmpl.strip():
+                raise ValueError(f"Skill '{sid}' turn '{tid}' must include a non-empty 'prompt'")
+            if SKILL_TOKEN_TEST_CASE_PROMPT in prompt_tmpl:
+                test_case_token_count += 1
+            turns.append({
+                "id": tid,
+                "name": (t.get("name") or tid).strip(),
+                "prompt": prompt_tmpl,
+            })
+        if test_case_token_count != 1:
+            raise ValueError(
+                f"Skill '{sid}' must reference {SKILL_TOKEN_TEST_CASE_PROMPT} in exactly one turn "
+                f"(found {test_case_token_count})."
+            )
+
+        sandbox_path = f"{SKILL_SANDBOX_MOUNT_ROOT}/{sid}"
+        name = (s.get("name") or sid).strip()
+        files_hash = _hash_skill_files(sdp)
+        out.append({
+            "id": sid,
+            "name": name,
+            "description": (s.get("description") or "").strip() or None,
+            "skill_dir_abs_path": str(sdp),
+            "skill_files_hash": files_hash,
+            "sandbox_mount_path": sandbox_path,
+            "system_prompt_preamble": _skill_system_prompt_preamble(sid, name, sandbox_path),
+            "turns": turns,
+            "samples": s.get("samples"),
+            "generation_mode": "inspect_react_agent",
+            "agent": s.get("agent") if isinstance(s.get("agent"), dict) else {},
+        })
+    return out
+
+
 @app.command()
 def run(
     models_file: str = typer.Option("config/models.yaml", help="Models config YAML"),
@@ -436,6 +727,8 @@ def run(
     disable_cache: bool = typer.Option(False, help="Disable generation cache (always re-generate)."),
     instruction_sets_file: str = typer.Option(None, help="Optional YAML defining custom instruction sets to benchmark vs control."),
     instruction_samples: int = typer.Option(None, min=1, help="Default samples per instruction set (if not specified in instruction sets file)."),
+    skills_file: str = typer.Option(None, help="Optional YAML defining skills (multi-turn sandbox-mounted packages) to benchmark vs control."),
+    skills_samples: int = typer.Option(None, min=1, help="Default samples per skill (if not specified in the skills file)."),
     test_cases_dir: str = typer.Option("test_cases", help="Directory containing test case folders."),
     test_cases: str = typer.Option(None, "--test-cases", help="Comma-separated base test case names to include (e.g. single-checkbox,modal-dialog). Defaults to all."),
     processes: int = typer.Option(None, "--processes", "-p", help="Parallel processes for generation (defaults CPU count; use 1 to disable)."),
@@ -473,12 +766,14 @@ def run(
             raise typer.Exit(code=1)
 
     # Control behavior:
-    # - When benchmarking instruction sets, control must be the base system prompt with no custom instructions.
+    # - When benchmarking instruction sets or skills, control must be the base system
+    #   prompt with no custom instructions.
     # - Otherwise, keep existing behavior (defaults.custom_instructions_markdown applies).
     instructions_cfg = defaults_cfg.get("custom_instructions_markdown")
     custom_instructions_text = None
     custom_instructions_path = None
-    if instruction_sets_file is None and instructions_cfg:
+    variants_active = bool(instruction_sets_file) or bool(skills_file)
+    if not variants_active and instructions_cfg:
         instructions_path = Path(instructions_cfg)
         if not instructions_path.is_absolute():
             instructions_path = config_dir / instructions_path
@@ -519,12 +814,13 @@ def run(
     prompt_variants.append({
         "id": "control",
         "name": "Control",
-        "description": "Base system prompt; no custom instructions" if instruction_sets_file else "Base prompt configuration",
-        "custom_instructions_path": (None if instruction_sets_file else custom_instructions_path),
-        "custom_instructions_text": (None if instruction_sets_file else custom_instructions_text),
+        "description": "Base system prompt; no custom instructions" if variants_active else "Base prompt configuration",
+        "custom_instructions_path": (None if variants_active else custom_instructions_path),
+        "custom_instructions_text": (None if variants_active else custom_instructions_text),
         "n_samples_requested": samples,
         "generation_mode": "direct",
         "agent": {},
+        "kind": "control",
     })
 
     if instruction_sets_file:
@@ -554,6 +850,46 @@ def run(
                 "n_samples_requested": n_int,
                 "generation_mode": "inspect_react_agent",
                 "agent": s.get("agent") or {},
+                "kind": "instruction_set",
+            })
+
+    if skills_file:
+        existing_ids = {v["id"] for v in prompt_variants}
+        try:
+            skills = _load_skills(skills_file, config_dir, existing_ids=existing_ids)
+        except Exception as exc:
+            typer.secho(f"Failed to load skills: {exc}", err=True)
+            raise typer.Exit(code=1)
+        for sk in skills:
+            n = sk.get("samples")
+            if n is None:
+                n = skills_samples if skills_samples is not None else samples
+            try:
+                n_int = int(n)
+            except Exception:
+                typer.secho(f"Invalid samples for skill '{sk.get('id')}': {n}", err=True)
+                raise typer.Exit(code=1)
+            if n_int < 1:
+                typer.secho(f"Invalid samples for skill '{sk.get('id')}': {n_int}", err=True)
+                raise typer.Exit(code=1)
+            prompt_variants.append({
+                "id": sk["id"],
+                "name": sk.get("name") or sk["id"],
+                "description": sk.get("description"),
+                # Treat the skill preamble as the custom-instructions payload so it
+                # flows through the existing effective-system-prompt / cache pipeline.
+                "custom_instructions_path": None,
+                "custom_instructions_text": sk["system_prompt_preamble"],
+                "n_samples_requested": n_int,
+                "generation_mode": "inspect_react_agent",
+                "agent": sk.get("agent") or {},
+                "kind": "skill",
+                "skill_id": sk["id"],
+                "skill_dir_abs_path": sk["skill_dir_abs_path"],
+                "skill_files_hash": sk["skill_files_hash"],
+                "sandbox_mount_path": sk["sandbox_mount_path"],
+                "system_prompt_preamble": sk["system_prompt_preamble"],
+                "turns": sk["turns"],
             })
     # Build generation tasks
     results = []  # stub pending evaluation records
@@ -566,6 +902,46 @@ def run(
                 for sample_index in range(n_samples):
                     seed = (base_seed + sample_index) if base_seed is not None else None
                     variant_id = variant.get("id") or "control"
+                    variant_kind = variant.get("kind") or ("control" if variant_id == "control" else "instruction_set")
+
+                    if variant_kind == "skill":
+                        raw_path = out_dir / "raw_skills" / variant_id / prompt_case.prompt_case_id
+                        # One HTML file per turn; conversation sidecar is per-sample.
+                        html_file_stub = raw_path / f"{model}__s{sample_index}"
+                        conversation_file = raw_path / f"{model}__s{sample_index}.agent.json"
+                        tasks_by_model[model].append({
+                            "test_name": prompt_case.test_name,
+                            "base_test_name": prompt_case.base_test_name,
+                            "prompt_case_id": prompt_case.prompt_case_id,
+                            "prompt_dimensions": prompt_case.prompt_dimensions,
+                            "model": model,
+                            "sample_index": sample_index,
+                            "prompt_text": prompt_case.prompt_text,
+                            "seed": seed,
+                            "temperature": effective_temperature,
+                            "disable_cache": disable_cache,
+                            "system_prompt_override": system_prompt_override,
+                            "custom_instructions_text": variant.get("custom_instructions_text"),
+                            "prompt_variant_id": variant_id,
+                            "prompt_variant_kind": "skill",
+                            "debug_truncated_cache": debug_truncated_cache,
+                            "html_out_path_stub": str(html_file_stub),
+                            "conversation_out_path": str(conversation_file),
+                            "model_display_name": model_display_lookup.get(model),
+                            "runtime_log_dir": str(inspect_logs_dir),
+                            "provider_config": model_provider_lookup.get(model),
+                            "generation_mode": "inspect_react_agent",
+                            "agent_config": variant.get("agent") or {},
+                            "skill_config": {
+                                "id": variant["skill_id"],
+                                "host_dir": variant["skill_dir_abs_path"],
+                                "sandbox_mount_path": variant["sandbox_mount_path"],
+                                "system_prompt_preamble": variant["system_prompt_preamble"],
+                                "skill_files_hash": variant["skill_files_hash"],
+                                "turns": variant["turns"],
+                            },
+                        })
+                        continue
 
                     if variant_id == "control":
                         raw_path = out_dir / "raw" / prompt_case.prompt_case_id
@@ -592,6 +968,7 @@ def run(
                         "system_prompt_override": system_prompt_override,
                         "custom_instructions_text": variant.get("custom_instructions_text"),
                         "prompt_variant_id": variant_id,
+                        "prompt_variant_kind": variant_kind,
                         "debug_truncated_cache": debug_truncated_cache,
                         "html_out_path": str(html_file),
                         "conversation_out_path": (str(conversation_file) if conversation_file is not None else None),
@@ -644,64 +1021,78 @@ def run(
                 done += 1
                 _render_progress("Generating", done, total)
 
-                test_name = gen_result["test_name"]
-                base_test_name = gen_result.get("base_test_name")
-                prompt_case_id = gen_result.get("prompt_case_id")
-                prompt_dimensions = gen_result.get("prompt_dimensions") or []
-                model = gen_result["model"]
-                sample_index = gen_result["sample_index"]
-                prompt_text = gen_result["prompt_text"]
-                meta = gen_result.get("meta") or {}
-                html_path = gen_result["html_path"]
-                conversation_path = gen_result.get("conversation_path")
-                eval_path = gen_result.get("eval_path")
-                prompt_variant_id = gen_result.get("prompt_variant_id")
+                # Skill tasks return a dict wrapping a list of per-turn records.
+                if isinstance(gen_result, dict) and "skill_turn_records" in gen_result:
+                    turn_records = gen_result["skill_turn_records"]
+                    for tr in turn_records:
+                        _append_result_record(tr)
+                    continue
+                _append_result_record(gen_result)
 
-                if debug_truncated_cache and isinstance(meta, dict):
-                    tcf = meta.get("truncated_cache_files")
-                    if isinstance(tcf, list):
-                        for p in tcf:
-                            if isinstance(p, str) and p:
-                                truncated_cache_files.add(p)
+        def _append_result_record(gen_result: dict):
+            test_name = gen_result["test_name"]
+            base_test_name = gen_result.get("base_test_name")
+            prompt_case_id = gen_result.get("prompt_case_id")
+            prompt_dimensions = gen_result.get("prompt_dimensions") or []
+            model = gen_result["model"]
+            sample_index = gen_result["sample_index"]
+            prompt_text = gen_result["prompt_text"]
+            meta = gen_result.get("meta") or {}
+            html_path = gen_result["html_path"]
+            conversation_path = gen_result.get("conversation_path")
+            eval_path = gen_result.get("eval_path")
+            prompt_variant_id = gen_result.get("prompt_variant_id")
+            prompt_variant_kind = gen_result.get("prompt_variant_kind")
 
-                variant_id = prompt_variant_id or "control"
+            if debug_truncated_cache and isinstance(meta, dict):
+                tcf = meta.get("truncated_cache_files")
+                if isinstance(tcf, list):
+                    for p in tcf:
+                        if isinstance(p, str) and p:
+                            truncated_cache_files.add(p)
 
-                rec = ResultRecord(
-                    test_name=test_name,
-                    base_test_name=base_test_name,
-                    prompt_case_id=prompt_case_id,
-                    prompt_dimensions=prompt_dimensions,
-                    model_name=model,
-                    timestamp=datetime.utcnow(),
-                    generation_html_path=str(html_path),
-                    generation_conversation_path=conversation_path,
-                    generation_eval_path=eval_path,
-                    screenshot_path=None,
-                    test_function=TestFunctionResult(status="PENDING", assertions=[], error=None, duration_ms=None),
-                    axe=None,
-                    result="PENDING",
-                    generation=GenerationMeta(
-                        latency_s=meta.get("latency_s", 0.0),
-                        prompt_hash=meta.get("prompt_hash", generator.compute_prompt_hash(prompt_text)),
-                        cached=meta.get("cached", False),
-                        tokens_in=meta.get("tokens_in"),
-                        tokens_out=meta.get("tokens_out"),
-                        total_tokens=meta.get("total_tokens"),
-                        cost_usd=meta.get("cost_usd"),
-                        seed=meta.get("seed"),
-                        temperature=meta.get("temperature"),
-                        system_prompt=meta.get("system_prompt", generator.get_base_system_prompt()),
-                        custom_instructions=meta.get("custom_instructions", generator.get_custom_instructions()),
-                        effective_system_prompt=meta.get("effective_system_prompt", generator.get_effective_system_prompt()),
-                        generation_mode=meta.get("generation_mode"),
-                        agent_sandbox=meta.get("agent_sandbox"),
-                        agent_limit_error=meta.get("agent_limit_error"),
-                        agent_limits=meta.get("agent_limits"),
-                    ),
-                    sample_index=sample_index,
-                    prompt_variant_id=variant_id,
-                )
-                results.append(json.loads(rec.model_dump_json()))
+            variant_id = prompt_variant_id or "control"
+
+            rec = ResultRecord(
+                test_name=test_name,
+                base_test_name=base_test_name,
+                prompt_case_id=prompt_case_id,
+                prompt_dimensions=prompt_dimensions,
+                model_name=model,
+                timestamp=datetime.utcnow(),
+                generation_html_path=str(html_path),
+                generation_conversation_path=conversation_path,
+                generation_eval_path=eval_path,
+                screenshot_path=None,
+                test_function=TestFunctionResult(status="PENDING", assertions=[], error=None, duration_ms=None),
+                axe=None,
+                result="PENDING",
+                generation=GenerationMeta(
+                    latency_s=meta.get("latency_s", 0.0),
+                    prompt_hash=meta.get("prompt_hash", generator.compute_prompt_hash(prompt_text)),
+                    cached=meta.get("cached", False),
+                    tokens_in=meta.get("tokens_in"),
+                    tokens_out=meta.get("tokens_out"),
+                    total_tokens=meta.get("total_tokens"),
+                    cost_usd=meta.get("cost_usd"),
+                    seed=meta.get("seed"),
+                    temperature=meta.get("temperature"),
+                    system_prompt=meta.get("system_prompt", generator.get_base_system_prompt()),
+                    custom_instructions=meta.get("custom_instructions", generator.get_custom_instructions()),
+                    effective_system_prompt=meta.get("effective_system_prompt", generator.get_effective_system_prompt()),
+                    generation_mode=meta.get("generation_mode"),
+                    agent_sandbox=meta.get("agent_sandbox"),
+                    agent_limit_error=meta.get("agent_limit_error"),
+                    agent_limits=meta.get("agent_limits"),
+                ),
+                sample_index=sample_index,
+                prompt_variant_id=variant_id,
+                prompt_variant_kind=prompt_variant_kind,
+                turn_id=gen_result.get("turn_id"),
+                turn_index=gen_result.get("turn_index"),
+                turn_count_total=gen_result.get("turn_count_total"),
+            )
+            results.append(json.loads(rec.model_dump_json()))
 
         batch_supported = (
             hasattr(generator, "generate_html_batch_with_meta")
@@ -798,6 +1189,9 @@ def run(
                 generation_mode=v.get("generation_mode"),
                 agent_sandbox=generator.format_agent_sandbox((v.get("agent") or {}).get("sandbox")),
                 agent_limits=(v.get("agent") or {}).get("limits"),
+                kind=v.get("kind") or ("control" if (v.get("id") or "control") == "control" else "instruction_set"),
+                skill_path=v.get("skill_dir_abs_path"),
+                turns=v.get("turns"),
             ).model_dump_json()) for v in prompt_variants],
             "prompt_cases": [json.loads(PromptCase(
                 id=pc["id"],
@@ -822,6 +1216,7 @@ def run(
         latest_link.symlink_to(out_dir)
     except OSError:
         pass
+    _print_generation_summary(results, gen_tasks)
     typer.echo(f"Generation complete. Run directory ready for evaluation: {out_dir}")
 
 
@@ -857,11 +1252,17 @@ def evaluate(
     if not k_values:
         k_values = [1]
 
-    # Map generation meta by (prompt_case_id or test_name, model, sample_index, variant) for reuse
+    # Map generation meta by (prompt_case_id or test_name, model, sample_index, variant, turn_id) for reuse
     gen_meta_map = {}
     for r in prior_data.get("results", []) if prior_data else []:
         variant_id = r.get("prompt_variant_id") or "control"
-        key = (r.get("prompt_case_id") or r.get("test_name"), r.get("model_name"), r.get("sample_index"), variant_id)
+        key = (
+            r.get("prompt_case_id") or r.get("test_name"),
+            r.get("model_name"),
+            r.get("sample_index"),
+            variant_id,
+            r.get("turn_id"),
+        )
         gen_meta_map[key] = r.get("generation")
 
     # Build evaluation task list
@@ -889,6 +1290,10 @@ def evaluate(
             test_name = result.get("test_name") or base_test_name
             prompt_case_id = result.get("prompt_case_id") or test_name
             prompt_variant_id = result.get("prompt_variant_id") or "control"
+            prompt_variant_kind = result.get("prompt_variant_kind")
+            turn_id = result.get("turn_id")
+            turn_index = result.get("turn_index")
+            turn_count_total = result.get("turn_count_total")
             model = result.get("model_name")
             sample_index = result.get("sample_index")
             screenshot_path = result.get("screenshot_path") or str(_default_screenshot_path(
@@ -898,10 +1303,12 @@ def evaluate(
                 model,
                 sample_index,
                 prompt_variant_id,
+                prompt_variant_kind=prompt_variant_kind,
+                turn_index=turn_index,
             ))
-            gen_meta = gen_meta_map.get((prompt_case_id, model, sample_index, prompt_variant_id)) or (result.get("generation") or {})
+            gen_meta = gen_meta_map.get((prompt_case_id, model, sample_index, prompt_variant_id, turn_id)) or (result.get("generation") or {})
             if sample_index is None and not gen_meta:
-                gen_meta = gen_meta_map.get((prompt_case_id, model, 0, prompt_variant_id)) or {}
+                gen_meta = gen_meta_map.get((prompt_case_id, model, 0, prompt_variant_id, turn_id)) or {}
             tasks.append({
                 "html_path": str(html_path),
                 "test_js_path": str(test_js),
@@ -917,6 +1324,10 @@ def evaluate(
                 "gen_meta": gen_meta,
                 "prompt_text": prompts_map.get(test_name, ""),
                 "prompt_variant_id": prompt_variant_id,
+                "prompt_variant_kind": prompt_variant_kind,
+                "turn_id": turn_id,
+                "turn_index": turn_index,
+                "turn_count_total": turn_count_total,
             })
     else:
         typer.secho("No prior generation records found in results.json; falling back to legacy directory scan.", err=True)
@@ -951,9 +1362,13 @@ def evaluate(
                     "prompt_dimensions": [],
                     "model": model,
                     "sample_index": sample_index,
-                    "gen_meta": gen_meta_map.get((base_test_name, model, sample_index, "control")) or {},
+                    "gen_meta": gen_meta_map.get((base_test_name, model, sample_index, "control", None)) or {},
                     "prompt_text": prompts_map.get(base_test_name, ""),
                     "prompt_variant_id": "control",
+                    "prompt_variant_kind": "control",
+                    "turn_id": None,
+                    "turn_index": None,
+                    "turn_count_total": None,
                 })
 
     # Sort tasks for deterministic ordering
@@ -964,12 +1379,13 @@ def evaluate(
             t["test_name"],
             t["model"],
             t["sample_index"] if t["sample_index"] is not None else -1,
+            t.get("turn_index") if t.get("turn_index") is not None else -1,
         )
     )
 
 
     all_results = []
-    pass_map: dict[tuple[str, str, str | None, str, str], dict[str, Any]] = {}
+    pass_map: dict[tuple[str, str, str | None, str, str, str | None, str | None], dict[str, Any]] = {}
     if not tasks:
         typer.secho("No evaluation tasks found.", err=True)
     else:
@@ -992,6 +1408,8 @@ def evaluate(
                     res.get("prompt_case_id") or res.get("test_name"),
                     res.get("model_name"),
                     res.get("prompt_variant_id") or "control",
+                    res.get("prompt_variant_kind"),
+                    res.get("turn_id"),
                 )
                 entry = pass_map.setdefault(key, {"statuses": [], "prompt_dimensions": res.get("prompt_dimensions") or []})
                 entry["statuses"].append({"pass": res.get("result") == "PASS"})
@@ -1011,6 +1429,8 @@ def evaluate(
                         res.get("prompt_case_id") or res.get("test_name"),
                         res.get("model_name"),
                         res.get("prompt_variant_id") or "control",
+                        res.get("prompt_variant_kind"),
+                        res.get("turn_id"),
                     )
                     entry = pass_map.setdefault(key, {"statuses": [], "prompt_dimensions": res.get("prompt_dimensions") or []})
                     entry["statuses"].append({"pass": res.get("result") == "PASS"})
@@ -1018,11 +1438,25 @@ def evaluate(
                     _render_progress("Evaluating", done, total)
 
     aggregates: List[dict] = []
-    for (test_name, base_test_name, prompt_case_id, model, variant_id), entry in pass_map.items():
+    for (test_name, base_test_name, prompt_case_id, model, variant_id, variant_kind, turn_id), entry in pass_map.items():
         statuses = entry["statuses"]
         n = len(statuses)
         c = sum(1 for status in statuses if status.get("pass"))
         pass_at = compute_pass_at_k(c, n, k_values)
+        # Derive turn_index for this group from one of the evaluated records.
+        turn_index_for_group: int | None = None
+        if variant_kind == "skill":
+            for r in all_results:
+                if (
+                    r.get("test_name") == test_name
+                    and r.get("model_name") == model
+                    and (r.get("prompt_variant_id") or "control") == variant_id
+                    and r.get("turn_id") == turn_id
+                ):
+                    ti = r.get("turn_index")
+                    if ti is not None:
+                        turn_index_for_group = int(ti)
+                        break
         agg = AggregateRecord(
             test_name=test_name,
             base_test_name=base_test_name,
@@ -1030,6 +1464,9 @@ def evaluate(
             prompt_dimensions=entry.get("prompt_dimensions") or [],
             model_name=model,
             prompt_variant_id=variant_id or "control",
+            prompt_variant_kind=variant_kind,
+            turn_id=turn_id,
+            turn_index=turn_index_for_group,
             n_samples=n,
             n_applicable=n,
             n_not_applicable=0,

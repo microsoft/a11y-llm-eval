@@ -370,6 +370,7 @@ details li { margin-bottom: 0.35rem; }
 <nav class="report-nav" aria-label="Report sections">
   <a href="index.html#control-summary" data-report-nav="control">Control</a>
   <a href="index.html#instruction-sets" data-report-nav="instructions">Instruction sets</a>
+  <a href="index.html#skills" data-report-nav="skills">Skills</a>
   <a href="index.html#details-h2" data-report-nav="details">Detailed results</a>
   <a href="index.html#methodology" data-report-nav="about">Methodology &amp; glossary</a>
 </nav>
@@ -667,6 +668,30 @@ details li { margin-bottom: 0.35rem; }
         </details>
       {% endfor %}
     {% endif %}
+
+    <h3>Results</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Instruction Set</th>
+          <th>Control Pass Rate</th>
+          <th>Instruction Set Pass Rate</th>
+          <th>Δ Pass Rate</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in instruction_benchmark_rows %}
+        <tr>
+          <th>{{ row.model_display }}</th>
+          <td>{{ row.variant_name }}</td>
+          <td class="pass-at-k-cell" data-pass="{{ '%.4f'|format(row.control_pass_rate) }}">{{ '%.0f%%'|format(row.control_pass_rate * 100) }}</td>
+          <td class="pass-at-k-cell" data-pass="{{ '%.4f'|format(row.variant_pass_rate) }}">{{ '%.0f%%'|format(row.variant_pass_rate * 100) }}</td>
+          <td>{{ '%+.1fpp'|format(row.delta_pass_rate * 100) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
 </section>
 {% endif %}
 
@@ -909,6 +934,80 @@ details li { margin-bottom: 0.35rem; }
   {% endif %}
   </section>
 
+  <section id="skills" data-report-section="skills">
+  {% if skill_benchmark_tables %}
+  <section id="skill-benchmark-summary">
+    <h2>Skills (vs Control)</h2>
+    <p>Skills are self-contained packages (a directory containing <code>SKILL.md</code> and any support files) that are mounted into the sandboxed agent at runtime. Each skill defines its own multi-turn conversation; the agent's submission at the end of each turn is evaluated separately so we can compare how each turn performs against control.</p>
+    <p><strong>Note on interpretation.</strong> Turn&nbsp;1 is a single-turn generation directly comparable to control. Later turns operate on prior context, so their Δ reflects both the skill package content <em>and</em> the effect of having a review opportunity.</p>
+    {% for skill in skill_benchmark_tables %}
+    <h3>{{ skill.name }}</h3>
+    {% if skill.description %}<p>{{ skill.description }}</p>{% endif %}
+    <table>
+      <thead>
+        <tr>
+          <th>Rank</th>
+          <th>Model</th>
+          <th>Control</th>
+          {% for t in skill.turns %}
+            <th>{{ t.name or t.id }}</th>
+          {% endfor %}
+          <th>Δ last&nbsp;vs&nbsp;control</th>
+          {% if skill.turns|length >= 2 %}<th>Δ last&nbsp;vs&nbsp;turn&nbsp;1</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in skill.rows %}
+        <tr>
+          <td>{{ row.rank }}</td>
+          <th>{{ row.model_display }}</th>
+          <td class="pass-at-k-cell" data-pass="{{ '%.4f'|format(row.control_pass_rate) }}">{{ '%.0f%%'|format(row.control_pass_rate * 100) }}</td>
+          {% for tp in row.turn_pass_rates %}
+            <td class="pass-at-k-cell" data-pass="{{ '%.4f'|format(tp.pass_rate) }}">{{ '%.0f%%'|format(tp.pass_rate * 100) }}</td>
+          {% endfor %}
+          <td>{{ '%+.1fpp'|format(row.delta_last_vs_control * 100) }}</td>
+          {% if skill.turns|length >= 2 %}<td>{{ '%+.1fpp'|format(row.delta_last_vs_first * 100) }}</td>{% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endfor %}
+  </section>
+
+  <section id="skill-benchmark-details">
+    <h2>Skill details</h2>
+    <p>Each skill's mounted package, sandbox location, and per-turn prompt templates.</p>
+    {% for v in skill_benchmark_variants %}
+      <details>
+        <summary>{{ v.name }}</summary>
+        {% if v.description %}<p>{{ v.description }}</p>{% endif %}
+        {% if v.n_samples_requested %}<p><strong>Samples per (test, model):</strong> {{ v.n_samples_requested }}</p>{% endif %}
+        {% if v.agent_sandbox %}<p><strong>Sandbox:</strong> {{ v.agent_sandbox }}</p>{% endif %}
+        {% if v.skill_path %}<p><strong>Skill package:</strong> <code>{{ v.skill_path }}</code></p>{% endif %}
+        {% if v.agent_limits %}<pre class="prompt-block">{{ v.agent_limits|tojson(indent=2) }}</pre>{% endif %}
+        {% if v.turns %}
+          <h4>Turn prompts</h4>
+          <ol>
+            {% for t in v.turns %}
+              <li>
+                <strong>{{ t.name or t.id }}</strong> <code>({{ t.id }})</code>
+                <pre class="prompt-block">{{ t.prompt|e }}</pre>
+              </li>
+            {% endfor %}
+          </ol>
+        {% endif %}
+        {% if v.skill_md_preview %}
+          <h4>SKILL.md</h4>
+          <pre class="prompt-block">{{ v.skill_md_preview|e }}</pre>
+        {% endif %}
+      </details>
+    {% endfor %}
+  </section>
+  {% else %}
+    <p><em>No skill benchmark data available for this run.</em></p>
+  {% endif %}
+  </section>
+
   <section id="detailed-results" data-report-section="details">
 <section>
 <h2 id="details-h2">Detailed Results</h2>
@@ -1025,25 +1124,30 @@ details li { margin-bottom: 0.35rem; }
       <div class="samples">
       {% for r in group.samples %}
         {% set vid = r.prompt_variant_id if r.prompt_variant_id is not none else 'control' %}
-        <div class="sample-card" data-model="{{ r.model_name }}" data-result="{{ r.result }}" data-variant="{{ vid }}">
+        <div class="sample-card" data-model="{{ r.model_name }}" data-result="{{ r.result }}" data-variant="{{ vid }}"{% if r.prompt_variant_kind == 'skill' %} data-variant-kind="skill" data-turn-id="{{ r.turn_id }}" data-turn-index="{{ r.turn_index }}"{% endif %}>
           {# Trim the first two path segments (e.g., 'runs/<run_id>/...') #}
           {% set _parts = r.generation_html_path.split('/') %}
           {% set _trimmed = '/'.join(_parts[2:]) %}
           <h4>
             <a href="{{ _trimmed }}">
-              Sample {{ r.sample_index if r.sample_index is not none else loop.index0 }} ({{ model_display_names.get(r.model_name, r.model_name) }})
+              Sample {{ r.sample_index if r.sample_index is not none else loop.index0 }}{% if r.prompt_variant_kind == 'skill' %} &middot; Turn {{ (r.turn_index or 0) + 1 }}{% if r.turn_count_total %}/{{ r.turn_count_total }}{% endif %}{% if r.turn_id %} ({{ r.turn_id }}){% endif %}{% endif %} ({{ model_display_names.get(r.model_name, r.model_name) }})
             </a>
           </h4>
           <p>
-            <strong>Instruction set:</strong>
-            {% if vid == 'control' %}
-              Control
+            {% if r.prompt_variant_kind == 'skill' %}
+              <strong>Skill:</strong> {{ prompt_variant_names.get(vid, vid) }}
+              {% if r.turn_id %} &middot; <strong>Turn:</strong> {{ (r.turn_index or 0) + 1 }}{% if r.turn_count_total %}/{{ r.turn_count_total }}{% endif %} ({{ r.turn_id }}){% endif %}
             {% else %}
-              {{ prompt_variant_names.get(vid, vid) }}
+              <strong>Instruction set:</strong>
+              {% if vid == 'control' %}
+                Control
+              {% else %}
+                {{ prompt_variant_names.get(vid, vid) }}
+              {% endif %}
             {% endif %}
           </p>
           <p><span class="badge-{{ 'pass' if r.result=='PASS' else 'fail' }}">{{ r.result }}</span> | Latency {{ '%.2f'|format(r.generation.latency_s) }}s{% if r.generation.cached %} cached{% endif %}</p>
-          <p>Axe WCAG: {{ r.axe.failure_count if r.axe else 'n/a' }}{% if r.axe and r.axe.best_practice_count > 0 %} | BP: {{ r.axe.best_practice_count }}{% endif %}{% if r.generation.cost_usd is not none %} | ${{ '%.4f'|format(r.generation.cost_usd) }}{% endif %}</p>
+          <p>Axe WCAG: {{ r.axe.failure_count if r.axe else 'n/a' }}{% if r.axe and r.axe.best_practice_count > 0 %} | BP: {{ r.axe.best_practice_count }}{% endif %}{% if r.generation.cost_usd is not none %} | ${{ '%.4f'|format(r.generation.cost_usd) }}{% endif %}{% if r.generation.total_tokens is not none %} | Tokens: {{ '{:,}'.format(r.generation.total_tokens) }}{% if r.generation.tokens_in is not none and r.generation.tokens_out is not none %} ({{ '{:,}'.format(r.generation.tokens_in) }} in / {{ '{:,}'.format(r.generation.tokens_out) }} out){% endif %}{% endif %}</p>
           {% if r.generation.generation_mode %}
           <p><strong>Generation mode:</strong> {{ r.generation.generation_mode }}{% if r.generation.agent_sandbox %} | <strong>Sandbox:</strong> {{ r.generation.agent_sandbox }}{% endif %}{% if r.generation_eval_path_relative %} | <a href="{{ r.generation_eval_path_relative }}">Inspect log</a>{% endif %}{% if r.generation_conversation_path_relative %} | <a href="{{ r.generation_conversation_path_relative }}">Conversation JSON</a>{% endif %}</p>
           {% endif %}
@@ -1185,6 +1289,7 @@ document.addEventListener('DOMContentLoaded', function () {
       // First: direct mapping for known ids.
       if (hash === 'control-summary' || hash === 'control-section') return 'control';
       if (hash === 'instruction-sets') return 'instructions';
+      if (hash === 'skills' || hash === 'skill-benchmark-summary' || hash === 'skill-benchmark-details') return 'skills';
       if (hash === 'details-h2' || hash === 'detailed-results') return 'details';
       if (hash === 'methodology' || hash === 'glossary' || hash === 'report-about') return 'about';
 
@@ -1744,6 +1849,37 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
 
   run_dir = run_json_path.parent
 
+  def _flatten_skill_conversation(conv: dict, turn_index: int | None) -> dict | None:
+    """The skill multi-turn sidecar has shape {turns: [{conversation:{messages,events}}, ...]}.
+
+    For a given result row (which is scoped to a single turn), return the
+    per-turn inner conversation so ``_conversation_preview`` sees a standard
+    messages/events dict. When ``turn_index`` is ``None`` (older records or
+    aggregate views), stitch all turns back to back.
+    """
+    if not isinstance(conv, dict):
+      return conv
+    if "turns" not in conv or not isinstance(conv.get("turns"), list):
+      return conv
+    turns = conv["turns"]
+    if turn_index is not None:
+      for t in turns:
+        if isinstance(t, dict) and t.get("turn_index") == turn_index:
+          inner = t.get("conversation") or {}
+          if isinstance(inner, dict):
+            return inner
+      return None
+    # Aggregate: concatenate messages/events across turns.
+    merged_messages = []
+    merged_events = []
+    for t in turns:
+      inner = (t or {}).get("conversation") or {}
+      if not isinstance(inner, dict):
+        continue
+      merged_messages.extend(inner.get("messages") or [])
+      merged_events.extend(inner.get("events") or [])
+    return {"messages": merged_messages, "events": merged_events}
+
   for result in all_results:
     conversation_path = result.get("generation_conversation_path")
     conversation = _read_json_for_report(conversation_path)
@@ -1755,6 +1891,11 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         pass
     if not conversation:
       continue
+    # For skill turns, select only the matching turn's inner transcript.
+    if result.get("prompt_variant_kind") == "skill":
+      conversation = _flatten_skill_conversation(conversation, result.get("turn_index"))
+      if not isinstance(conversation, dict):
+        continue
     entries, message_count, event_count = _conversation_preview(conversation)
     result["generation_conversation"] = {
       "path": conversation_path,
@@ -2402,7 +2543,14 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
       if vid not in ordered_variant_ids:
         ordered_variant_ids.append(vid)
 
-    for vid in ordered_variant_ids:
+    # Skill variants are handled in their own section below; skip them here so the
+    # instruction-set benchmark doesn't average per-turn records together.
+    ordered_instruction_variant_ids = [
+      vid for vid in ordered_variant_ids
+      if ((prompt_variant_meta_by_id.get(vid) or {}).get("kind") or "instruction_set") != "skill"
+    ]
+
+    for vid in ordered_instruction_variant_ids:
       v_results = results_by_variant.get(vid) or []
       v_summary_simple = _compute_summary_simple(v_results)
       pv = prompt_variant_meta_by_id.get(vid) or {}
@@ -2605,6 +2753,140 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     instruction_benchmark_summary.sort(key=lambda r: (-r["avg_variant_pass_rate"], r["variant_name"]))
     for idx, row in enumerate(instruction_benchmark_summary, start=1):
       row["rank"] = idx
+
+  # Build skill benchmark tables. A skill variant emits one results[] record
+  # per (sample, turn) so we compute per-turn pass rates separately and compare
+  # against control. One table per skill.
+  skill_benchmark_tables = []
+  skill_benchmark_variants_list = []
+  skill_variant_ids_ordered = []
+  for pv in prompt_variants_meta or []:
+    pid = pv.get("id") if isinstance(pv, dict) else None
+    if not pid or pid == "control":
+      continue
+    if ((pv.get("kind") or "") == "skill") and pid in variant_ids:
+      skill_variant_ids_ordered.append(pid)
+  # Append skill variants that appear in results but not in meta (defensive).
+  for vid in sorted(variant_ids):
+    if vid in skill_variant_ids_ordered:
+      continue
+    if ((prompt_variant_meta_by_id.get(vid) or {}).get("kind") or "") == "skill":
+      skill_variant_ids_ordered.append(vid)
+  if skill_variant_ids_ordered:
+    from collections import defaultdict as _dd
+    # Build per-test-per-model pass rates keyed by (variant_id, turn_id).
+    # Pass rate is n_pass / n_samples for that (test, model, variant, turn).
+    test_stats_by_key = _dd(lambda: {"n_samples": 0, "n_pass": 0})
+    for r in all_results:
+      vid = (r.get("prompt_variant_id") or "control")
+      if vid == "control":
+        continue
+      pv_kind = ((prompt_variant_meta_by_id.get(vid) or {}).get("kind") or "")
+      if pv_kind != "skill":
+        continue
+      key = (vid, r.get("turn_id"), r.get("test_name"), r.get("model_name"))
+      entry = test_stats_by_key[key]
+      entry["n_samples"] += 1
+      if r.get("result") == "PASS":
+        entry["n_pass"] += 1
+
+    # Control stats per (test, model), reused across skills.
+    control_stats_by_test_model = _dd(lambda: {"n_samples": 0, "n_pass": 0})
+    for r in control_results:
+      key = (r.get("test_name"), r.get("model_name"))
+      entry = control_stats_by_test_model[key]
+      entry["n_samples"] += 1
+      if r.get("result") == "PASS":
+        entry["n_pass"] += 1
+
+    for vid in skill_variant_ids_ordered:
+      pv = prompt_variant_meta_by_id.get(vid) or {}
+      turns_meta = pv.get("turns") or []
+      if not turns_meta:
+        continue
+
+      # Which models appear in this skill's results?
+      skill_models = sorted({
+        r.get("model_name") for r in results_by_variant.get(vid) or []
+        if r.get("model_name")
+      })
+      # Fallback to all models if none found.
+      if not skill_models:
+        skill_models = list(model_display_names.keys())
+
+      table_rows = []
+      for model_name in skill_models:
+        # Per-model control pass rate = mean over tests of n_pass/n_samples.
+        ctrl_rates = []
+        for test_name in (data.get("tests") or []):
+          c = control_stats_by_test_model.get((test_name, model_name))
+          if c and c["n_samples"] > 0:
+            ctrl_rates.append(c["n_pass"] / c["n_samples"])
+        ctrl_pass_rate = (sum(ctrl_rates) / len(ctrl_rates)) if ctrl_rates else 0.0
+
+        turn_pass_rates = []
+        for turn in turns_meta:
+          tid = turn.get("id")
+          per_test_rates = []
+          for test_name in (data.get("tests") or []):
+            e = test_stats_by_key.get((vid, tid, test_name, model_name))
+            if e and e["n_samples"] > 0:
+              per_test_rates.append(e["n_pass"] / e["n_samples"])
+          turn_rate = (sum(per_test_rates) / len(per_test_rates)) if per_test_rates else 0.0
+          turn_pass_rates.append({
+            "turn_id": tid,
+            "turn_name": turn.get("name") or tid,
+            "pass_rate": turn_rate,
+            "delta_vs_control": turn_rate - ctrl_pass_rate,
+          })
+
+        delta_last_vs_control = (turn_pass_rates[-1]["pass_rate"] - ctrl_pass_rate) if turn_pass_rates else 0.0
+        delta_last_vs_first = (
+          turn_pass_rates[-1]["pass_rate"] - turn_pass_rates[0]["pass_rate"]
+        ) if len(turn_pass_rates) >= 2 else 0.0
+
+        table_rows.append({
+          "model_name": model_name,
+          "model_display": model_display_names.get(model_name, model_name),
+          "control_pass_rate": ctrl_pass_rate,
+          "turn_pass_rates": turn_pass_rates,
+          "delta_last_vs_control": delta_last_vs_control,
+          "delta_last_vs_first": delta_last_vs_first,
+        })
+
+      table_rows.sort(key=lambda r: (-(r["turn_pass_rates"][-1]["pass_rate"] if r["turn_pass_rates"] else 0.0), r["model_display"]))
+      for idx, row in enumerate(table_rows, start=1):
+        row["rank"] = idx
+
+      # Load SKILL.md preview when the skill_path is present in meta.
+      skill_md_preview = None
+      skill_path = pv.get("skill_path")
+      if skill_path:
+        skill_md_file = Path(skill_path) / "SKILL.md"
+        try:
+          if skill_md_file.exists():
+            skill_md_preview = skill_md_file.read_text(encoding="utf-8")
+        except Exception:
+          skill_md_preview = None
+
+      skill_benchmark_tables.append({
+        "id": vid,
+        "name": pv.get("name") or vid,
+        "description": pv.get("description"),
+        "turns": turns_meta,
+        "rows": table_rows,
+      })
+      skill_benchmark_variants_list.append({
+        "id": vid,
+        "name": pv.get("name") or vid,
+        "description": pv.get("description"),
+        "n_samples_requested": pv.get("n_samples_requested"),
+        "agent_sandbox": _shorten_sandbox(pv.get("agent_sandbox")),
+        "agent_limits": pv.get("agent_limits"),
+        "skill_path": skill_path,
+        "skill_md_preview": skill_md_preview,
+        "turns": turns_meta,
+      })
   # Build aggregates_by_test: for each test, list all models and their aggregates (ensures unique table per test)
   aggregates_by_test = OrderedDict()
   tests_in_order = list(grouped_results.keys())
@@ -2826,5 +3108,7 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     instruction_benchmark_rows=instruction_benchmark_rows,
     instruction_benchmark_summary=instruction_benchmark_summary,
     instruction_set_analysis=instruction_set_analysis,
+    skill_benchmark_tables=skill_benchmark_tables,
+    skill_benchmark_variants=skill_benchmark_variants_list,
   )
   out_html.write_text(html, encoding="utf-8")

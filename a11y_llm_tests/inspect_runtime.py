@@ -388,9 +388,9 @@ class InspectGenerationRuntime:
 def default_agent_limits() -> dict[str, Any]:
     return {
         "message_limit": 50,
-        "token_limit": 120000,
-        "time_limit": 600,
-        "working_limit": 420,
+        "token_limit": 500000,
+        "time_limit": 15*60,
+        "working_limit": 10*60,
         "max_output_tokens": 16000,
         "attempts": 1,
     }
@@ -654,11 +654,23 @@ def run_agent_generation(
     use_browser: bool = True,
     temperature: float | None = None,
     seed: int | None = None,
+    skill_mount: dict[str, Any] | None = None,
+    seed_messages: list[dict[str, str]] | None = None,
 ) -> AgentGenerationResult:
     """Run a sandboxed Inspect ReAct agent through a one-sample task.
 
     The agent executes inside an Inspect sample context so sandbox-backed tools,
     transcript events, and sample limits all behave as intended.
+
+    ``skill_mount`` – when provided, a dict with keys ``host_dir`` (absolute path
+    to a host directory) and ``sandbox_path`` (absolute path inside the sandbox
+    where the directory should appear). All files under ``host_dir`` are mounted
+    into the sandbox at ``sandbox_path/<relative>`` using ``Sample(files=...)``.
+
+    ``seed_messages`` – when provided, a list of ``{"role", "content"}`` dicts
+    that represent a conversation history to seed the agent with. The final
+    ``prompt`` is appended as the latest user message. This is used by
+    multi-turn skill runs so that turn *k* (k ≥ 1) sees the prior exchanges.
     """
 
     from inspect_ai import Task, eval as inspect_eval
@@ -702,7 +714,15 @@ def run_agent_generation(
         "You are working inside a sandboxed coding environment to produce one standalone HTML document. "
         "Use the available tools when useful to draft, inspect, preview, and refine the page. "
         "Submit exactly one final standalone HTML document as your answer. "
-        "Do not wrap the final answer in markdown fences or commentary."
+        "Do not wrap the final answer in markdown fences or commentary.\n\n"
+        "Sandbox: Python 3 and Playwright 1.55.x (with Chromium at /ms-playwright) are preinstalled. "
+        "Node is also available. Do not run `pip install playwright`, `npm install playwright`, or "
+        "`playwright install <browser>` — they are unnecessary and their progress output is very expensive. "
+        "To verify, a single `python -c 'import playwright'` is enough.\n\n"
+        "Context discipline: every tool output and every message you write is re-sent on every subsequent turn. "
+        "Keep your reasoning terse — do not restate the task, the plan, or what you just observed. "
+        "No bold section headers like \"**Reviewing X**\" or \"**Drafting Y**\" in your messages; act on observations instead of narrating them. "
+        "Do not re-read files already in your context. Prefer quiet tool flags (`--quiet`, `--silent`, `-sS`) and redirect verbose output (`>/dev/null 2>&1` or `2>&1 | tail -5`)."
     )
 
     agent = react(
@@ -723,15 +743,54 @@ def run_agent_generation(
         generate_config_kwargs["max_tokens"] = int(max_output)
     generate_config = GenerateConfig(**generate_config_kwargs) if generate_config_kwargs else None
 
+    # Build the Sample.input. When seed_messages is provided we emit a list of
+    # ChatMessage objects so the ReAct agent receives the prior conversation
+    # context; otherwise we pass a plain prompt string (existing behavior).
+    sample_input: Any = prompt
+    if seed_messages:
+        try:
+            from inspect_ai.model import ChatMessageAssistant, ChatMessageUser
+
+            chat_input: list[Any] = []
+            for m in seed_messages:
+                role = (m.get("role") or "user").lower()
+                content = m.get("content") or ""
+                if role == "assistant":
+                    chat_input.append(ChatMessageAssistant(content=content))
+                else:
+                    chat_input.append(ChatMessageUser(content=content))
+            chat_input.append(ChatMessageUser(content=prompt))
+            sample_input = chat_input
+        except Exception:
+            # Fall back to inlining the prior transcript textually.
+            history = "\n\n".join(
+                f"[{(m.get('role') or 'user').upper()}]\n{m.get('content') or ''}"
+                for m in seed_messages
+            )
+            sample_input = f"{history}\n\n[USER]\n{prompt}"
+
+    sample_kwargs: dict[str, Any] = {"input": sample_input, "id": "agent-html", "sandbox": sandbox}
+    if skill_mount:
+        host_dir = Path(skill_mount["host_dir"])
+        sandbox_path = str(skill_mount["sandbox_path"]).rstrip("/")
+        files_map: dict[str, str] = {}
+        for fp in sorted(host_dir.rglob("*")):
+            if not fp.is_file():
+                continue
+            rel = fp.relative_to(host_dir).as_posix()
+            files_map[f"{sandbox_path}/{rel}"] = str(fp.resolve())
+        if files_map:
+            sample_kwargs["files"] = files_map
+
     task_kwargs: dict[str, Any] = {
-        "dataset": [Sample(input=prompt, id="agent-html", sandbox=sandbox)],
+        "dataset": [Sample(**sample_kwargs)],
         "solver": agent,
         "model": model,
         "sandbox": sandbox,
-        "message_limit": int(limits_cfg.get("message_limit") or 50),
-        "token_limit": int(limits_cfg.get("token_limit") or 120000),
-        "time_limit": int(limits_cfg.get("time_limit") or 600),
-        "working_limit": int(limits_cfg.get("working_limit") or 420),
+        "message_limit": int(limits_cfg.get("message_limit") or 75),
+        "token_limit": int(limits_cfg.get("token_limit") or 500000),
+        "time_limit": int(limits_cfg.get("time_limit") or 15*60),
+        "working_limit": int(limits_cfg.get("working_limit") or 10*60),
         "fail_on_error": True,
         "continue_on_fail": False,
         "name": "sandboxed_agent_html_generation",

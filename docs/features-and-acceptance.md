@@ -268,6 +268,52 @@ Schema additions:
 
 ---
 
+## Feature: Skills benchmark (multi-turn)
+
+### Behavior
+
+The harness can benchmark **skills** — self-contained packages of files (at minimum a `SKILL.md`) that are mounted into the agent sandbox at runtime. Unlike instruction sets, a skill declares a sequence of user **turns**, and the agent's submission at the end of each turn is evaluated **independently** so the report can compare control vs turn 1 vs turn 2 vs … per (test, model).
+
+This is enabled via `run --skills-file <path>` and is independent of `--instruction-sets-file` (both may be supplied in the same run).
+
+- Each skill declares `id`, `name`, optional `description`, a `skill_path` (directory containing `SKILL.md`), `agent` settings (same shape as instruction-set `agent`), and a required **non-empty** `turns` list.
+- Each turn declares `id`, `name` (optional), and a `prompt` template.
+- Exactly **one** turn prompt in a skill must contain the token `{{test_case_prompt}}`. Other supported tokens: `{{skill_id}}`, `{{skill_path}}`, `{{previous_submission}}`.
+- Turn ids must be unique within the skill; skill ids must be unique across skills and must not collide with instruction-set ids or the reserved id `control`.
+- Skills always use the sandboxed Inspect ReAct agent path; `generation_mode` is not supported.
+- The skill directory is mounted at `/workspace/.skills/<skill_id>/` in the sandbox (every file under the host skill dir is mapped in).
+- Each turn is a separate user message; earlier turns' assistant replies are preserved as seed messages for subsequent turns.
+- Per-turn generation caching: the cache key for turn k includes the model, seed, iteration, skill id, hash of all skill files, turn index, and a cumulative hash of all rendered turn prompts up to and including turn k. Changing turn 2's prompt invalidates turn 2's cache but not turn 1's.
+- Partial failure: if a turn errors or hits a model/agent limit, that turn's record is marked ERROR, subsequent turns for that sample are emitted as ERROR records with `aborted_reason` set, and earlier turns remain evaluated normally.
+
+Artifacts for skills are written under separate directories:
+
+- Skill HTML: `<run_dir>/raw_skills/<skill_id>/<prompt_case_id>/<model>__s<sample_index>__t<turn_index>.html`
+- Skill agent conversation sidecar (one per sample, stitched across turns): `<run_dir>/raw_skills/<skill_id>/<prompt_case_id>/<model>__s<sample_index>.agent.json`
+- Skill screenshots: `<run_dir>/screenshots_skills/<skill_id>/<prompt_case_id>__<model>__s<sample_index>__t<turn_index>.png`
+
+Schema additions:
+
+- Each `results[]` record for a skill turn includes `prompt_variant_kind = "skill"`, `turn_id`, `turn_index` (0-based), and `turn_count_total`.
+- Each `aggregates[]` record for a skill turn includes `prompt_variant_kind`, `turn_id`, and `turn_index`. Aggregates are grouped by `(test_name, base_test_name, prompt_case_id, model, prompt_variant_id, prompt_variant_kind, turn_id)` so every turn has its own pass@k row.
+- `meta.prompt_variants` entries for skills carry `kind: "skill"`, `skill_path`, and `turns` (the resolved list of `{id, name, prompt}` objects).
+
+### Acceptance criteria
+
+- When `--skills-file` is provided:
+  - Control samples are still written to `<run_dir>/raw/` using existing naming rules.
+  - For every configured skill, every (test, model, sample) produces one HTML file per turn named `…__s<idx>__t<turn_index>.html`, plus one stitched `.agent.json` sidecar per sample.
+  - `results.json` includes one result record per (test, model, sample, turn) with `prompt_variant_kind = "skill"`.
+  - `results.json` includes one aggregate per (test, model, skill, turn).
+  - `meta.prompt_variants` includes an entry per skill with `kind: "skill"` and a non-empty `turns` list.
+  - The generated HTML report renders a **Skills** section with one table per skill and dynamic columns for control + each turn, plus the SKILL.md preview under skill details.
+
+- When `--skills-file` is not provided:
+  - No `raw_skills/` or `screenshots_skills/` outputs are required.
+  - No skill section is rendered in the HTML report.
+
+---
+
 ## Feature: Evaluation (pass/fail logic)
 
 ### Behavior
