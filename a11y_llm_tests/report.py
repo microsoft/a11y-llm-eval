@@ -287,6 +287,16 @@ figure img {
   text-align: center;
   font-weight: 600;
 }
+.pass-rate-note {
+  margin: 0.35rem 0 1.25rem;
+  padding: 0.65rem 0.9rem;
+  border-left: 3px solid var(--border-strong);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  border-radius: 0.35rem;
+}
+.pass-rate-note strong { color: var(--text-primary); }
 
 /* Report navigation (single page) */
 .report-nav {
@@ -362,6 +372,9 @@ details li { margin-bottom: 0.35rem; }
 </style>
 </head>
 <body>
+{% macro pass_rate_note() -%}
+<p class="pass-rate-note"><strong>* Pass rate</strong> reflects only this harness's automated checks (a curated set of axe-core WCAG rules plus hand-written assertions per test case). Automated testing can detect only a subset of accessibility issues: 100% here means the sample passed every check that was run, <strong>not</strong> that the page is WCAG conformant or fully accessible.</p>
+{%- endmacro %}
 <header>
 <h1>{{ site_name }}</h1>
 </header>
@@ -383,7 +396,7 @@ details li { margin-bottom: 0.35rem; }
 <p>Control results show how well models produce accessible code with no instructions or prompts to specifically create accessible code. Models are ranked by WCAG pass rate across {{ tests|length }} test cases and {{ n_samples }} samples per test ({{ total_samples }} samples per model). These tests do not comprehensively test all WCAG requirements, only a subset of the most common issues. WCAG failures may still exist even for passing tests.</p>
 <table>
 <thead>
-<tr><th>Model</th><th>Rank</th><th>WCAG Pass Rate*</th><th>Avg Total WCAG Failures</th><th>Avg Axe WCAG Failures</th><th>Avg Assertion WCAG Failures</th><th>Avg Best Practice Failures</th></tr>
+<tr><th>Model</th><th>Rank</th><th>Pass rate*</th><th>Avg Total WCAG Failures</th><th>Avg Axe WCAG Failures</th><th>Avg Assertion WCAG Failures</th><th>Avg Best Practice Failures</th></tr>
 </thead>
 <tbody>
 {% for model, stats in summary.items() %}
@@ -399,6 +412,7 @@ details li { margin-bottom: 0.35rem; }
 {% endfor %}
 </tbody>
 </table>
+{{ pass_rate_note() }}
 
 {% if aggregates_by_test %}
 <details>
@@ -413,7 +427,7 @@ details li { margin-bottom: 0.35rem; }
           <th>Samples</th>
           <th>Passes</th>
           {% for k in info.ks %}
-            <th>pass@{{ k }}</th>
+            <th>pass@{{ k }}*</th>
           {% endfor %}
         </tr>
       </thead>
@@ -432,6 +446,7 @@ details li { margin-bottom: 0.35rem; }
       </tbody>
     </table>
   {% endfor %}
+  {{ pass_rate_note() }}
 </details>
 {% endif %}
 
@@ -624,9 +639,9 @@ details li { margin-bottom: 0.35rem; }
         <tr>
           <th>Rank</th>
           <th>Instruction Set</th>
-          <th>Avg Control Pass Rate</th>
-          <th>Avg Instruction Set Pass Rate</th>
-          <th>Δ Avg Pass Rate</th>
+          <th>Avg Control Pass Rate*</th>
+          <th>Avg Instruction Set Pass Rate*</th>
+          <th>Δ Avg Pass Rate*</th>
         </tr>
       </thead>
       <tbody>
@@ -641,6 +656,7 @@ details li { margin-bottom: 0.35rem; }
         {% endfor %}
       </tbody>
     </table>
+    {{ pass_rate_note() }}
   {% else %}
     <p><em>No benchmark summary table is available for this run.</em></p>
   {% endif %}
@@ -675,9 +691,9 @@ details li { margin-bottom: 0.35rem; }
         <tr>
           <th>Model</th>
           <th>Instruction Set</th>
-          <th>Control Pass Rate</th>
-          <th>Instruction Set Pass Rate</th>
-          <th>Δ Pass Rate</th>
+          <th>Control Pass Rate*</th>
+          <th>Instruction Set Pass Rate*</th>
+          <th>Δ Pass Rate*</th>
         </tr>
       </thead>
       <tbody>
@@ -692,6 +708,7 @@ details li { margin-bottom: 0.35rem; }
         {% endfor %}
       </tbody>
     </table>
+    {{ pass_rate_note() }}
 </section>
 {% endif %}
 
@@ -700,6 +717,7 @@ details li { margin-bottom: 0.35rem; }
     <details>
       <summary><h2>Instruction set analysis vs control</h2></summary>
       <p>This section highlights where each instruction set helped (or hurt) compared to the control, aggregated across all samples for that instruction set.</p>
+      {{ pass_rate_note() }}
 
       {% for a in instruction_set_analysis %}
         <details>
@@ -721,9 +739,9 @@ details li { margin-bottom: 0.35rem; }
             <thead>
               <tr>
                 <th>Test case</th>
-                <th>Control pass rate</th>
-                <th>Variant pass rate</th>
-                <th>Δ pass rate</th>
+                <th>Control pass rate*</th>
+                <th>Variant pass rate*</th>
+                <th>Δ pass rate*</th>
                 <th>Δ avg WCAG failures</th>
               </tr>
             </thead>
@@ -747,9 +765,9 @@ details li { margin-bottom: 0.35rem; }
             <thead>
               <tr>
                 <th>Test case</th>
-                <th>Control pass rate</th>
-                <th>Variant pass rate</th>
-                <th>Δ pass rate</th>
+                <th>Control pass rate*</th>
+                <th>Variant pass rate*</th>
+                <th>Δ pass rate*</th>
                 <th>Δ avg WCAG failures</th>
               </tr>
             </thead>
@@ -940,6 +958,7 @@ details li { margin-bottom: 0.35rem; }
     <h2>Skills (vs Control)</h2>
     <p>Skills are self-contained packages (a directory containing <code>SKILL.md</code> and any support files) that are mounted into the sandboxed agent at runtime. Each skill defines its own multi-turn conversation; the agent's submission at the end of each turn is evaluated separately so we can compare how each turn performs against control.</p>
     <p><strong>Note on interpretation.</strong> Turn&nbsp;1 is a single-turn generation directly comparable to control. Later turns operate on prior context, so their Δ reflects both the skill package content <em>and</em> the effect of having a review opportunity.</p>
+    {{ pass_rate_note() }}
     {% for skill in skill_benchmark_tables %}
     <h3>{{ skill.name }}</h3>
     {% if skill.description %}<p>{{ skill.description }}</p>{% endif %}
@@ -948,12 +967,12 @@ details li { margin-bottom: 0.35rem; }
         <tr>
           <th>Rank</th>
           <th>Model</th>
-          <th>Control</th>
+          <th>Control*</th>
           {% for t in skill.turns %}
-            <th>{{ t.name or t.id }}</th>
+            <th>{{ t.name or t.id }}*</th>
           {% endfor %}
-          <th>Δ last&nbsp;vs&nbsp;control</th>
-          {% if skill.turns|length >= 2 %}<th>Δ last&nbsp;vs&nbsp;turn&nbsp;1</th>{% endif %}
+          <th>Δ last&nbsp;vs&nbsp;control*</th>
+          {% if skill.turns|length >= 2 %}<th>Δ last&nbsp;vs&nbsp;turn&nbsp;1*</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -1110,7 +1129,7 @@ details li { margin-bottom: 0.35rem; }
             <div class="variant-only" data-variant="{{ vid }}">
               <p>Samples: {{ agg.n_samples }} | Passes: {{ agg.n_pass }}</p>
               <table>
-                <thead><tr>{% for k,v in agg.pass_at_k.items() %}<th>pass@{{ k }}</th>{% endfor %}</tr></thead>
+                <thead><tr>{% for k,v in agg.pass_at_k.items() %}<th>pass@{{ k }}*</th>{% endfor %}</tr></thead>
                 <tbody><tr>{% for k,v in agg.pass_at_k.items() %}
                   <td class="pass-at-k-cell" data-pass-at-k="{{ k }}" data-pass="{% if agg.n_samples %}{{ '%.4f'|format(v) }}{% endif %}">{% if agg.n_samples %}{{ '%.0f%%'|format(v * 100) }}{% else %}-{% endif %}</td>
                 {% endfor %}</tr></tbody>
