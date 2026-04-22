@@ -1005,11 +1005,14 @@ def run(
             pool_size = min(multiprocessing.cpu_count(), len(gen_tasks))
         else:
             pool_size = max(1, processes)
-        # Cap parallelism for agent (Docker sandbox) tasks to avoid exhausting
-        # Docker's network address pool.  Each sandbox allocates a subnet; the
-        # default pool supports ~30 networks, so 8 concurrent sandboxes is a
-        # safe default that leaves headroom for other Docker workloads.
-        _MAX_AGENT_PARALLEL = 8
+        # Cap parallelism for agent (Docker sandbox) tasks. Each sandbox
+        # allocates a subnet from Docker's network pool, and concurrent
+        # compose up + docker exec traffic on macOS Docker Desktop contends
+        # on the daemon socket; high concurrency has been observed to push
+        # agent runs past their working_limit even when the agent itself is
+        # idle. 4 is a conservative default that preserves throughput while
+        # keeping per-sample latency predictable.
+        _MAX_AGENT_PARALLEL = 4
         if has_agent_tasks and processes is None and pool_size > _MAX_AGENT_PARALLEL:
             pool_size = _MAX_AGENT_PARALLEL
         truncated_cache_files: set[str] = set()

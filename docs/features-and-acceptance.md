@@ -232,6 +232,8 @@ This is enabled via `run --instruction-sets-file <path>`.
 - Instruction sets always use the sandboxed Inspect ReAct agent path.
 - Instruction-set YAML does not support `generation_mode`; configs that specify it are invalid.
 - Instruction sets may declare `agent.sandbox` as an Inspect sandbox spec (for Docker compose, a two-item value equivalent to `("docker", "compose.yaml")`) plus additive `agent.limits` overrides.
+- `agent.limits` accepts a `tool_timeout` key (seconds) bounding each individual tool call (bash, text_editor, python). Defaults to 60 and is clamped to `[10, working_limit]`.
+- Concurrent agent (Docker sandbox) generations default to at most 4 in parallel when `--processes` is not specified. Pass `--processes` explicitly to override.
 
 Artifacts for variants are written under separate directories:
 

@@ -681,7 +681,13 @@ def run_agent_generation(
 
     limits_cfg = normalize_agent_limits(agent_limits)
 
-    tool_timeout = min(int(limits_cfg.get("working_limit") or 420), 180)
+    # Per-tool-call timeout. Cap well below working_limit so a single stuck
+    # tool call (e.g. a hung subprocess or network probe) fails fast and the
+    # agent can recover within its working budget, instead of consuming most
+    # of it on one call. Honors `tool_timeout` from agent_limits when set.
+    working_limit_seconds = int(limits_cfg.get("working_limit") or 600)
+    tool_timeout = int(limits_cfg.get("tool_timeout") or 60)
+    tool_timeout = max(10, min(tool_timeout, working_limit_seconds))
     tools: list[Any] = [
         text_editor(timeout=tool_timeout),
         bash(timeout=tool_timeout),
