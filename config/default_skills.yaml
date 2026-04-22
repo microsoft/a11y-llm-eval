@@ -28,9 +28,10 @@ skills:
         name: Generate
         prompt: |
           {{test_case_prompt}}
-          Plan:
-            1. Generate a standalone HTML document based on the above.
-            2. Add and run accessibility tests, review results, and remediate the HTML.
-                Fix any real accessibility issues you find. Leave correct markup
-                alone. Submit one corrected standalone HTML document as your final
-                answer. Do not wrap it in markdown fences or add commentary.
+      - id: review
+        name: Review
+        prompt: |
+          Add and run accessibility tests, review results, and remediate the HTML.
+          Fix any real accessibility issues you find. Leave correct markup
+          alone. Submit one corrected standalone HTML document as your final
+          answer. Do not wrap it in markdown fences or add commentary.
