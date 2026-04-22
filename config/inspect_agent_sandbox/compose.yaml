@@ -1,8 +1,50 @@
 services:
   default:
     image: mcr.microsoft.com/playwright/python:v1.55.0-noble
+    # A trivial build context (Dockerfile is just `FROM <image>`) so that
+    # `docker compose build`, which inspect_ai runs before each task, has a
+    # service to build. Without this compose prints `WARN[0000] No services
+    # to build` on every agent run. The build is a no-op cache hit after the
+    # first invocation.
+    build:
+      context: .
+      dockerfile: Dockerfile
     init: true
     working_dir: /workspace
-    command: ["bash", "-lc", "mkdir -p /workspace /tmp/playwright-mcp && sleep infinity"]
+    # The base image ships the browser binaries under /ms-playwright but NOT the
+    # `playwright` Python package. Install it at startup, pinned to the EXACT
+    # version of the image tag so the Python package and the bundled browsers
+    # match. A loose `~=1.55.0` spec can resolve to a newer patch whose Chromium
+    # build id differs from what's baked into the image, causing
+    # `BrowserType.launch: executable doesn't exist at /ms-playwright/chromium-*`
+    # failures that burn agent turns on retries.
+    command:
+      - bash
+      - -lc
+      - |
+        set -e
+        pip install --quiet --no-input 'playwright==1.55.0' >/dev/null 2>&1
+        mkdir -p /workspace /tmp/playwright-mcp
+        touch /tmp/.playwright-ready
+        sleep infinity
     environment:
       HOME: /root
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      # Silence pip's "running as root" and "new release available" notices.
+      # These are ~5 lines every time the agent runs any pip command, and
+      # `--quiet` does not suppress them. Without these the notices accumulate
+      # in context across every remaining turn.
+      PIP_ROOT_USER_ACTION: ignore
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PIP_NO_INPUT: "1"
+    # Inspect waits for healthy before executing agent tools. This guarantees
+    # Playwright's Python package is importable before the agent's first turn,
+    # so the agent never races the startup install and never feels the need to
+    # `pip install playwright` itself (which typically pulls a wrong version
+    # and triggers a 100 MiB Chromium re-download with a progress bar).
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/.playwright-ready && python -c 'import playwright' >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 2s
