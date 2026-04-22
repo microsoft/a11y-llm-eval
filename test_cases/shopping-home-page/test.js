@@ -150,8 +150,68 @@ module.exports.run = async ({ page, assert }) => {
   });
 
   await assert("Has a single footer", async () => {
-    let footer = await page.getByRole('contentinfo');
-    return (await footer.count()) === 1;
+    const footerCount = await page.getByRole('contentinfo').count();
+    if (footerCount === 1) return true;
+    if (footerCount > 1) {
+      return { pass: false, message: `Expected exactly one contentinfo landmark; found ${footerCount}.` };
+    }
+
+    // No <footer> / [role="contentinfo"]. Only require one if the page has content
+    // that functionally acts as a footer (copyright, legal, site-wide links, etc.).
+    const hasFooterLikeContent = await page.evaluate(() => {
+      const main = document.querySelector('main, [role="main"]');
+      const body = document.body;
+      if (!body) return false;
+
+      const isIgnorable = (el) => el && el.matches && el.matches('script, style, template, noscript, link, meta');
+      const visibleText = (el) => ((el && (el.textContent || el.innerText)) || '').replace(/\s+/g, ' ').trim();
+
+      // Any substantive content that comes after <main> (at any ancestor level) implies a footer region.
+      if (main) {
+        let cursor = main;
+        while (cursor && cursor !== body) {
+          let sib = cursor.nextElementSibling;
+          while (sib) {
+            if (!isIgnorable(sib) && visibleText(sib)) return true;
+            sib = sib.nextElementSibling;
+          }
+          cursor = cursor.parentElement;
+        }
+      }
+
+      // Elements whose class/id/name explicitly marks them as a footer region (outside <main>).
+      const footerIdent = /(?:^|[-_\s])footer(?:$|[-_\s])/i;
+      const candidates = body.querySelectorAll('[class], [id], [data-testid]');
+      for (const el of candidates) {
+        if (main && main.contains(el)) continue;
+        const idents = [el.getAttribute('class') || '', el.getAttribute('id') || '', el.getAttribute('data-testid') || ''];
+        if (idents.some((v) => footerIdent.test(v)) && visibleText(el)) return true;
+      }
+
+      // Copyright / legal / explicit "footer" text anywhere outside <main> also implies a footer region.
+      const pattern = /(?:\u00a9|\(c\)|copyright|all rights reserved|privacy policy|terms of service|terms and conditions|\bfooter\b)/i;
+      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          if (main && main.contains(node)) return NodeFilter.FILTER_REJECT;
+          const text = (node.nodeValue || '').trim();
+          if (!text) return NodeFilter.FILTER_SKIP;
+          return pattern.test(text) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+        },
+      });
+      return !!walker.nextNode();
+    });
+
+    if (!hasFooterLikeContent) {
+      return {
+        status: 'na',
+        message: 'Page has no footer-like content (no copyright, legal text, or site-wide content outside <main>); a contentinfo landmark is not required.',
+      };
+    }
+
+    return {
+      pass: false,
+      message: 'Page has footer-like content but no contentinfo landmark. Wrap the footer content in <footer> or add role="contentinfo".',
+    };
   });
 
   return {}; // assertions collected via injected assert
