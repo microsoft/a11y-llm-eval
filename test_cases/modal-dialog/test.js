@@ -54,7 +54,7 @@ const dialogIsOpen = async (page) => {
     await waitForAnimationEnd(body);
 
     // Now, check for dialog presence
-    const dialog = await page.getByRole('dialog');
+    const dialog = page.getByRole('dialog').or(page.getByRole('alertdialog'));
     return await dialog.count() > 0;
 }
 
