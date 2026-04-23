@@ -75,7 +75,7 @@ Do not claim the output is "fully accessible". State what was addressed and know
 - **Grouping.** Related options (checkboxes, radios) are grouped so their shared name is part of the accessible name of each option. Group-level help/error text is associated with the group itself — not with each option and not with an intermediate wrapper.
   - **Web:** `<fieldset>` with a `<legend>`. Put `aria-describedby` on the `<fieldset>` (not on a child `<div>`, and never on an extra `<div role="group">` inside the fieldset — `<fieldset>` already is the group).
 - **Required fields.** Marked both visually and programmatically; not indicated by color alone.
-  - **Web:** Use an astrisk to indicate required fields. Native `required` on the control or `aria-required="true"`.
+  - **Web:** Use an asterisk to indicate required fields. Native `required` on the control or `aria-required="true"`.
 - **Keyboard operability.** Every interactive element is keyboard operable; tab order matches reading/visual order; expected keys work (activation, arrow keys inside composite widgets, Escape closes overlays); no keyboard traps; static content is not sequentially focusable.
   - **Web:** Do not remove focus outlines without equal-or-better replacement. Use `tabindex="-1"` only for elements that need programmatic (not sequential) focus. → `reference/keyboard-focus.md`.
 - **Focus management.** Focus is always visible. Overlays/dialogs/disclosures move focus appropriately and restore it on close; no focus traps outside modals.

@@ -1,6 +1,6 @@
 # Component patterns
 
-Open relvant files when the change contains (or needs to contain) the matching widget. Don't read every file.
+Open relevant files when the change contains (or needs to contain) the matching widget. Don't read every file.
 
 - `checkbox-group.md` — multi-select checkboxes in a group.
 - `radio-button-group.md` — single-select radios in a group.
