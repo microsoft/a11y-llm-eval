@@ -520,6 +520,7 @@ def _build_generation_request(
         api_version=provider_kwargs.get("api_version"),
         azure_ad_token_provider=provider_kwargs.get("azure_ad_token_provider"),
         max_workers=max_workers,
+        cache_prompt=True if _is_anthropic_model(model) else None,
     )
 
 
@@ -837,6 +838,7 @@ def generate_html_batch_with_meta(
                 api_version=batch_request.api_version,
                 azure_ad_token_provider=batch_request.azure_ad_token_provider,
                 max_workers=batch_request.max_workers,
+                cache_prompt=batch_request.cache_prompt,
             )
             for messages in batch_messages
         ])

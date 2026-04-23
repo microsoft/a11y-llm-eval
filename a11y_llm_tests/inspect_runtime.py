@@ -62,6 +62,7 @@ class GenerationRequest:
     api_version: Optional[str] = None
     azure_ad_token_provider: Any = None
     max_workers: Optional[int] = None
+    cache_prompt: Optional[bool] = None
 
 
 @dataclass
@@ -173,6 +174,8 @@ class InspectGenerationRuntime:
             kwargs["azure_ad_token_provider"] = request.azure_ad_token_provider
         if request.max_workers is not None:
             kwargs["max_workers"] = request.max_workers
+        if request.cache_prompt is not None:
+            kwargs["cache_prompt"] = request.cache_prompt
         return kwargs
 
     def _normalize_messages(self, messages: Any) -> Any:
@@ -747,6 +750,12 @@ def run_agent_generation(
     max_output = limits_cfg.get("max_output_tokens")
     if max_output is not None:
         generate_config_kwargs["max_tokens"] = int(max_output)
+    # Enable Anthropic prompt caching (ephemeral cache_control on system /
+    # tools / last user messages). Inspect's anthropic provider also
+    # auto-enables this when tools are present, but we set it explicitly so
+    # the behavior is independent of tool configuration.
+    if (model or "").strip().lower().startswith(("anthropic/", "anthropic.", "anthropic:", "claude-", "claude/")) or model == "claude":
+        generate_config_kwargs["cache_prompt"] = True
     generate_config = GenerateConfig(**generate_config_kwargs) if generate_config_kwargs else None
 
     # Build the Sample.input. When seed_messages is provided we emit a list of

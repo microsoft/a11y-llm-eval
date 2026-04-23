@@ -137,6 +137,8 @@ If neither `run --temperature` nor `defaults.temperature` is provided, the harne
 
 Note: some Codex-style deployments (e.g., certain `*-codex` models) do not accept sampling parameters like `temperature`. For these models, the harness omits `temperature` from the generation request to avoid provider errors.
 
+For Anthropic / Claude models, the harness enables Inspect's Anthropic prompt caching (`cache_prompt=True`) on every generation request — both the direct chat-completion path and the agent path. The Anthropic provider applies an `ephemeral` `cache_control` marker to the system message, the tools block (when present), and the last user message(s), so repeated identical prefixes (system prompt, custom instructions, skills/instructions content) are billed and processed at the cached rate. This is independent of the harness's local `.cache/generations/` HTML cache.
+
 ### Acceptance criteria
 
 - Generated output is a **single standalone HTML document**.
@@ -147,6 +149,7 @@ Note: some Codex-style deployments (e.g., certain `*-codex` models) do not accep
 - Prompt hashing:
   - `compute_prompt_hash(user_prompt)` depends on the configured system prompt, custom instructions, and the user prompt.
   - Changing system prompt or custom instructions changes the hash.
+- For Anthropic models, the runtime sets `cache_prompt=True` on the Inspect `GenerateConfig` for both direct and agent generations so the provider applies `cache_control: ephemeral` to qualifying prefix segments.
 
 ---
 
