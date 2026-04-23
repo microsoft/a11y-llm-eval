@@ -391,10 +391,10 @@ class InspectGenerationRuntime:
 def default_agent_limits() -> dict[str, Any]:
     return {
         "message_limit": 50,
-        "token_limit": 500000,
+        "token_limit": 1024*1024,
         "time_limit": 15*60,
         "working_limit": 10*60,
-        "max_output_tokens": 16000,
+        "max_output_tokens": 64*1024,
         "attempts": 1,
     }
 

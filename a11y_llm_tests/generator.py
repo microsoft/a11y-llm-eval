@@ -1185,6 +1185,15 @@ def generate_html_with_agent_meta(
         transcript = normalize_agent_transcript(result.transcript, html)
         if is_probably_complete_html(html):
             break
+        # Don't retry when a sample-level limit (working/time/token/cost/message)
+        # already tripped — the next attempt would hit the same wall and double
+        # the spend with no expected improvement.
+        if result.limit_error:
+            print(
+                f"Agent hit limit ({result.limit_error}); skipping truncation retry "
+                "to avoid duplicate cost."
+            )
+            break
         if trunc_attempt < TRUNCATION_RETRY_MAX:
             print("Detected truncated/incomplete agent HTML; retrying generation once...")
 
