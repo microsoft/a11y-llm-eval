@@ -290,7 +290,7 @@ This is enabled via `run --skills-file <path>` and is independent of `--instruct
 - The skill directory is mounted at `/workspace/.skills/<skill_id>/` in the sandbox (every file under the host skill dir is mapped in).
 - Each turn is a separate user message; earlier turns' assistant replies are preserved as seed messages for subsequent turns.
 - Per-turn generation caching: the cache key for turn k includes the model, seed, iteration, skill id, hash of all skill files, turn index, and a cumulative hash of all rendered turn prompts up to and including turn k. Changing turn 2's prompt invalidates turn 2's cache but not turn 1's.
-- Partial failure: if a turn errors or hits a model/agent limit, that turn's record is marked ERROR, subsequent turns for that sample are emitted as ERROR records with `aborted_reason` set, and earlier turns remain evaluated normally.
+- Partial failure: if a turn errors or hits a model/agent limit, that turn's record is written with an empty HTML artifact and its `generation.agent_limit_error` populated with the failure reason. Subsequent turns for that sample are short-circuited with the same empty HTML and `generation.agent_limit_error` set (the sidecar conversation entry is marked `skipped: true` with a `skip_reason`). Empty HTML fails the node-runner checks, so those turns evaluate to `result = "FAIL"`. Earlier turns in the same sample remain evaluated normally.
 
 Artifacts for skills are written under separate directories:
 
