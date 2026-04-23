@@ -282,7 +282,7 @@ The harness can benchmark **skills** — self-contained packages of files (at mi
 
 This is enabled via `run --skills-file <path>` and is independent of `--instruction-sets-file` (both may be supplied in the same run).
 
-- Each skill declares `id`, `name`, optional `description`, a `skill_path` (directory containing `SKILL.md`), `agent` settings (same shape as instruction-set `agent`), and a required **non-empty** `turns` list.
+- Each skill declares `id`, `name`, optional `description`, a `skill_dir` (directory containing `SKILL.md`, relative to the skills YAML file or absolute), `agent` settings (same shape as instruction-set `agent`), and a required **non-empty** `turns` list.
 - Each turn declares `id`, `name` (optional), and a `prompt` template.
 - Exactly **one** turn prompt in a skill must contain the token `{{test_case_prompt}}`. Other supported tokens: `{{skill_id}}`, `{{skill_path}}`, `{{previous_submission}}`.
 - Turn ids must be unique within the skill; skill ids must be unique across skills and must not collide with instruction-set ids or the reserved id `control`.
