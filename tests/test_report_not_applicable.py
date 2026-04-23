@@ -113,8 +113,8 @@ def test_render_report_handles_not_applicable_samples(tmp_path: Path):
     )
 
     html = out_html.read_text(encoding="utf-8")
-    assert "<th>WCAG Pass Rate*</th><th>Avg Total WCAG Failures</th>" in html
-    assert "<th>WCAG Pass Rate*</th><th>Samples</th>" not in html
+    assert "<th>Pass rate*</th><th>Avg Total WCAG Failures</th>" in html
+    assert "<th>Pass rate*</th><th>Samples</th>" not in html
     assert "Samples: 2 | Passes: 2" in html
     assert 'data-assertion-status="na"' in html
     assert "Not applicable" in html
