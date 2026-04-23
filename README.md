@@ -142,16 +142,16 @@ A **skill** is a self-contained package (a directory containing at minimum a `SK
 
 Step 0: Start from the default skills file
 
-- Use `config/default_skills.yaml` as a starting point. It defines a single `a11y-reviewer` skill that first generates a page (turn 1) and then is asked to review and remediate its own HTML (turn 2), using `config/skills/a11y-reviewer/SKILL.md` as guidance.
+- Use `config/default_skills.yaml` as a starting point. It defines a single `a11y-wizard` skill that first generates a page (turn 1) and then is asked to review and remediate its own HTML (turn 2), using `config/skills/a11y-wizard/SKILL.md` as guidance.
 
 Example `skills.yaml`:
 
 ```yaml
 skills:
-  - id: a11y-reviewer
-    name: Accessibility Reviewer
+  - id: a11y-wizard
+    name: Accessibility Wizard
     description: Generate, then self-review using SKILL.md guidance.
-    skill_dir: config/skills/a11y-reviewer
+    skill_dir: skills/a11y-wizard
     # samples: 10                     # optional; defaults to --samples
     agent:                            # optional; same shape as instruction sets
       sandbox: [docker, config/inspect_agent_sandbox/compose.yaml]
