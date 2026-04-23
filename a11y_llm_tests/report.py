@@ -382,8 +382,12 @@ details li { margin-bottom: 0.35rem; }
 
 <nav class="report-nav" aria-label="Report sections">
   <a href="index.html#control-summary" data-report-nav="control">Control</a>
+  {% if instruction_benchmark_rows or instruction_set_analysis %}
   <a href="index.html#instruction-sets" data-report-nav="instructions">Instruction sets</a>
+  {% endif %}
+  {% if skill_benchmark_tables %}
   <a href="index.html#skills" data-report-nav="skills">Skills</a>
+  {% endif %}
   <a href="index.html#details-h2" data-report-nav="details">Detailed results</a>
   <a href="index.html#methodology" data-report-nav="about">Methodology &amp; glossary</a>
 </nav>
@@ -624,8 +628,8 @@ details li { margin-bottom: 0.35rem; }
 
   </section>
 
-  <section id="instruction-sets" data-report-section="instructions">
   {% if instruction_benchmark_rows or instruction_set_analysis %}
+  <section id="instruction-sets" data-report-section="instructions">
 
 {% if instruction_benchmark_rows %}
 <section id="instruction-benchmark-summary">
@@ -947,13 +951,11 @@ details li { margin-bottom: 0.35rem; }
     </details>
   </section>
   {% endif %}
-  {% else %}
-    <p><em>No instruction set benchmark data available for this run.</em></p>
-  {% endif %}
   </section>
+  {% endif %}
 
-  <section id="skills" data-report-section="skills">
   {% if skill_benchmark_tables %}
+  <section id="skills" data-report-section="skills">
   <section id="skill-benchmark-summary">
     <h2>Skills (vs Control)</h2>
     <p>Skills are self-contained packages (a directory containing <code>SKILL.md</code> and any support files) that are mounted into the sandboxed agent at runtime. Each skill defines its own multi-turn conversation; the agent's submission at the end of each turn is evaluated separately so we can compare how each turn performs against control.</p>
@@ -1022,10 +1024,8 @@ details li { margin-bottom: 0.35rem; }
       </details>
     {% endfor %}
   </section>
-  {% else %}
-    <p><em>No skill benchmark data available for this run.</em></p>
-  {% endif %}
   </section>
+  {% endif %}
 
   <section id="detailed-results" data-report-section="details">
 <section>

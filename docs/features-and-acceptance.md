@@ -269,6 +269,7 @@ Schema additions:
 
 - When `--instruction-sets-file` is not provided:
   - No `raw_variants/` or `screenshots_variants/` outputs are required.
+  - No instruction sets section is rendered in the HTML report (and its report-nav link is omitted).
   - Existing single-run behavior remains unchanged.
 
 ---
@@ -315,7 +316,7 @@ Schema additions:
 
 - When `--skills-file` is not provided:
   - No `raw_skills/` or `screenshots_skills/` outputs are required.
-  - No skill section is rendered in the HTML report.
+  - No skill section is rendered in the HTML report (and its report-nav link is omitted).
 
 ---
 
