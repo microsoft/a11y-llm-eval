@@ -94,5 +94,5 @@ Do not claim the output is "fully accessible". State what was addressed and know
 - **Testing.** Add and run automated accessibility tests unless the project explicitly opts out. Writing or configuring a test is not enough — execution, fixes, and a result report are part of the deliverable. **The final automated test run must be on the exact artifact you submit: any edit after a passing test invalidates that test, so re-run before submitting.** **Open `reference/testing.md` before writing any test code** for the opt-out signals, strategy precedence, runtime probe order, and reporting rules.
   - **Web:** Prefer `@axe-core/*` bindings that match the existing test runner; render the component/page fully so interactive state, focus, and live regions are evaluated.
   - **Other platforms:** Use the platform's native audit (Android `AccessibilityChecks`, iOS `XCUIAccessibilityAudit`, .NET `AccessibilityInsights`) under the same precedence.
-- **Specs/Documentation.** Follow the project's documentation pattern and document accessibility considerations for each view, component, and interaction.
+- **Specs/Documentation.** Follow the project's documentation pattern and document accessibility considerations for each view, component, and interaction. → `reference/specs-documentation.md`.
 
