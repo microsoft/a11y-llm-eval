@@ -283,6 +283,89 @@ figure img {
 .transcript-turn-system { border-left-color: #64748b; }
 .transcript-turn-user { border-left-color: #2563eb; }
 .transcript-turn-assistant { border-left-color: #16a34a; }
+/* Conversation modal dialog */
+.conversation-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-muted);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.conversation-btn:hover {
+  background: var(--surface);
+  border-color: var(--accent-strong);
+}
+.conversation-btn:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.conversation-dialog {
+  max-width: min(56rem, 90vw);
+  max-height: 85vh;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.85rem;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  padding: 0;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.conversation-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.conversation-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+}
+.conversation-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.conversation-dialog-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.conversation-dialog-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+.conversation-dialog-close:hover {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}
+.conversation-dialog-close:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.conversation-dialog-body {
+  overflow-y: auto;
+  padding: 1.25rem;
+  flex: 1;
+}
+body.dialog-open {
+  overflow: hidden;
+}
 .agg-table { margin-top: 1rem; }
 /* Heatmap cells for pass@k tables */
 .pass-at-k-cell {
@@ -1170,9 +1253,6 @@ details li { margin-bottom: 0.35rem; }
           </p>
           <p><span class="badge-{{ 'pass' if r.result=='PASS' else 'fail' }}">{{ r.result }}</span> | Latency {{ '%.2f'|format(r.generation.latency_s) }}s{% if r.generation.cached %} cached{% endif %}</p>
           <p>Axe WCAG: {{ r.axe.failure_count if r.axe else 'n/a' }}{% if r.axe and r.axe.best_practice_count > 0 %} | BP: {{ r.axe.best_practice_count }}{% endif %}{% if r.generation.cost_usd is not none %} | ${{ '%.4f'|format(r.generation.cost_usd) }}{% endif %}{% if r.generation.total_tokens is defined and r.generation.total_tokens is not none %} | Tokens: {{ '{:,}'.format(r.generation.total_tokens) }}{% if r.generation.tokens_in is defined and r.generation.tokens_out is defined and r.generation.tokens_in is not none and r.generation.tokens_out is not none %} ({{ '{:,}'.format(r.generation.tokens_in) }} in / {{ '{:,}'.format(r.generation.tokens_out) }} out){% endif %}{% endif %}</p>
-          {% if r.generation.generation_mode %}
-          <p><strong>Generation mode:</strong> {{ r.generation.generation_mode }}{% if r.generation.agent_sandbox %} | <strong>Sandbox:</strong> {{ r.generation.agent_sandbox }}{% endif %}{% if r.generation_eval_path_relative %} | <a href="{{ r.generation_eval_path_relative }}">Copilot session log</a>{% endif %}{% if r.generation_conversation_path_relative %} | <a href="{{ r.generation_conversation_path_relative }}">Conversation JSON</a>{% endif %}</p>
-          {% endif %}
           {% if r.screenshot_path %}
             {# Trim the first two path segments (e.g., 'runs/<run_id>/...') #}
             {% set _parts = r.screenshot_path.split('/') %}
@@ -1182,8 +1262,15 @@ details li { margin-bottom: 0.35rem; }
             </figure>
           {% endif %}
           {% if r.generation_conversation %}
-          <details class="transcript-summary">
-            <summary>Agent conversation ({{ r.generation_conversation.message_count }} messages{% if r.generation_conversation.entry_count is not none %}, {{ r.generation_conversation.entry_count }} entries{% endif %}{% if r.generation.agent_limit_error %}, limit: {{ r.generation.agent_limit_error }}{% endif %})</summary>
+          {% set dialog_id = 'conv-dialog-' ~ vid ~ '-' ~ r.model_name|replace(' ', '-') ~ '-' ~ test_name|replace(' ', '-') ~ '-' ~ (r.sample_index if r.sample_index is not none else loop.index0) ~ '-' ~ (r.turn_index or 0) %}
+          {% set dialog_heading_id = dialog_id ~ '-heading' %}
+          <button type="button" class="conversation-btn" data-opens-dialog="{{ dialog_id }}">Agent conversation ({{ r.generation_conversation.message_count }} messages{% if r.generation_conversation.entry_count is not none %}, {{ r.generation_conversation.entry_count }} entries{% endif %}{% if r.generation.agent_limit_error %}, limit: {{ r.generation.agent_limit_error }}{% endif %})</button>
+          <dialog id="{{ dialog_id }}" class="conversation-dialog" aria-labelledby="{{ dialog_heading_id }}">
+            <div class="conversation-dialog-header">
+              <h2 id="{{ dialog_heading_id }}">Agent conversation — Sample {{ r.sample_index if r.sample_index is not none else loop.index0 }} ({{ model_display_names.get(r.model_name, r.model_name) }})</h2>
+              <button type="button" class="conversation-dialog-close" aria-label="Close" data-closes-dialog="{{ dialog_id }}">&#x2715;</button>
+            </div>
+            <div class="conversation-dialog-body">
             {% if r.generation_conversation.turns %}
               <div class="transcript-turns">
                 {% for turn in r.generation_conversation.turns %}
@@ -1205,7 +1292,8 @@ details li { margin-bottom: 0.35rem; }
             {% else %}
               <p><em>No transcript preview available.</em></p>
             {% endif %}
-          </details>
+            </div>
+          </dialog>
           {% endif %}
           <details>
             <summary>
@@ -1259,6 +1347,11 @@ details li { margin-bottom: 0.35rem; }
               {% endfor %}
             </ul>
           </details>
+          {% else %}
+          <details>
+            <summary>Axe WCAG Failures (0) <span role="img" aria-label="Pass">✅</span></summary>
+            <p>No WCAG violations detected by axe-core.</p>
+          </details>
           {% endif %}
           {% if r.axe.best_practice_count > 0 %}
           <details>
@@ -1268,6 +1361,11 @@ details li { margin-bottom: 0.35rem; }
               <li><strong>{{ v.id|e }}</strong> ({{ v.impact|e }}): {{ v.description|e }} <em>(Best Practice - does not affect pass/fail)</em></li>
               {% endfor %}
             </ul>
+          </details>
+          {% else %}
+          <details>
+            <summary>Axe Best Practice Issues (0) <span role="img" aria-label="Pass">✅</span></summary>
+            <p>No best practice issues detected by axe-core.</p>
           </details>
           {% endif %}
           {% endif %}
@@ -1381,6 +1479,32 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 
   initReportSectionNav();
+
+  // Conversation modal dialog open/close
+  document.addEventListener('click', function (e) {
+    var openBtn = e.target.closest('[data-opens-dialog]');
+    if (openBtn) {
+      var dialogId = openBtn.getAttribute('data-opens-dialog');
+      var dialog = document.getElementById(dialogId);
+      if (dialog) {
+        dialog.showModal();
+        document.body.classList.add('dialog-open');
+      }
+      return;
+    }
+    var closeBtn = e.target.closest('[data-closes-dialog]');
+    if (closeBtn) {
+      var dialogId = closeBtn.getAttribute('data-closes-dialog');
+      var dialog = document.getElementById(dialogId);
+      if (dialog) dialog.close();
+    }
+  });
+  // Restore scroll when any dialog closes (Escape or close button)
+  document.addEventListener('close', function (e) {
+    if (e.target.tagName === 'DIALOG') {
+      document.body.classList.remove('dialog-open');
+    }
+  }, true);
 
   const modelFilter = document.getElementById('model-filter');
   const variantFilter = document.getElementById('variant-filter');
