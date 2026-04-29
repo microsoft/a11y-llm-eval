@@ -1,8 +1,9 @@
 """Typer CLI for running evaluations and generating reports."""
+import asyncio
 import hashlib
-import inspect
 import json
 import multiprocessing
+import shutil
 from datetime import datetime
 from pathlib import Path
 import typer
@@ -22,7 +23,7 @@ from .schema import (
     PromptVariant,
 )
 from .metrics import compute_pass_at_k, format_pass_at_k
-from .utils import atomic_write_text, check_docker_network_pool
+from .utils import atomic_write_text
 
 # importing os module for environment variables
 import os
@@ -42,9 +43,8 @@ def _render_progress(prefix: str, done: int, total: int) -> None:
     """Render a progress indicator.
 
     Prints a new line each time percent or done/total changes.  We intentionally
-    avoid the ``\\r``-overwrite trick: worker subprocesses, Docker/compose, and
-    the inspect_ai sandbox write their own lines to stdout/stderr during a run,
-    which would push an in-place progress line up and leave visible gaps.  A
+    avoid the ``\\r``-overwrite trick: the Copilot SDK and tool subprocesses
+    write their own lines to stdout/stderr during a run, which would push an in-place progress line up and leave visible gaps.  A
     deduped newline-per-change approach stays readable when interleaved and
     bounds total output to ~100 lines regardless of ``total``.
     """
@@ -125,7 +125,7 @@ def _print_generation_summary(results: List[Dict[str, Any]], gen_tasks: List[Dic
 
 
 def _evaluate_worker(args_tuple):
-    """Top-level worker for multiprocessing to ensure picklability on spawn-based systems (macOS, Windows)."""
+    """Top-level worker; runs synchronously and is dispatched via asyncio.to_thread."""
     html_path = args_tuple["html_path"]
     test_js_path = args_tuple["test_js_path"]
     screenshot_path = args_tuple["screenshot_path"]
@@ -218,9 +218,15 @@ def _evaluate_worker(args_tuple):
             cost_usd=gen_meta.get("cost_usd"),
             seed=gen_meta.get("seed"),
             temperature=gen_meta.get("temperature"),
-            system_prompt=gen_meta.get("system_prompt", generator.get_base_system_prompt()),
+            output_format_instructions=gen_meta.get(
+                "output_format_instructions",
+                generator.get_base_output_format_instructions(),
+            ),
             custom_instructions=gen_meta.get("custom_instructions", generator.get_custom_instructions()),
-            effective_system_prompt=gen_meta.get("effective_system_prompt", generator.get_effective_system_prompt()),
+            effective_output_format_instructions=gen_meta.get(
+                "effective_output_format_instructions",
+                generator.get_effective_output_format_instructions(),
+            ),
             generation_mode=gen_meta.get("generation_mode"),
             agent_sandbox=gen_meta.get("agent_sandbox"),
             agent_limit_error=gen_meta.get("agent_limit_error"),
@@ -237,7 +243,7 @@ def _evaluate_worker(args_tuple):
 
 
 def _generate_worker(task):
-    """Top-level generation worker for multiprocessing; receives a tuple of parameters."""
+    """Generation worker. Runs synchronously inside a thread for asyncio.gather."""
     test_name = task["test_name"]
     base_test_name = task["base_test_name"]
     prompt_case_id = task["prompt_case_id"]
@@ -248,21 +254,22 @@ def _generate_worker(task):
     seed = task.get("seed")
     temperature = task.get("temperature")
     disable_cache = task.get("disable_cache", False)
-    system_prompt_override = task.get("system_prompt_override")
+    output_format_override = task.get("output_format_override")
     custom_instructions_text = task.get("custom_instructions_text")
     prompt_variant_id = task.get("prompt_variant_id")
     prompt_variant_kind = task.get("prompt_variant_kind")
-    debug_truncated_cache = task.get("debug_truncated_cache", False)
     html_out_path = task.get("html_out_path")
     conversation_out_path = task.get("conversation_out_path")
     model_display_name = task.get("model_display_name")
     provider_config = task.get("provider_config")
     runtime_log_dir = task.get("runtime_log_dir")
-    generation_mode = task.get("generation_mode") or "direct"
+    sandbox_workdir = task.get("sandbox_workdir")
     agent_config = task.get("agent_config") or {}
 
-    # Configure prompts within this worker process for the specific variant.
-    generator.configure_prompts(system_prompt_override, custom_instructions_text)
+    # Resolve per-task prompt config. Passed explicitly to generation
+    # functions so concurrent workers don't race on module globals.
+    resolved_output_format = output_format_override or generator.DEFAULT_OUTPUT_FORMAT_INSTRUCTIONS
+    resolved_custom_instructions = custom_instructions_text  # may be None
     generator.configure_runtime(runtime_log_dir)
 
     # Skill variants: multi-turn. Emit one record per turn.
@@ -281,6 +288,9 @@ def _generate_worker(task):
             runtime_log_dir=runtime_log_dir,
             agent_config=agent_config,
             skill_config=skill_config,
+            sandbox_workdir=sandbox_workdir,
+            output_format_instructions=resolved_output_format,
+            custom_instructions_override=resolved_custom_instructions,
         )
 
         conversation_path = None
@@ -309,7 +319,7 @@ def _generate_worker(task):
                 "meta": meta,
                 "html_path": str(html_path),
                 "conversation_path": conversation_path,
-                "eval_path": meta.get("agent_eval_path"),
+                "eval_path": meta.get("agent_session_log_path"),
                 "prompt_variant_id": prompt_variant_id,
                 "prompt_variant_kind": "skill",
                 "turn_id": tr["turn_id"],
@@ -319,41 +329,21 @@ def _generate_worker(task):
             })
         return {"skill_turn_records": skill_turn_records}
 
-    conversation_payload = None
-    if generation_mode == "inspect_react_agent":
-        html, meta, conversation_payload = generator.generate_html_with_agent_meta(
-            model,
-            prompt_text,
-            sample_index,
-            temperature=temperature,
-            seed=seed,
-            disable_cache=disable_cache,
-            model_display_name=model_display_name,
-            provider_config=provider_config,
-            runtime_log_dir=runtime_log_dir,
-            agent_config=agent_config,
-        )
-    else:
-        kwargs = {
-            "temperature": temperature,
-            "seed": seed,
-            "disable_cache": disable_cache,
-        }
-        try:
-            generate_signature = inspect.signature(generator.generate_html_with_meta)
-            if "model_display_name" in generate_signature.parameters:
-                kwargs["model_display_name"] = model_display_name
-            if "provider_config" in generate_signature.parameters:
-                kwargs["provider_config"] = provider_config
-            if "runtime_log_dir" in generate_signature.parameters:
-                kwargs["runtime_log_dir"] = runtime_log_dir
-        except (TypeError, ValueError):
-            pass
-
-        if debug_truncated_cache:
-            kwargs["debug_truncated_cache"] = True
-
-        html, meta = generator.generate_html_with_meta(model, prompt_text, sample_index, **kwargs)
+    html, meta, conversation_payload = generator.generate_html_with_agent_meta(
+        model,
+        prompt_text,
+        sample_index,
+        temperature=temperature,
+        seed=seed,
+        disable_cache=disable_cache,
+        model_display_name=model_display_name,
+        provider_config=provider_config,
+        runtime_log_dir=runtime_log_dir,
+        agent_config=agent_config,
+        sandbox_workdir=sandbox_workdir,
+        output_format_instructions=resolved_output_format,
+        custom_instructions_override=resolved_custom_instructions,
+    )
 
     out_path = Path(html_out_path)
     out_path.parent.mkdir(exist_ok=True, parents=True)
@@ -366,7 +356,6 @@ def _generate_worker(task):
         atomic_write_text(conversation_target, json.dumps(conversation_payload, indent=2), encoding="utf-8")
         conversation_path = str(conversation_target)
 
-    # Return only small, picklable data
     return {
         "test_name": test_name,
         "base_test_name": base_test_name,
@@ -378,7 +367,7 @@ def _generate_worker(task):
         "meta": meta,
         "html_path": str(out_path),
         "conversation_path": conversation_path,
-        "eval_path": meta.get("agent_eval_path"),
+        "eval_path": meta.get("agent_session_log_path"),
         "prompt_variant_id": prompt_variant_id,
         "prompt_variant_kind": prompt_variant_kind,
     }
@@ -428,94 +417,6 @@ def _resolve_cli_path(path_value: str, base_dir: Path) -> Path:
 
     return base_dir / candidate
 
-def _provider_batch_enabled(provider_config: Any) -> bool:
-    if not isinstance(provider_config, dict):
-        return True
-    batch_cfg = provider_config.get("batch")
-    if not isinstance(batch_cfg, dict):
-        return True
-    enabled = batch_cfg.get("enabled")
-    if enabled is None:
-        return True
-    return bool(enabled)
-
-
-def _batch_group_key(task: dict[str, Any]) -> tuple[Any, ...]:
-    provider_config = task.get("provider_config") or {}
-    return (
-        task.get("generation_mode") or "direct",
-        task.get("model"),
-        task.get("seed"),
-        task.get("temperature"),
-        task.get("system_prompt_override"),
-        task.get("custom_instructions_text"),
-        task.get("disable_cache", False),
-        task.get("debug_truncated_cache", False),
-        json.dumps(provider_config, sort_keys=True),
-    )
-
-
-def _generate_batch_group(indexed_tasks: list[tuple[int, dict[str, Any]]]) -> list[dict[str, Any]]:
-    first_task = indexed_tasks[0][1]
-    generator.configure_prompts(
-        first_task.get("system_prompt_override"),
-        first_task.get("custom_instructions_text"),
-    )
-    generator.configure_runtime(first_task.get("runtime_log_dir"))
-
-    requests = []
-    for _, task in indexed_tasks:
-        requests.append({
-            "user_prompt": task["prompt_text"],
-            "iteration": task["sample_index"],
-            "temperature": task.get("temperature"),
-            "seed": task.get("seed"),
-            "disable_cache": task.get("disable_cache", False),
-            "debug_truncated_cache": task.get("debug_truncated_cache", False),
-        })
-
-    kwargs = {
-        "temperature": first_task.get("temperature"),
-        "seed": first_task.get("seed"),
-        "disable_cache": first_task.get("disable_cache", False),
-        "debug_truncated_cache": first_task.get("debug_truncated_cache", False),
-    }
-    try:
-        batch_signature = inspect.signature(generator.generate_html_batch_with_meta)
-        if "model_display_name" in batch_signature.parameters:
-            kwargs["model_display_name"] = first_task.get("model_display_name")
-        if "provider_config" in batch_signature.parameters:
-            kwargs["provider_config"] = first_task.get("provider_config")
-        if "runtime_log_dir" in batch_signature.parameters:
-            kwargs["runtime_log_dir"] = first_task.get("runtime_log_dir")
-    except (TypeError, ValueError):
-        pass
-
-    batch_results = generator.generate_html_batch_with_meta(first_task["model"], requests, **kwargs)
-    if len(batch_results) != len(indexed_tasks):
-        raise RuntimeError("generate_html_batch_with_meta returned an unexpected number of results")
-
-    generated_results = []
-    for (_, task), batch_result in zip(indexed_tasks, batch_results):
-        html = batch_result["html"]
-        meta = batch_result.get("meta") or {}
-        out_path = Path(task["html_out_path"])
-        out_path.parent.mkdir(exist_ok=True, parents=True)
-        atomic_write_text(out_path, html, encoding="utf-8")
-        generated_results.append({
-            "test_name": task["test_name"],
-            "base_test_name": task["base_test_name"],
-            "prompt_case_id": task["prompt_case_id"],
-            "prompt_dimensions": task.get("prompt_dimensions") or [],
-            "model": task["model"],
-            "sample_index": task["sample_index"],
-            "prompt_text": task["prompt_text"],
-            "meta": meta,
-            "html_path": str(out_path),
-            "prompt_variant_id": task.get("prompt_variant_id"),
-        })
-    return generated_results
-
 
 def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[dict]:
     """Load instruction sets YAML.
@@ -525,8 +426,11 @@ def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[d
         - id: concise
           name: Concise
           description: ...
-          system_prompt_append_markdown: path/to/file.md
+          instructions_markdown: path/to/file.md
           samples: 10
+
+    The legacy key ``system_prompt_append_markdown`` is still accepted as an
+    alias for ``instructions_markdown`` for back-compat with older configs.
     """
     path = Path(instruction_sets_file)
     if not path.is_absolute():
@@ -552,11 +456,11 @@ def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[d
             raise ValueError("'control' is reserved; choose a different instruction set id")
         if "generation_mode" in s:
             raise ValueError(
-                f"Instruction set '{sid}' cannot specify generation_mode; instruction sets always use the inspect_react_agent path"
+                f"Instruction set '{sid}' cannot specify generation_mode; instruction sets always use the copilot_agent path"
             )
-        md_path = s.get("system_prompt_append_markdown")
+        md_path = s.get("instructions_markdown") or s.get("system_prompt_append_markdown")
         if not md_path:
-            raise ValueError(f"Instruction set '{sid}' must include system_prompt_append_markdown")
+            raise ValueError(f"Instruction set '{sid}' must include instructions_markdown")
         mdp = Path(md_path)
         if not mdp.is_absolute():
             mdp = (base_dir / mdp).resolve()
@@ -569,13 +473,12 @@ def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[d
             "markdown_path": str(mdp),
             "markdown_text": mdp.read_text(encoding="utf-8"),
             "samples": s.get("samples"),
-            "generation_mode": "inspect_react_agent",
+            "generation_mode": "copilot_agent",
             "agent": s.get("agent") if isinstance(s.get("agent"), dict) else {},
         })
     return out
 
 
-SKILL_SANDBOX_MOUNT_ROOT = "/workspace/.skills"
 # Exactly one turn per skill must reference this token. Earlier turns that produce
 # HTML the evaluator will score must embed the user's test case prompt.
 SKILL_TOKEN_TEST_CASE_PROMPT = "{{test_case_prompt}}"
@@ -590,15 +493,6 @@ def _hash_skill_files(skill_dir: Path) -> str:
         sha.update((skill_dir / rel).read_bytes())
         sha.update(b"\0")
     return sha.hexdigest()[:16]
-
-
-def _skill_system_prompt_preamble(skill_id: str, skill_name: str, sandbox_path: str) -> str:
-    """Preamble appended to the system prompt when a skill variant is active."""
-    return (
-        f"A skill named `{skill_name}` ({skill_id}) is available inside the sandbox at "
-        f"`{sandbox_path}/SKILL.md`. Read it before producing output and follow its "
-        f"guidance. The skill directory and any support files live under `{sandbox_path}/`."
-    )
 
 
 def _load_skills(skills_file: str, base_dir: Path, existing_ids: set[str] | None = None) -> list[dict]:
@@ -652,7 +546,7 @@ def _load_skills(skills_file: str, base_dir: Path, existing_ids: set[str] | None
         seen_ids.add(sid)
         if "generation_mode" in s:
             raise ValueError(
-                f"Skill '{sid}' cannot specify generation_mode; skills always use the inspect_react_agent path"
+                f"Skill '{sid}' cannot specify generation_mode; skills always use the copilot_agent path"
             )
         skill_dir_raw = s.get("skill_dir")
         if not skill_dir_raw:
@@ -696,7 +590,6 @@ def _load_skills(skills_file: str, base_dir: Path, existing_ids: set[str] | None
                 f"(found {test_case_token_count})."
             )
 
-        sandbox_path = f"{SKILL_SANDBOX_MOUNT_ROOT}/{sid}"
         name = (s.get("name") or sid).strip()
         files_hash = _hash_skill_files(sdp)
         out.append({
@@ -705,11 +598,9 @@ def _load_skills(skills_file: str, base_dir: Path, existing_ids: set[str] | None
             "description": (s.get("description") or "").strip() or None,
             "skill_dir_abs_path": str(sdp),
             "skill_files_hash": files_hash,
-            "sandbox_mount_path": sandbox_path,
-            "system_prompt_preamble": _skill_system_prompt_preamble(sid, name, sandbox_path),
             "turns": turns,
             "samples": s.get("samples"),
-            "generation_mode": "inspect_react_agent",
+            "generation_mode": "copilot_agent",
             "agent": s.get("agent") if isinstance(s.get("agent"), dict) else {},
         })
     return out
@@ -731,26 +622,66 @@ def run(
     skills_samples: int = typer.Option(None, min=1, help="Default samples per skill (if not specified in the skills file)."),
     test_cases_dir: str = typer.Option("test_cases", help="Directory containing test case folders."),
     test_cases: str = typer.Option(None, "--test-cases", help="Comma-separated base test case names to include (e.g. single-checkbox,modal-dialog). Defaults to all."),
-    processes: int = typer.Option(None, "--processes", "-p", help="Parallel processes for generation (defaults CPU count; use 1 to disable)."),
-    debug_truncated_cache: bool = typer.Option(
+    concurrency: int = typer.Option(None, "--concurrency", "-c", help="Maximum number of concurrent Copilot sessions for generation (defaults to 4)."),
+    processes: int = typer.Option(None, "--processes", "-p", hidden=True, help="Deprecated: use --concurrency instead."),
+    keep_sandbox: bool = typer.Option(
         False,
-        help="Debug: if truncated/corrupted cached HTML is detected, preserve it and print a list at the end of generation.",
+        "--keep-sandbox",
+        help="Preserve per-sample agent sandbox directories under <run_dir>/sandbox/. By default the sandbox tree is deleted after generation since the only artifact the harness needs (index.html) has already been copied to <run_dir>/raw[_variants|_skills]/.",
     ),
 ):
     """Generate HTML samples ONLY (no evaluation). A later 'evaluate' command will run tests & build report."""
+    if processes is not None:
+        typer.secho(
+            "Warning: --processes/-p is deprecated; use --concurrency/-c instead.",
+            fg=typer.colors.YELLOW, err=True,
+        )
+        if concurrency is None:
+            concurrency = processes
+    # Fail fast if Docker is not installed — the Copilot sandbox container
+    # is a hard dependency for all generation paths.
+    if not shutil.which("docker"):
+        typer.secho(
+            "Error: Docker is required but not found on PATH. Install Docker Desktop "
+            "(or Docker Engine + Compose v2) before running.",
+            fg=typer.colors.RED, err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # Pre-flight: bring up the sandbox container and ensure the Copilot CLI
+    # inside it is authenticated. This happens once, synchronously, in the
+    # user's foreground terminal so that any interactive device-code login
+    # prompt is visible. Workers that later call runtime.start() will see
+    # the container already up and skip straight to creating the SDK client.
+    from .copilot_runtime import preflight_default_runtime_sync
+    typer.echo("Preparing Copilot sandbox...")
+    try:
+        preflight_default_runtime_sync()
+    except RuntimeError as exc:
+        typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    typer.echo("Sandbox ready.")
+
     run_id = datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S")
     out_dir = Path(out) / run_id
     (out_dir / "raw").mkdir(parents=True, exist_ok=True)
     # Prepare screenshots directory (will be populated during evaluation phase)
     (out_dir / "screenshots").mkdir(parents=True, exist_ok=True)
-    inspect_logs_dir = out_dir / "inspect_logs"
-    inspect_logs_dir.mkdir(parents=True, exist_ok=True)
+    copilot_logs_dir = out_dir / "copilot_logs"
+    copilot_logs_dir.mkdir(parents=True, exist_ok=True)
+    sandbox_root = out_dir / "sandbox"
+    sandbox_root.mkdir(parents=True, exist_ok=True)
 
     models_cfg, models_file_path = load_models_config(models_file)
     normalized_models = normalize_models_config(models_cfg)
     defaults_cfg = normalized_models["defaults"]
     config_dir = models_file_path.parent
-    system_prompt_override = defaults_cfg.get("system_prompt")
+    # Accept both the new ``defaults.output_format_instructions`` key and the
+    # legacy ``defaults.system_prompt`` key as an alias.
+    output_format_override = (
+        defaults_cfg.get("output_format_instructions")
+        or defaults_cfg.get("system_prompt")
+    )
 
     # Temperature precedence:
     # 1) CLI --temperature
@@ -787,10 +718,10 @@ def run(
             typer.secho(f"Failed to read custom instructions file '{instructions_path}': {exc}", err=True)
             raise typer.Exit(code=1)
         custom_instructions_path = str(instructions_path)
-    generator.configure_prompts(system_prompt_override, custom_instructions_text)
-    # Capture prompting meta *now* (important when --processes=1, since workers mutate module state).
-    base_prompting_system_prompt = generator.get_base_system_prompt()
-    base_prompting_effective_system_prompt = generator.get_effective_system_prompt()
+    generator.configure_prompts(output_format_override, custom_instructions_text)
+    # Capture prompting meta *now* before any worker mutates module state.
+    base_prompting_output_format_instructions = generator.get_base_output_format_instructions()
+    base_prompting_effective_output_format_instructions = generator.get_effective_output_format_instructions()
     base_prompting_custom_instructions = generator.get_custom_instructions()
     model_names = normalized_models["model_names"]
     model_display_lookup = normalized_models["model_display_lookup"]
@@ -818,7 +749,7 @@ def run(
         "custom_instructions_path": (None if variants_active else custom_instructions_path),
         "custom_instructions_text": (None if variants_active else custom_instructions_text),
         "n_samples_requested": samples,
-        "generation_mode": "direct",
+        "generation_mode": "copilot_agent",
         "agent": {},
         "kind": "control",
     })
@@ -848,7 +779,7 @@ def run(
                 "custom_instructions_path": s.get("markdown_path"),
                 "custom_instructions_text": s.get("markdown_text"),
                 "n_samples_requested": n_int,
-                "generation_mode": "inspect_react_agent",
+                "generation_mode": "copilot_agent",
                 "agent": s.get("agent") or {},
                 "kind": "instruction_set",
             })
@@ -876,19 +807,18 @@ def run(
                 "id": sk["id"],
                 "name": sk.get("name") or sk["id"],
                 "description": sk.get("description"),
-                # Treat the skill preamble as the custom-instructions payload so it
-                # flows through the existing effective-system-prompt / cache pipeline.
+                # Skills no longer inject a system-prompt preamble: the SDK
+                # exposes the skill directory directly via skill_directories
+                # and the model auto-loads its SKILL.md.
                 "custom_instructions_path": None,
-                "custom_instructions_text": sk["system_prompt_preamble"],
+                "custom_instructions_text": None,
                 "n_samples_requested": n_int,
-                "generation_mode": "inspect_react_agent",
+                "generation_mode": "copilot_agent",
                 "agent": sk.get("agent") or {},
                 "kind": "skill",
                 "skill_id": sk["id"],
                 "skill_dir_abs_path": sk["skill_dir_abs_path"],
                 "skill_files_hash": sk["skill_files_hash"],
-                "sandbox_mount_path": sk["sandbox_mount_path"],
-                "system_prompt_preamble": sk["system_prompt_preamble"],
                 "turns": sk["turns"],
             })
     # Build generation tasks
@@ -909,6 +839,18 @@ def run(
                         # One HTML file per turn; conversation sidecar is per-sample.
                         html_file_stub = raw_path / f"{model}__s{sample_index}"
                         conversation_file = raw_path / f"{model}__s{sample_index}.agent.json"
+                        # Per-sample workdir under <run_dir>/sandbox/. The agent
+                        # writes its final HTML to <workdir>/index.html; the
+                        # harness reads that file back. Unique per task so
+                        # parallel sessions never collide on the shared
+                        # /workspace mount.
+                        sandbox_workdir = (
+                            sandbox_root
+                            / "skills"
+                            / variant_id
+                            / prompt_case.prompt_case_id
+                            / f"{model}__s{sample_index}"
+                        )
                         tasks_by_model[model].append({
                             "test_name": prompt_case.test_name,
                             "base_test_name": prompt_case.base_test_name,
@@ -920,23 +862,20 @@ def run(
                             "seed": seed,
                             "temperature": effective_temperature,
                             "disable_cache": disable_cache,
-                            "system_prompt_override": system_prompt_override,
+                            "output_format_override": output_format_override,
                             "custom_instructions_text": variant.get("custom_instructions_text"),
                             "prompt_variant_id": variant_id,
                             "prompt_variant_kind": "skill",
-                            "debug_truncated_cache": debug_truncated_cache,
                             "html_out_path_stub": str(html_file_stub),
                             "conversation_out_path": str(conversation_file),
                             "model_display_name": model_display_lookup.get(model),
-                            "runtime_log_dir": str(inspect_logs_dir),
+                            "runtime_log_dir": str(copilot_logs_dir),
+                            "sandbox_workdir": str(sandbox_workdir),
                             "provider_config": model_provider_lookup.get(model),
-                            "generation_mode": "inspect_react_agent",
                             "agent_config": variant.get("agent") or {},
                             "skill_config": {
                                 "id": variant["skill_id"],
-                                "host_dir": variant["skill_dir_abs_path"],
-                                "sandbox_mount_path": variant["sandbox_mount_path"],
-                                "system_prompt_preamble": variant["system_prompt_preamble"],
+                                "skill_dir_abs_path": variant["skill_dir_abs_path"],
                                 "skill_files_hash": variant["skill_files_hash"],
                                 "turns": variant["turns"],
                             },
@@ -946,13 +885,31 @@ def run(
                     if variant_id == "control":
                         raw_path = out_dir / "raw" / prompt_case.prompt_case_id
                         html_file = raw_path / (f"{model}__s{sample_index}.html" if n_samples > 1 else f"{model}.html")
-                        conversation_file = None
+                        # Control is now an agentic Copilot session like the
+                        # other variants, so persist its conversation
+                        # transcript next to the HTML for the detailed report.
+                        conversation_file = raw_path / (
+                            f"{model}__s{sample_index}.agent.json"
+                            if n_samples > 1
+                            else f"{model}.agent.json"
+                        )
+                        sandbox_workdir = (
+                            sandbox_root
+                            / "control"
+                            / prompt_case.prompt_case_id
+                            / f"{model}__s{sample_index}"
+                        )
                     else:
                         raw_path = out_dir / "raw_variants" / variant_id / prompt_case.prompt_case_id
                         html_file = raw_path / f"{model}__s{sample_index}.html"
                         conversation_file = raw_path / f"{model}__s{sample_index}.agent.json"
-
-                    generation_mode = "direct" if variant_id == "control" else "inspect_react_agent"
+                        sandbox_workdir = (
+                            sandbox_root
+                            / "variants"
+                            / variant_id
+                            / prompt_case.prompt_case_id
+                            / f"{model}__s{sample_index}"
+                        )
 
                     tasks_by_model[model].append({
                         "test_name": prompt_case.test_name,
@@ -965,22 +922,21 @@ def run(
                         "seed": seed,
                         "temperature": effective_temperature,
                         "disable_cache": disable_cache,
-                        "system_prompt_override": system_prompt_override,
+                        "output_format_override": output_format_override,
                         "custom_instructions_text": variant.get("custom_instructions_text"),
                         "prompt_variant_id": variant_id,
                         "prompt_variant_kind": variant_kind,
-                        "debug_truncated_cache": debug_truncated_cache,
                         "html_out_path": str(html_file),
                         "conversation_out_path": (str(conversation_file) if conversation_file is not None else None),
                         "model_display_name": model_display_lookup.get(model),
-                        "runtime_log_dir": str(inspect_logs_dir),
+                        "runtime_log_dir": str(copilot_logs_dir),
+                        "sandbox_workdir": str(sandbox_workdir),
                         "provider_config": model_provider_lookup.get(model),
-                        "generation_mode": generation_mode,
                         "agent_config": variant.get("agent") or {},
                     })
 
     # Flatten into a single task list using round-robin across models
-    gen_tasks = []  # (test_name, model, sample_index, prompt, seed)
+    gen_tasks = []
     made_progress = True
     while made_progress:
         made_progress = False
@@ -990,47 +946,13 @@ def run(
                 gen_tasks.append(queue.pop(0))
                 made_progress = True
 
-    # If any tasks use Docker sandboxes, check that the Docker network
-    # address pool has capacity.  Fail early rather than partway through
-    # a run when new sandboxes can no longer allocate subnets.
-    has_agent_tasks = any(
-        (t.get("generation_mode") or "direct") != "direct" for t in gen_tasks
-    )
-    if has_agent_tasks:
-        check_docker_network_pool()
-
     if gen_tasks:
-        pool_size = None
-        if processes is None:
-            pool_size = min(multiprocessing.cpu_count(), len(gen_tasks))
+        # All generations are now Copilot agent sessions. Concurrency caps the
+        # number of in-flight sessions on the shared CopilotClient.
+        if concurrency is None:
+            concurrency_limit = min(4, len(gen_tasks))
         else:
-            pool_size = max(1, processes)
-        # Cap parallelism for agent (Docker sandbox) tasks. Each sandbox
-        # allocates a subnet from Docker's network pool, and concurrent
-        # compose up + docker exec traffic on macOS Docker Desktop contends
-        # on the daemon socket; high concurrency has been observed to push
-        # agent runs past their working_limit even when the agent itself is
-        # idle. 4 is a conservative default that preserves throughput while
-        # keeping per-sample latency predictable.
-        _MAX_AGENT_PARALLEL = 4
-        if has_agent_tasks and processes is None and pool_size > _MAX_AGENT_PARALLEL:
-            pool_size = _MAX_AGENT_PARALLEL
-        truncated_cache_files: set[str] = set()
-        def _consume_generation_results(gen_results_iter):
-            total = len(gen_tasks)
-            done = 0
-            _render_progress("Generating", done, total)
-            for gen_result in gen_results_iter:
-                done += 1
-                _render_progress("Generating", done, total)
-
-                # Skill tasks return a dict wrapping a list of per-turn records.
-                if isinstance(gen_result, dict) and "skill_turn_records" in gen_result:
-                    turn_records = gen_result["skill_turn_records"]
-                    for tr in turn_records:
-                        _append_result_record(tr)
-                    continue
-                _append_result_record(gen_result)
+            concurrency_limit = max(1, concurrency)
 
         def _append_result_record(gen_result: dict):
             test_name = gen_result["test_name"]
@@ -1046,13 +968,6 @@ def run(
             eval_path = gen_result.get("eval_path")
             prompt_variant_id = gen_result.get("prompt_variant_id")
             prompt_variant_kind = gen_result.get("prompt_variant_kind")
-
-            if debug_truncated_cache and isinstance(meta, dict):
-                tcf = meta.get("truncated_cache_files")
-                if isinstance(tcf, list):
-                    for p in tcf:
-                        if isinstance(p, str) and p:
-                            truncated_cache_files.add(p)
 
             variant_id = prompt_variant_id or "control"
 
@@ -1080,9 +995,15 @@ def run(
                     cost_usd=meta.get("cost_usd"),
                     seed=meta.get("seed"),
                     temperature=meta.get("temperature"),
-                    system_prompt=meta.get("system_prompt", generator.get_base_system_prompt()),
+                    output_format_instructions=meta.get(
+                        "output_format_instructions",
+                        generator.get_base_output_format_instructions(),
+                    ),
                     custom_instructions=meta.get("custom_instructions", generator.get_custom_instructions()),
-                    effective_system_prompt=meta.get("effective_system_prompt", generator.get_effective_system_prompt()),
+                    effective_output_format_instructions=meta.get(
+                        "effective_output_format_instructions",
+                        generator.get_effective_output_format_instructions(),
+                    ),
                     generation_mode=meta.get("generation_mode"),
                     agent_sandbox=meta.get("agent_sandbox"),
                     agent_limit_error=meta.get("agent_limit_error"),
@@ -1097,68 +1018,61 @@ def run(
             )
             results.append(json.loads(rec.model_dump_json()))
 
-        batch_supported = (
-            hasattr(generator, "generate_html_batch_with_meta")
-            and generator.supports_batch_generation()
-        )
-        indexed_tasks = list(enumerate(gen_tasks))
-        batched_groups: list[list[tuple[int, dict[str, Any]]]] = []
-        single_indexed_tasks: list[tuple[int, dict[str, Any]]] = []
+        async def _run_generations() -> None:
+            from concurrent.futures import ThreadPoolExecutor
+            # Set an explicit thread pool sized to the concurrency limit + headroom.
+            # This prevents deadlocks: each worker blocks its thread waiting for the
+            # Copilot runtime loop, so we need at least concurrency_limit threads.
+            loop = asyncio.get_running_loop()
+            loop.set_default_executor(ThreadPoolExecutor(max_workers=concurrency_limit + 4))
 
-        if batch_supported:
-            grouped_tasks: dict[tuple[Any, ...], list[tuple[int, dict[str, Any]]]] = {}
-            for indexed_task in indexed_tasks:
-                task = indexed_task[1]
-                if (task.get("generation_mode") or "direct") == "direct" and _provider_batch_enabled(task.get("provider_config")):
-                    grouped_tasks.setdefault(_batch_group_key(task), []).append(indexed_task)
-                else:
-                    single_indexed_tasks.append(indexed_task)
+            sem = asyncio.Semaphore(concurrency_limit)
+            total = len(gen_tasks)
+            done = 0
+            limit_errors: list[str] = []
+            _render_progress("Generating", done, total)
+            lock = asyncio.Lock()
 
-            for group in grouped_tasks.values():
-                if len(group) > 1:
-                    batched_groups.append(sorted(group, key=lambda item: item[0]))
-                else:
-                    single_indexed_tasks.extend(group)
-            batched_groups.sort(key=lambda group: group[0][0])
-        else:
-            single_indexed_tasks = indexed_tasks
+            async def _runner(task: dict):
+                nonlocal done
+                # Run the synchronous worker in a thread so multiple sessions
+                # can be in flight against the shared Copilot client.
+                async with sem:
+                    gen_result = await asyncio.to_thread(_generate_worker, task)
+                async with lock:
+                    done += 1
+                    _render_progress("Generating", done, total)
+                    if isinstance(gen_result, dict) and "skill_turn_records" in gen_result:
+                        for tr in gen_result["skill_turn_records"]:
+                            _append_result_record(tr)
+                            tr_meta = tr.get("meta") or {}
+                            if tr_meta.get("agent_limit_error"):
+                                limit_errors.append(
+                                    f"  {tr.get('test_name','?')} / {tr.get('model','?')} s{tr.get('sample_index',0)}: "
+                                    f"{tr_meta['agent_limit_error']}"
+                                )
+                    else:
+                        _append_result_record(gen_result)
+                        r_meta = (gen_result.get("meta") or {})
+                        if r_meta.get("agent_limit_error"):
+                            limit_errors.append(
+                                f"  {gen_result.get('test_name','?')} / {gen_result.get('model','?')} "
+                                f"s{gen_result.get('sample_index',0)}: {r_meta['agent_limit_error']}"
+                            )
 
-        single_indexed_tasks.sort(key=lambda item: item[0])
-        single_tasks = [task for _, task in single_indexed_tasks]
+            await asyncio.gather(*[_runner(task) for task in gen_tasks])
+            return limit_errors
 
-        def _iter_generation_results():
-            for group in batched_groups:
-                for gen_result in _generate_batch_group(group):
-                    yield gen_result
-
-            if not single_tasks:
-                return
-
-            if pool_size == 1:
-                for gen_result in map(_generate_worker, single_tasks):
-                    yield gen_result
-                return
-
-            typer.echo(f"Generating with {pool_size} processes...")
-            with multiprocessing.Pool(processes=pool_size) as pool:
-                for gen_result in pool.imap(_generate_worker, single_tasks):
-                    yield gen_result
-
-        try:
-            _consume_generation_results(_iter_generation_results())
-        except generator.OutputTokenLimitHit as exc:
+        typer.echo(f"Generating with concurrency={concurrency_limit}...")
+        generation_limit_errors = asyncio.run(_run_generations())
+        if generation_limit_errors:
             typer.echo("")
-            typer.secho(str(exc), fg=typer.colors.RED, err=True)
-            raise typer.Exit(code=2)
-
-        if debug_truncated_cache:
-            typer.echo("")
-            if truncated_cache_files:
-                typer.secho("Truncated/corrupted cached HTML files detected:", fg=typer.colors.YELLOW)
-                for p in sorted(truncated_cache_files):
-                    typer.echo(p)
-            else:
-                typer.echo("No truncated/corrupted cached HTML files detected.")
+            typer.secho(
+                f"Warning: {len(generation_limit_errors)} generation(s) hit agent limits:",
+                fg=typer.colors.YELLOW, err=True,
+            )
+            for msg in generation_limit_errors:
+                typer.echo(msg, err=True)
 
     run_json = {
         "run_id": run_id,
@@ -1174,12 +1088,12 @@ def run(
                 "temperature": effective_temperature,
                 "base_seed": base_seed,
                 "disable_cache": disable_cache,
-                "processes_generation": (processes if processes is not None else min(multiprocessing.cpu_count(), len(gen_tasks))) if gen_tasks else None,
+                "concurrency_generation": (concurrency if concurrency is not None else (min(4, len(gen_tasks)) if gen_tasks else None)),
                 "prompt_dimensions_file": str(prompt_dimensions_path.resolve()),
             },
             "prompting": {
-                "system_prompt": base_prompting_system_prompt,
-                "effective_system_prompt": base_prompting_effective_system_prompt,
+                "output_format_instructions": base_prompting_output_format_instructions,
+                "effective_output_format_instructions": base_prompting_effective_output_format_instructions,
                 "custom_instructions": base_prompting_custom_instructions,
                 "custom_instructions_path": custom_instructions_path,
             },
@@ -1204,8 +1118,8 @@ def run(
             ).model_dump_json()) for pc in prompt_spec_set.prompt_cases_meta],
             "models_info": models_info,
             "runtime": {
-                "engine": "inspect_ai",
-                "log_dir": str(inspect_logs_dir.resolve()),
+                "engine": "copilot_sdk",
+                "log_dir": str(copilot_logs_dir.resolve()),
                 "models_config_path": str(models_file_path),
             },
             "status": "GENERATED_ONLY",
@@ -1219,6 +1133,16 @@ def run(
         latest_link.symlink_to(out_dir)
     except OSError:
         pass
+    # Clean up per-sample sandbox dirs unless explicitly preserved. The agent
+    # may have created node_modules/ or other auxiliary files; the only
+    # artifact the harness needs (index.html) has already been copied into
+    # <run_dir>/raw[_variants|_skills]/. Skipping this cleanup with
+    # --keep-sandbox is useful when debugging tool use.
+    if not keep_sandbox and sandbox_root.exists():
+        try:
+            shutil.rmtree(sandbox_root)
+        except OSError as exc:
+            typer.echo(f"Warning: failed to remove sandbox dir {sandbox_root}: {exc}", err=True)
     _print_generation_summary(results, gen_tasks)
     typer.echo(f"Generation complete. Run directory ready for evaluation: {out_dir}")
 

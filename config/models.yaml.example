@@ -1,29 +1,59 @@
+# Models configuration for the A11y LLM Eval harness.
+#
+# All generations are agentic Copilot sessions running inside the Docker
+# sandbox at config/copilot_sandbox/compose.yaml. There are two ways to
+# route a model:
+#
+#   1. First-party Copilot (no `providers` entry needed). The CLI uses
+#      the OAuth login bind-mounted from ~/.config/github-copilot.
+#      Available models are whatever Copilot exposes for your account
+#      (e.g. `claude-sonnet-4`, `gpt-5`, ...).
+#
+#   2. BYOK — bring-your-own-key. Add an entry under `providers.<name>`
+#      with `type` (and optionally `base_url`, `wire_api`, `bearer_token`,
+#      `azure: {...}`) plus either `api_key` or `api_key_env`. The
+#      provider name must match the slug before the first `/` in the
+#      model id (e.g. `anthropic/claude-3-7-sonnet` -> `anthropic`).
+#
+# Removed since the migration off Inspect AI:
+#   - `providers.<name>.batch.*`        — batch generation no longer exists.
+#   - `providers.<name>.auth.mode: default_azure_credential` — unsupported.
+#   - Inspect-style `azure_ai/...` model prefixes — use `azure/...` BYOK.
+
 defaults:
-  #system_prompt: |
-  #  You are generating a single standalone HTML document.
-  #temperature: 0.2
-  #custom_instructions_markdown: custom-instructions.md
+  # output_format_instructions: |
+  #   You are generating a single standalone HTML document.
+  # temperature: 0.2                  # ignored on first-party Copilot routes;
+  #                                    # honored by BYOK providers that support it.
+  # custom_instructions_markdown: custom-instructions.md
+
 providers:
-  #openai:
-  #  batch:
-  #    # Disable grouped same-model batch generation for this provider.
-  #    enabled: false
-  #azure:
-  #  auth:
-  #    # Use Azure DefaultAzureCredential for the Inspect-backed runtime.
-  #    mode: default_azure_credential
-  #    scope: https://cognitiveservices.azure.com/.default
-  #    api_base_env: AZURE_API_BASE
-  #azureai:
-  #  auth:
-  #    # Inspect provider prefix for Azure AI model endpoints.
-  #    mode: default_azure_credential
-  #    scope: https://cognitiveservices.azure.com/.default
-  #    api_base_env: AZUREAI_BASE_URL
-  #    audience_env: AZUREAI_AUDIENCE
-  #    api_version_env: AZURE_API_VERSION
+  # # Example BYOK: Anthropic via direct API.
+  # anthropic:
+  #   type: anthropic
+  #   api_key_env: ANTHROPIC_API_KEY
+
+  # # Example BYOK: OpenAI via direct API.
+  # openai:
+  #   type: openai
+  #   api_key_env: OPENAI_API_KEY
+
+  # # Example BYOK: Azure OpenAI (api_key auth only; AAD/DefaultAzureCredential
+  # # is not supported).
+  # azure:
+  #   type: azure
+  #   base_url: https://my-resource.openai.azure.com
+  #   api_key_env: AZURE_API_KEY
+  #   azure:
+  #     api_version: "2024-08-01-preview"
+
 models:
-  - name: azure_ai/gpt-5-mini
-    display_name: GPT-5 Mini
-  - name: claude-sonnet-4-20250514
+  # First-party Copilot routing (no provider config required):
+  - name: claude-sonnet-4
     display_name: Claude Sonnet 4
+  - name: gpt-5-mini
+    display_name: GPT-5 Mini
+
+  # BYOK example (uncomment and add a matching `providers.anthropic` block above):
+  # - name: anthropic/claude-3-7-sonnet-20250219
+  #   display_name: Claude 3.7 Sonnet (BYOK)

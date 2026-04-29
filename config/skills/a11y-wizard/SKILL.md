@@ -1,6 +1,6 @@
 ---
 name: a11y-wizard
-description: Produce and review UIs that conform to WCAG 2.2 AA. Use when generating or reviewing any user-facing UI (web, mobile, desktop).
+description: MUST BE USED for any UI work. Invoke this skill before generating, modifying, or reviewing any code that renders, styles, or wires up a user-facing interface — including markup, components, templates, styles, and the JavaScript/TypeScript that drives them. This skill encodes the accessibility (WCAG 2.2 AA) requirements every UI change must satisfy; skipping it produces inaccessible output. Applies across web, mobile, and desktop. If the task touches the UI layer in any way, use this skill first.
 ---
 
 # a11y-wizard

@@ -1,0 +1,306 @@
+"""Tests for the generator cache layer: hit/miss, invalidation, back-compat
+meta keys, and ``extract_html_from_transcript``.
+"""
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from a11y_llm_tests import generator
+from a11y_llm_tests.generator import (
+    _cache_artifacts,
+    _invalidate_cache_entry,
+    _load_cached_agent_generation,
+    _meta_path,
+    _agent_transcript_cache_path,
+    _agent_session_cache_path,
+    extract_html_from_transcript,
+)
+from a11y_llm_tests.utils import write_sha256_sidecar
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_HTML = "<html><head><title>T</title></head><body><p>hi</p></body></html>"
+_TRANSCRIPT = {"events": [{"type": "assistant.message", "data": {"content": _HTML}}]}
+
+
+def _seed_cache(cache_file: Path, *, html: str = _HTML, meta_extra: dict | None = None,
+                transcript: dict | None = None, session_log: str | None = None):
+    """Write a full, valid cache entry."""
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    html_bytes = html.encode("utf-8")
+    cache_file.write_bytes(html_bytes)
+    write_sha256_sidecar(cache_file, html_bytes)
+
+    meta = {"generation_mode": "copilot_agent", **(meta_extra or {})}
+    _meta_path(cache_file).write_text(json.dumps(meta), encoding="utf-8")
+
+    t = transcript if transcript is not None else _TRANSCRIPT
+    _agent_transcript_cache_path(cache_file).write_text(json.dumps(t), encoding="utf-8")
+
+    if session_log:
+        _agent_session_cache_path(cache_file).write_text(session_log, encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def _reset_prompts():
+    generator.configure_prompts(None, None)
+    yield
+    generator.configure_prompts(None, None)
+
+
+# ---------------------------------------------------------------------------
+# extract_html_from_transcript
+# ---------------------------------------------------------------------------
+
+class TestExtractHtmlFromTranscript:
+
+    def test_extracts_last_html_from_events(self):
+        transcript = {
+            "events": [
+                {"type": "assistant.message", "data": {"content": "thinking..."}},
+                {"type": "assistant.message", "data": {"content": "<html><body>first</body></html>"}},
+                {"type": "assistant.message", "data": {"content": "<html><body>second</body></html>"}},
+            ]
+        }
+        assert "second" in extract_html_from_transcript(transcript, "fallback")
+
+    def test_falls_back_to_turns(self):
+        transcript = {
+            "turns": [
+                {
+                    "events": [
+                        {"type": "assistant.message", "data": {"content": "hello from turn"}}
+                    ]
+                }
+            ]
+        }
+        result = extract_html_from_transcript(transcript, "fallback")
+        assert result == "hello from turn"
+
+    def test_returns_fallback_when_empty(self):
+        assert extract_html_from_transcript({}, "fb") == "fb"
+        assert extract_html_from_transcript({"events": []}, "fb") == "fb"
+        assert extract_html_from_transcript("not-a-dict", "fb") == "fb"
+
+
+# ---------------------------------------------------------------------------
+# Cache hit / miss
+# ---------------------------------------------------------------------------
+
+class TestCacheHitMiss:
+
+    def test_valid_cache_returns_html_and_meta(self, tmp_path):
+        cache_file = tmp_path / "model_abc123_i0_copilot_agent.html"
+        _seed_cache(cache_file)
+
+        html, meta, transcript, reason = _load_cached_agent_generation(
+            cache_file=cache_file,
+            meta_file=_meta_path(cache_file),
+            prompt_hash_value="abc123",
+            temperature=0.7,
+            seed=42,
+            model_display_name="Test",
+            base_output_format_instructions="fmt",
+            custom_instructions=None,
+            effective_output_format_instructions="eff",
+        )
+        assert html is not None
+        assert reason is None
+        assert meta["cached"] is True
+        assert meta["generation_mode"] == "copilot_agent"
+        assert transcript is not None
+
+    def test_missing_file_returns_none(self, tmp_path):
+        cache_file = tmp_path / "does_not_exist.html"
+        html, meta, transcript, reason = _load_cached_agent_generation(
+            cache_file=cache_file,
+            meta_file=_meta_path(cache_file),
+            prompt_hash_value="x",
+            temperature=None,
+            seed=None,
+            model_display_name=None,
+            base_output_format_instructions="",
+            custom_instructions=None,
+            effective_output_format_instructions="",
+        )
+        assert html is None
+        assert reason == "missing"
+
+    def test_checksum_mismatch_invalidates(self, tmp_path):
+        cache_file = tmp_path / "model_abc_i0_copilot_agent.html"
+        _seed_cache(cache_file)
+        # Corrupt the sha256 sidecar
+        sha_path = cache_file.with_suffix(cache_file.suffix + ".sha256")
+        sha_path.write_text("0000bad", encoding="utf-8")
+
+        html, _, _, reason = _load_cached_agent_generation(
+            cache_file=cache_file,
+            meta_file=_meta_path(cache_file),
+            prompt_hash_value="abc",
+            temperature=None,
+            seed=None,
+            model_display_name=None,
+            base_output_format_instructions="",
+            custom_instructions=None,
+            effective_output_format_instructions="",
+        )
+        assert html is None
+        assert reason == "checksum-mismatch"
+
+    def test_missing_transcript_invalidates(self, tmp_path):
+        cache_file = tmp_path / "model_abc_i0_copilot_agent.html"
+        _seed_cache(cache_file)
+        # Remove the transcript
+        _agent_transcript_cache_path(cache_file).unlink()
+
+        html, _, _, reason = _load_cached_agent_generation(
+            cache_file=cache_file,
+            meta_file=_meta_path(cache_file),
+            prompt_hash_value="abc",
+            temperature=None,
+            seed=None,
+            model_display_name=None,
+            base_output_format_instructions="",
+            custom_instructions=None,
+            effective_output_format_instructions="",
+        )
+        assert html is None
+        assert reason == "missing_or_invalid_agent_transcript"
+
+    def test_agent_limit_error_in_cache_invalidates(self, tmp_path):
+        cache_file = tmp_path / "model_abc_i0_copilot_agent.html"
+        _seed_cache(cache_file, meta_extra={"agent_limit_error": "token_budget_exceeded"})
+
+        html, _, _, reason = _load_cached_agent_generation(
+            cache_file=cache_file,
+            meta_file=_meta_path(cache_file),
+            prompt_hash_value="abc",
+            temperature=None,
+            seed=None,
+            model_display_name=None,
+            base_output_format_instructions="",
+            custom_instructions=None,
+            effective_output_format_instructions="",
+        )
+        assert html is None
+        assert reason == "agent_limit_error_in_cache"
+
+
+# ---------------------------------------------------------------------------
+# Back-compat meta keys
+# ---------------------------------------------------------------------------
+
+class TestBackCompatMetaKeys:
+
+    def test_legacy_system_prompt_aliases(self, tmp_path):
+        cache_file = tmp_path / "model_abc_i0_copilot_agent.html"
+        _seed_cache(cache_file, meta_extra={
+            "system_prompt": "old-format-instructions",
+            "effective_system_prompt": "old-effective-instructions",
+        })
+
+        # When base_output_format_instructions/effective_output_format_instructions
+        # are passed as None, _build_generation_meta sets the keys to None and the
+        # legacy aliases can fill them in.
+        html, meta, _, reason = _load_cached_agent_generation(
+            cache_file=cache_file,
+            meta_file=_meta_path(cache_file),
+            prompt_hash_value="abc",
+            temperature=None,
+            seed=None,
+            model_display_name=None,
+            base_output_format_instructions=None,
+            custom_instructions=None,
+            effective_output_format_instructions=None,
+        )
+        assert html is not None
+        assert reason is None
+        # Legacy keys mapped to new names
+        assert meta["output_format_instructions"] == "old-format-instructions"
+        assert meta["effective_output_format_instructions"] == "old-effective-instructions"
+
+    def test_new_keys_take_precedence_over_legacy(self, tmp_path):
+        cache_file = tmp_path / "model_abc_i0_copilot_agent.html"
+        _seed_cache(cache_file, meta_extra={
+            "output_format_instructions": "new-fmt",
+            "system_prompt": "old-fmt",
+            "effective_output_format_instructions": "new-eff",
+            "effective_system_prompt": "old-eff",
+        })
+
+        _, meta, _, _ = _load_cached_agent_generation(
+            cache_file=cache_file,
+            meta_file=_meta_path(cache_file),
+            prompt_hash_value="abc",
+            temperature=None,
+            seed=None,
+            model_display_name=None,
+            base_output_format_instructions="",
+            custom_instructions=None,
+            effective_output_format_instructions="",
+        )
+        # New keys win
+        assert meta["output_format_instructions"] == "new-fmt"
+        assert meta["effective_output_format_instructions"] == "new-eff"
+
+
+# ---------------------------------------------------------------------------
+# _invalidate_cache_entry
+# ---------------------------------------------------------------------------
+
+class TestInvalidateCacheEntry:
+
+    def test_removes_all_cache_files(self, tmp_path):
+        cache_file = tmp_path / "model_abc_i0_copilot_agent.html"
+        _seed_cache(cache_file, session_log='{"log": true}')
+
+        expected_files = [
+            cache_file,
+            cache_file.with_suffix(cache_file.suffix + ".sha256"),
+            _meta_path(cache_file),
+            _agent_transcript_cache_path(cache_file),
+            _agent_session_cache_path(cache_file),
+        ]
+        for f in expected_files:
+            assert f.exists(), f"{f.name} should exist before invalidation"
+
+        _invalidate_cache_entry(cache_file)
+
+        for f in expected_files:
+            assert not f.exists(), f"{f.name} should be removed after invalidation"
+
+    def test_invalidate_missing_files_is_noop(self, tmp_path):
+        cache_file = tmp_path / "nonexistent.html"
+        # Should not raise
+        _invalidate_cache_entry(cache_file)
+
+
+# ---------------------------------------------------------------------------
+# _cache_artifacts path computation
+# ---------------------------------------------------------------------------
+
+class TestCacheArtifacts:
+
+    def test_deterministic_paths(self):
+        generator.configure_prompts("fmt", None)
+        h1, f1, m1 = _cache_artifacts("gpt-4", "hello", 0, None)
+        h2, f2, m2 = _cache_artifacts("gpt-4", "hello", 0, None)
+        assert h1 == h2
+        assert f1 == f2
+
+    def test_seed_changes_path(self):
+        generator.configure_prompts("fmt", None)
+        _, f1, _ = _cache_artifacts("m", "p", 0, None)
+        _, f2, _ = _cache_artifacts("m", "p", 0, 42)
+        assert f1 != f2
+        assert "_s42_" in f2.name
+
+    def test_iteration_in_filename(self):
+        generator.configure_prompts("fmt", None)
+        _, f, _ = _cache_artifacts("m", "p", 3, None)
+        assert "_i3_" in f.name

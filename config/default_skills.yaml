@@ -11,7 +11,7 @@
 #   {{test_case_prompt}}   - the user prompt composed from prompt.yaml (exactly one
 #                            turn must reference this, typically turn 0).
 #   {{skill_id}}           - the skill id.
-#   {{skill_path}}         - /workspace/.skills/<id>
+#   {{skill_path}}         - /workspace/<skill_dir>  (container-side path)
 #   {{previous_submission}} - the HTML submitted on the previous turn (turns >= 1).
 
 skills:

@@ -60,13 +60,14 @@ class GenerationMeta(BaseModel):
     # Added for sampling diversity / metadata
     seed: Optional[int] = None
     temperature: Optional[float] = None
-    system_prompt: Optional[str] = None
+    output_format_instructions: Optional[str] = None
     custom_instructions: Optional[str] = None
-    effective_system_prompt: Optional[str] = None
+    effective_output_format_instructions: Optional[str] = None
     generation_mode: Optional[str] = None
     agent_sandbox: Optional[str] = None
     agent_limit_error: Optional[str] = None
     agent_limits: Optional[Dict[str, Any]] = None
+    output_source: Optional[str] = None  # "disk" or "message"
 
 
 class PromptVariant(BaseModel):

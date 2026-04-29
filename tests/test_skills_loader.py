@@ -47,10 +47,10 @@ def test_load_skills_success(tmp_path: Path):
     assert len(skills) == 1
     s = skills[0]
     assert s["id"] == "demo"
-    assert s["sandbox_mount_path"] == "/workspace/.skills/demo"
+    assert s["skill_dir_abs_path"].endswith("/skills/demo")
     assert len(s["turns"]) == 2
     assert s["turns"][0]["id"] == "generate"
-    assert s["generation_mode"] == "inspect_react_agent"
+    assert s["generation_mode"] == "copilot_agent"
     assert s["skill_files_hash"]  # non-empty
 
 

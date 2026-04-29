@@ -16,13 +16,37 @@ Create a public test suite which can be used to benchmark how well various LLMs 
 - Tests only pass if zero axe-core failures are found AND all *requirement* assertions pass. Best Practice (BP) assertion failures do not fail the test but are tracked separately.
 
 ## Features
-- Python orchestrator with Inspect AI-backed generation
+- Python orchestrator built on the [GitHub Copilot SDK](https://pypi.org/project/github-copilot-sdk/)
+- Every generation is an agentic Copilot session running inside a Docker sandbox we own (`config/copilot_sandbox/`)
 - Node.js Playwright + axe-core evaluation
 - Per-test prompts & injected JS assertions
 - HTML report summarizing performance
 - Token + cost tracking (tokens in/out/total, per-generation cost, aggregated per model)
 - Multi-sample generation with pass@k metrics (probability at least one passing generation in k draws)
-- Additive Inspect runtime JSONL logs under each run directory
+- Per-run Copilot session JSONL logs under `<run_dir>/copilot_logs/`
+
+## Sandbox & authentication
+
+The harness drives the official `@github/copilot` CLI inside a long-lived
+Docker container (built from `config/copilot_sandbox/Dockerfile`). The
+first `run` builds the image and brings the container up; subsequent runs
+reuse it.
+
+- **Docker is a hard dependency.** Install Docker Desktop (or Docker
+  Engine + Compose v2) before running.
+- **Authentication uses your existing dev login.** The harness
+  bind-mounts `~/.copilot` into the container read-write
+  so the CLI's OAuth token (and refreshes) round-trip back to the host.
+  Run the host CLI once (`copilot`) and complete the device-code flow
+  before your first harness run.
+- **BYOK keys** flow through environment variables (`ANTHROPIC_API_KEY`,
+  `OPENAI_API_KEY`, `AZURE_API_KEY`, `AZURE_API_BASE`,
+  `AZURE_API_VERSION`) and are forwarded into the container per session.
+- Override the bind-mount locations with `COPILOT_CONFIG_DIR` (host path
+  to the Copilot config dir) and `COPILOT_WORKSPACE` (host path mounted
+  as `/workspace`, which must contain any skill directories you reference).
+- Stop the container with
+  `docker compose -f config/copilot_sandbox/compose.yaml down`.
 
 ## Sampling & pass@k Metrics
 You can request multiple independent generations ("samples") per (test, model). This enables computation of pass@k metrics similar to code evaluation benchmarks.
@@ -74,24 +98,21 @@ instruction_sets:
   - id: accessible_minimal
     name: Accessible Minimal
     description: Minimal reminder that all output must be accessible.
-    system_prompt_append_markdown: config/instructions/accessible-minimal.md
+    instructions_markdown: config/instructions/accessible-minimal.md
     # samples: 10
 
   - id: aria_guardrails
     name: ARIA Guardrails
     description: Strong ARIA guidance; avoid invalid ARIA.
-    system_prompt_append_markdown: config/instructions/aria_guardrails.md
+    instructions_markdown: config/instructions/aria_guardrails.md
     samples: 20
 
   - id: agentic_accessibility
     name: Agentic Accessibility
-    description: Use a sandboxed Inspect ReAct agent to iteratively refine the page.
-    system_prompt_append_markdown: config/instructions/accessible-minimal.md
+    description: Extra guidance for the Copilot agent.
+    instructions_markdown: config/instructions/accessible-minimal.md
     samples: 5
     agent:
-      sandbox:
-        - docker
-        - config/inspect_agent_sandbox/compose.yaml
       limits:
         message_limit: 50
         token_limit: 120000
@@ -99,7 +120,12 @@ instruction_sets:
         working_limit: 420
 ```
 
-Instruction sets always use Inspect AI's sandboxed ReAct agent path instead of the direct completion path. The instruction-set YAML format does not support `generation_mode`. If you specify `agent.sandbox`, use the Inspect two-item form `[docker, <compose file>]`. If `agent.sandbox` is omitted, the harness defaults to `config/inspect_agent_sandbox/compose.yaml`. `agent.limits.cost_limit` is optional and should only be set when model pricing is configured for every model in the run.
+All generations now use the Copilot SDK's agent path inside the Docker
+sandbox; the instruction-set YAML format does not support
+`generation_mode`, and `agent.sandbox` is ignored (the sandbox is fixed
+to `config/copilot_sandbox/compose.yaml`). `agent.limits.cost_limit` is
+optional and should only be set when model pricing is configured for
+every model in the run.
 
 Step 1: Generate control + instruction set variants
 
@@ -132,10 +158,10 @@ Report:
 
 ### Skills benchmarking
 
-A **skill** is a self-contained package (a directory containing at minimum a `SKILL.md` plus any support files) that is mounted into the sandboxed agent at runtime. Unlike instruction sets, a skill declares a sequence of user **turns**, and the agent's submission at the end of each turn is evaluated **independently** so the report can compare `control | turn 1 | turn 2 | …` per (test, model).
+A **skill** is a self-contained package (a directory containing at minimum a `SKILL.md` plus any support files) exposed to the Copilot agent via the SDK's `skill_directories` parameter. Unlike instruction sets, a skill declares a sequence of user **turns**, and the agent's submission at the end of each turn is evaluated **independently** so the report can compare `control | turn 1 | turn 2 | …` per (test, model).
 
-- Skills always use the sandboxed Inspect ReAct agent path. `generation_mode` is not supported.
-- The skill directory is mounted at `/workspace/.skills/<skill_id>/` inside the sandbox.
+- Skills always use the Copilot agent path. `generation_mode` is not supported.
+- The skill directory must live inside your workspace; the harness translates the host path to the container's `/workspace/<rel>` automatically.
 - Exactly one turn prompt must contain `{{test_case_prompt}}` (typically turn 1). Other supported tokens: `{{skill_id}}`, `{{skill_path}}`, `{{previous_submission}}`.
 - Skills and instruction sets share an id namespace and can be enabled together in the same run.
 - Per-turn caching: changing turn 2's prompt invalidates turn 2's cache but not turn 1's.
@@ -153,8 +179,7 @@ skills:
     description: Generate, then self-review using SKILL.md guidance.
     skill_dir: skills/a11y-wizard
     # samples: 10                     # optional; defaults to --samples
-    agent:                            # optional; same shape as instruction sets
-      sandbox: [docker, config/inspect_agent_sandbox/compose.yaml]
+    agent:                            # optional limits passed to the Copilot session
       limits:
         message_limit: 50
         token_limit: 120000
@@ -240,10 +265,13 @@ export OPENAI_API_KEY=... # etc. or put in .env and use dotenv
 # Copy model config and set API keys
 cp config/models.yaml.example config/models.yaml
 
-# Optional: for Azure provider auth via DefaultAzureCredential
-# pip install azure-identity
+# One-time: log in to GitHub Copilot on the host so the sandbox
+# container can bind-mount your dev credentials.
+#   npm install -g @github/copilot   # if you don't already have it
+#   copilot                          # complete the device-code flow, then exit
 
-# Run all tests against configured models
+# Run all tests against configured models (first run builds the
+# Docker sandbox image; subsequent runs reuse it).
 python -m a11y_llm_tests.cli run --models-file config/models.yaml --out runs
 ```
 

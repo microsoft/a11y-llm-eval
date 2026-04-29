@@ -45,12 +45,22 @@ def normalize_models_config(models_cfg: dict[str, Any]) -> dict[str, Any]:
         display_name = model_entry.get("display_name") or name.split("/")[-1]
         provider_name = get_model_provider(name)
         provider_config = providers_cfg.get(provider_name) if isinstance(providers_cfg, dict) else None
+        if isinstance(provider_config, dict):
+            auth_cfg = provider_config.get("auth")
+            if isinstance(auth_cfg, dict):
+                mode = str(auth_cfg.get("mode") or "").strip().lower()
+                if mode == "default_azure_credential":
+                    raise ValueError(
+                        f"Provider '{provider_name}' uses auth.mode=default_azure_credential, which is "
+                        "no longer supported after the migration to the GitHub Copilot SDK. Configure a "
+                        "BYOK provider with an explicit api_key (or api_key_env), or use Copilot's "
+                        "first-party routing."
+                    )
         normalized = {
             "name": name,
             "display_name": display_name,
             "provider_name": provider_name,
             "provider_config": provider_config,
-            "inspect_model": name,
         }
         normalized_models.append(normalized)
         model_display_lookup[name] = display_name

@@ -11,6 +11,7 @@ runs/*
 *.env
 .DS_Store
 config/models.yaml
+config/copilot_sandbox/.image-hash
 
 
 ## Ignore Visual Studio temporary files, build results, and

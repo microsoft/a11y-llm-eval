@@ -2,6 +2,49 @@
 
 This document describes the **current, user-visible behavior** of the A11y LLM Evaluation Harness.
 
+> **Migration: GitHub Copilot SDK (breaking).** The harness has migrated off
+> [Inspect AI](https://inspect.ai-safety-institute.org.uk/) and onto the
+> [`github-copilot-sdk`](https://pypi.org/project/github-copilot-sdk/). All
+> generations are now Copilot agent sessions; there is no direct
+> chat-completion path or batch API. Concrete changes:
+>
+> - **Engine.** `meta.runtime.engine` is now `"copilot_sdk"` (was
+>   `"inspect_ai"`). Logs land under `<run_dir>/copilot_logs/` (was
+>   `inspect_logs/`).
+> - **Generation mode.** Records carry `generation.generation_mode == "copilot_agent"`
+>   (was `"direct"` for control or `"inspect_react_agent"` for variants).
+> - **CLI.** `run` exposes `--concurrency / -c` (number of in-flight
+>   sessions) instead of `--processes / -p`. `evaluate --processes` is
+>   unchanged.
+> - **Removed flags / config.**
+>   - `providers.<provider>.batch.*` — batch generation no longer exists.
+>   - `providers.<provider>.auth.mode = default_azure_credential` —
+>     unsupported; use BYOK with an explicit `api_key` / `api_key_env`.
+>   - Per-request `temperature` / `seed` are silently dropped for
+>     first-party Copilot routes; BYOK provider configs may still honor
+>     them.
+> - **Schema.** `GenerationMeta.agent_session_log_path` replaces the
+>   internal `agent_eval_path` field. `ResultRecord.generation_eval_path`
+>   keeps its name but now points at a `*.session.jsonl` log.
+> - **Cache.** Filenames now use `_copilot_agent.html` (was `_agent.html`);
+>   pre-migration cache entries will not hit and should be removed.
+> - **Skills.** Skill directories are exposed via the SDK's
+>   `skill_directories=[…]` parameter; the harness no longer mounts them
+>   into a Docker sandbox or injects a `system_prompt_preamble`.
+> - **Sandbox.** The Inspect Docker sandbox is gone. The Copilot CLI now
+>   runs **inside a sandbox container we own** (`config/copilot_sandbox/`).
+>   The harness brings the container up automatically on first
+>   `run` and leaves it warm afterwards (stop with
+>   `docker compose -f config/copilot_sandbox/compose.yaml down`). Docker
+>   is therefore a hard dependency. First-party Copilot authentication is
+>   provided by bind-mounting the developer's
+>   `~/.copilot` directory into the container; you must
+>   complete the `copilot` login flow on the host once before running.
+>   Override locations with `COPILOT_CONFIG_DIR` and `COPILOT_WORKSPACE`
+>   environment variables. `meta.runtime.engine` remains `"copilot_sdk"`;
+>   per-record sandbox labels now read
+>   `docker:config/copilot_sandbox/compose.yaml`.
+
 It is intended to prevent accidental behavior changes. If you change behavior intentionally, you must:
 
 1. Update this document.
@@ -23,7 +66,34 @@ This document covers:
 
 It does **not** attempt to specify the internal HTML report layout pixel-perfect; instead it specifies the report output location and key data it summarizes.
 
-Inspect runtime logs may be written as additive metadata and files under the run directory. Current implementations may write structured JSONL generation logs under `inspect_logs/`. These logs are not part of the compatibility-critical artifact contract unless explicitly documented otherwise.
+Copilot session logs are written under `<run_dir>/copilot_logs/` as JSONL files (one event per line, one file per session). These logs are not part of the compatibility-critical artifact contract unless explicitly documented otherwise.
+
+### Per-sample agent sandbox working directory
+
+Each generation runs the Copilot agent with an isolated working directory under `<run_dir>/sandbox/`:
+
+- Control: `<run_dir>/sandbox/control/<prompt_case_id>/<model>__s<sample_index>/`
+- Instruction-set variants: `<run_dir>/sandbox/variants/<variant_id>/<prompt_case_id>/<model>__s<sample_index>/`
+- Skill variants: `<run_dir>/sandbox/skills/<skill_id>/<prompt_case_id>/<model>__s<sample_index>/`
+
+The harness instructs the agent (via `DEFAULT_OUTPUT_FORMAT_INSTRUCTIONS`, appended to the user prompt) to write its final HTML to `index.html` in that directory, and reads it back after `session.idle`. The directory is also passed to the SDK's `working_directory`, so any tool the agent invokes (e.g. `write`, `bash`, test runners) operates inside the per-sample directory and cannot collide with other concurrent samples sharing the workspace mount.
+
+If the agent does not produce an `index.html` (e.g. because it answered inline), the harness falls back to extracting the final assistant message. The `transcript` carries `output_source: "disk" | "message"` and the absolute working directory path so reports can show provenance.
+
+These sandbox directories are intentionally part of the run output: they contain the artifacts a real dev would have on disk (auxiliary files, scratch installs, etc.). By default `<run_dir>/sandbox/` is **deleted at the end of generation** because the only artifact the harness needs (`index.html`) has already been copied into `<run_dir>/raw[_variants|_skills]/...`. Pass `--keep-sandbox` to `run` to preserve the tree for debugging tool use. The sandbox tree is not part of the compatibility-critical artifact contract.
+
+### Security model
+
+The harness runs the Copilot CLI inside a Docker container (`config/copilot_sandbox/`). The agent can invoke tools (file writes, shell commands) within the container. A **scoped permission handler** restricts file-write tools to the per-sample sandbox working directory; writes targeting paths outside that directory are denied. Non-write tools (shell, read, browser, etc.) are approved.
+
+**Trust boundary:** The workspace is bind-mounted read-write into the container at `/workspace`. This means:
+
+- The agent can *read* any file in the workspace but can only *write* within its per-sample sandbox directory (enforced by the permission handler at the SDK layer).
+- The agent cannot access the host filesystem outside the workspace mount.
+
+**Authentication:** Copilot CLI authentication uses a named Docker volume (`copilot-auth`) so credentials stay inside the container and are not exposed to the host Python process. On first run (or after deleting the container), the harness runs a pre-flight check: it brings up the sandbox, verifies the CLI can reach the Copilot API, and — if not — runs `copilot login` interactively in the user's terminal. The resulting token persists in the Docker volume across container rebuilds. `GH_TOKEN` / `GITHUB_TOKEN` environment variables are forwarded per-`docker exec` as a CI/headless fallback. BYOK provider keys (e.g. `ANTHROPIC_API_KEY`) are forwarded the same way.
+
+**Concurrent runs:** Each workspace uses a unique container name (derived from the workspace path hash), so two harness instances on the same host do not collide.
 
 ---
 
@@ -102,34 +172,28 @@ During evaluation, `test.js` is loaded and executed by the Node runner.
 
 ### Behavior
 
-Generation uses the Inspect-backed harness runtime with:
+Generation uses the GitHub Copilot SDK agent runtime:
 
-- A system message that is the **effective system prompt**.
-- A user message that is the composed prompt case text built from `prompt.yaml` plus the configured global prompt dimensions.
+- The composed prompt case text built from `prompt.yaml` plus the configured global prompt dimensions, **suffixed** with the **base output-format instructions** (the "save your answer to `index.html`" task instructions). The harness does not send a custom `system_message` to the agent SDK; the SDK's default agent system prompt is left intact.
+- **Custom instructions** (from `defaults.custom_instructions_markdown` or an instruction-set variant) are delivered the way real Copilot users supply them: the harness writes the markdown to `<sandbox_workdir>/.github/copilot-instructions.md` before the SDK session starts, so the Copilot agent auto-discovers them from its `working_directory`. They are **not** appended to the user prompt. The text is still mixed into the local cache key so changes invalidate cached generations correctly.
 
-For providers that do not opt out, generation may submit multiple uncached prompts together for the same model when their effective request settings match.
+All generations are Copilot agent sessions. Concurrency is controlled by `--concurrency` (default 4).
 
-Mixed direct-plus-agent runs may batch eligible non-agent requests while agent requests execute per-request.
+The effective output-format instructions are:
 
-The effective system prompt is:
-
-- `DEFAULT_SYSTEM_PROMPT`, unless overridden.
-- Optionally appended with custom instructions text.
+- `DEFAULT_OUTPUT_FORMAT_INSTRUCTIONS`, unless overridden.
+- Optionally combined with custom instructions text for **provenance only** (recorded in `results.json` under `effective_output_format_instructions`). At generation time only the base output-format instructions are appended to the user prompt; custom instructions are delivered as `.github/copilot-instructions.md` (see above).
 
 `config/models.yaml` supports defaults:
 
-- `defaults.system_prompt` (string)
+- `defaults.output_format_instructions` (string) — the legacy alias `defaults.system_prompt` is still accepted.
 - `defaults.custom_instructions_markdown` (path to a markdown file)
 - `defaults.temperature` (float)
 
 `config/models.yaml` may also define provider-level configuration under `providers.<provider>`.
 
 - `providers.<provider>.auth.mode` may be omitted or set to `env` to preserve the runtime's existing environment-based behavior.
-- `providers.<provider>.batch.enabled` may be omitted or set to `true` to allow grouped batch submission for eligible generation groups; set it to `false` to force per-request generation for that provider.
-- `providers.azure.auth.mode`, `providers.azure_ai.auth.mode`, and `providers.azureai.auth.mode` may be set to `default_azure_credential`.
-- For `azure`, the harness reads `api_base` from `api_base_env` and optionally reads `api_version` from `api_version_env`, defaulting to `AZURE_API_BASE` / `AZURE_API_VERSION`, and passes an Azure bearer token provider into the runtime.
-- For `azure_ai` and `azureai`, the harness reads the base URL from `api_base_env`, defaulting to `AZUREAI_BASE_URL`, and sets the Inspect Azure AI managed-identity audience via `audience_env`, defaulting to `AZUREAI_AUDIENCE`.
-- When `default_azure_credential` is configured, `azure-identity` must be installed; otherwise generation fails with a clear error.
+- `auth.mode = default_azure_credential` is no longer supported after the migration to the Copilot SDK. Configure a BYOK provider with an explicit `api_key` (or `api_key_env`), or use Copilot's first-party routing.
 
 If `run --temperature` is not provided, the effective temperature defaults to `defaults.temperature` if present.
 
@@ -137,19 +201,18 @@ If neither `run --temperature` nor `defaults.temperature` is provided, the harne
 
 Note: some Codex-style deployments (e.g., certain `*-codex` models) do not accept sampling parameters like `temperature`. For these models, the harness omits `temperature` from the generation request to avoid provider errors.
 
-For Anthropic / Claude models, the harness enables Inspect's Anthropic prompt caching (`cache_prompt=True`) on every generation request — both the direct chat-completion path and the agent path. The Anthropic provider applies an `ephemeral` `cache_control` marker to the system message, the tools block (when present), and the last user message(s), so repeated identical prefixes (system prompt, custom instructions, skills/instructions content) are billed and processed at the cached rate. This is independent of the harness's local `.cache/generations/` HTML cache.
+Prompt caching for Anthropic / Claude models is handled by the Copilot SDK and the provider. The harness's local `.cache/generations/` cache is independent of any provider-side prompt caching.
 
 ### Acceptance criteria
 
-- Generated output is a **single standalone HTML document**.
+- Generated output is a **single standalone HTML document**, written by the agent to `index.html` inside its per-sample sandbox working directory and read back by the harness. If the agent does not write that file, the harness falls back to extracting the final assistant message.
 - The generator normalizes model output by:
   - Stripping Markdown fences if present.
   - Extracting the first `<html> ... </html>` block if present.
-- If the provider indicates the output was truncated due to an output token limit (e.g., `finish_reason == "length"`), generation exits early with a non-zero exit code to avoid incurring additional generation costs.
+- If the agent hits a limit (timeout, token, message) during generation, the harness logs the error prominently and continues with remaining tasks. A summary of all limit errors is printed at the end of generation.
 - Prompt hashing:
-  - `compute_prompt_hash(user_prompt)` depends on the configured system prompt, custom instructions, and the user prompt.
-  - Changing system prompt or custom instructions changes the hash.
-- For Anthropic models, the runtime sets `cache_prompt=True` on the Inspect `GenerateConfig` for both direct and agent generations so the provider applies `cache_control: ephemeral` to qualifying prefix segments.
+  - `compute_prompt_hash(user_prompt)` depends on the configured output-format instructions, custom instructions, and the user prompt.
+  - Changing output-format instructions or custom instructions changes the hash.
 
 ---
 
@@ -159,7 +222,7 @@ For Anthropic / Claude models, the harness enables Inspect's Anthropic prompt ca
 
 Generated HTML is cached under `.cache/generations/`.
 
-Agent-backed generations use a separate cache identity from direct generations. When an agent generation is cached, the harness also caches the agent conversation payload needed to recreate the per-run `.agent.json` sidecar. Cached agent hits do not create a fresh Inspect eval log for the new run.
+Agent-backed generations use a separate cache identity from direct generations. When an agent generation is cached, the harness also caches the agent conversation payload needed to recreate the per-run `.agent.json` sidecar. Cached agent hits do not create a fresh Copilot session log for the new run.
 
 Cache identity includes:
 
@@ -167,26 +230,19 @@ Cache identity includes:
 - Prompt hash
 - Seed (if provided)
 - Sample iteration index
-- Generation mode (agent vs. direct)
+- Generation mode (agent)
 
 On cache hits, the generator returns `cached: True` and can optionally load token/cost metadata from a `.meta.json` file.
-
-When batch generation is enabled for a provider, cache identity and cache validation remain per request. Cached requests are not submitted to grouped batch generation; only cache misses are sent.
 
 ### Acceptance criteria
 
 - Cache files are created at:
-  - `.cache/generations/<model>_<promptHash>_s<seed>_i<iteration>.html` (when seed is provided)
-  - `.cache/generations/<model>_<promptHash>_i<iteration>.html` (when seed is not provided)
-  - `.cache/generations/<model>_<promptHash>_s<seed>_i<iteration>_agent.html` (agent mode with seed)
-  - `.cache/generations/<model>_<promptHash>_i<iteration>_agent.html` (agent mode without seed)
+  - `.cache/generations/<model>_<promptHash>_s<seed>_i<iteration>_copilot_agent.html` (when seed is provided)
+  - `.cache/generations/<model>_<promptHash>_i<iteration>_copilot_agent.html` (when seed is not provided)
 - The cache directory may also contain sidecar integrity files (e.g., `.sha256`) alongside cached HTML.
 - Agent-mode cache entries may additionally include a cached transcript sidecar used to recreate the run-local `.agent.json` artifact on cache hits.
-- Direct and agent mode cache entries are independent; running one mode does not invalidate the other.
 - If a cached HTML file is incomplete/corrupted, it is treated as a cache miss and a fresh generation is performed.
-- Debugging: `run --debug-truncated-cache` prints a list of truncated/corrupted cached HTML files at the end of generation and preserves them for inspection.
 - The `--disable-cache` flag forces fresh generation even if a cache entry exists.
-- If grouped batch generation is attempted for a group and the batch call or an individual item fails, the harness falls back to the existing per-request generation path for the affected requests.
 
 ---
 
@@ -232,11 +288,10 @@ This is enabled via `run --instruction-sets-file <path>`.
   - Control is generated using the configured base system prompt **with no custom instructions**.
 - Each instruction set is benchmarked **separately** (no combining instruction sets).
 - Instruction sets may request a different number of samples than control.
-- Instruction sets always use the sandboxed Inspect ReAct agent path.
+- Instruction sets always use the Copilot agent path.
 - Instruction-set YAML does not support `generation_mode`; configs that specify it are invalid.
-- Instruction sets may declare `agent.sandbox` as an Inspect sandbox spec (for Docker compose, a two-item value equivalent to `("docker", "compose.yaml")`) plus additive `agent.limits` overrides.
-- `agent.limits` accepts a `tool_timeout` key (seconds) bounding each individual tool call (bash, text_editor, python). Defaults to 60 and is clamped to `[10, working_limit]`.
-- Concurrent agent (Docker sandbox) generations default to at most 4 in parallel when `--processes` is not specified. Pass `--processes` explicitly to override.
+- Instruction sets may declare `agent.limits` overrides (e.g., `timeout_s`, `message_limit`).
+- Concurrent agent generations default to at most 4 in parallel when `--concurrency` is not specified. Pass `--concurrency` explicitly to override.
 
 Artifacts for variants are written under separate directories:
 
@@ -248,8 +303,8 @@ Schema additions:
 
 - Each `results[]` record includes `prompt_variant_id` ("control" or the instruction set id).
 - Each `results[]` record includes `base_test_name`, `prompt_case_id`, and `prompt_dimensions` for the composed prompt case.
-- Each `results[]` record may include `generation_conversation_path` for instruction-set samples.
-- Each `results[]` record may include `generation_eval_path` for instruction-set samples when an Inspect eval log file is produced or restored from cache.
+- Each `results[]` record may include `generation_conversation_path` for any agentic sample (control, instruction-set, or skill). The sidecar is written to `<run_dir>/raw/<prompt_case_id>/<model>[__s<idx>].agent.json` for control samples and `<run_dir>/raw_variants/<variant_id>/<prompt_case_id>/<model>__s<idx>.agent.json` for instruction-set samples.
+- Each `results[]` record may include `generation_eval_path` for any agentic sample when a Copilot session log file is produced or restored from cache.
 - Each `aggregates[]` record includes `prompt_variant_id`.
 - Each `aggregates[]` record includes `base_test_name`, `prompt_case_id`, and `prompt_dimensions` for the composed prompt case.
 - `generation` metadata may additionally include `generation_mode`, `agent_sandbox`, `agent_limit_error`, and `agent_limits`.
@@ -262,7 +317,7 @@ Schema additions:
   - Control samples are still written to `<run_dir>/raw/` using existing naming rules.
   - Variant samples are written to `<run_dir>/raw_variants/<variant_id>/...` using `__s<idx>` naming.
   - Instruction-set variants additionally write a conversation JSON sidecar beside each generated HTML file.
-  - Instruction-set variants use the default generation cache across runs; on cache hits they still write the conversation JSON sidecar. When a cached `.eval` log exists, it is restored into the run's `inspect_logs/` directory and `generation_eval_path` is populated so the report can link to it. If no cached eval log is available, `generation_eval_path` is left unset.
+  - Instruction-set variants use the default generation cache across runs; on cache hits they still write the conversation JSON sidecar. When a cached session log exists, it is restored into the run's `copilot_logs/` directory and `generation_eval_path` is populated so the report can link to it. If no cached session log is available, `generation_eval_path` is left unset.
   - `results.json` includes `meta.prompt_variants` with at least:
     - a `control` entry
     - one entry per configured instruction set
@@ -286,8 +341,8 @@ This is enabled via `run --skills-file <path>` and is independent of `--instruct
 - Each turn declares `id`, `name` (optional), and a `prompt` template.
 - Exactly **one** turn prompt in a skill must contain the token `{{test_case_prompt}}`. Other supported tokens: `{{skill_id}}`, `{{skill_path}}`, `{{previous_submission}}`.
 - Turn ids must be unique within the skill; skill ids must be unique across skills and must not collide with instruction-set ids or the reserved id `control`.
-- Skills always use the sandboxed Inspect ReAct agent path; `generation_mode` is not supported.
-- The skill directory is mounted at `/workspace/.skills/<skill_id>/` in the sandbox (every file under the host skill dir is mapped in).
+- Skills always use the Copilot agent path; `generation_mode` is not supported.
+- The skill directory is exposed to the Copilot agent via the SDK's `skill_directories` parameter. The harness translates host-side paths to container paths automatically.
 - Each turn is a separate user message; earlier turns' assistant replies are preserved as seed messages for subsequent turns.
 - Per-turn generation caching: the cache key for turn k includes the model, seed, iteration, skill id, hash of all skill files, turn index, and a cumulative hash of all rendered turn prompts up to and including turn k. Changing turn 2's prompt invalidates turn 2's cache but not turn 1's.
 - Partial failure: if a turn errors or hits a model/agent limit, that turn's record is written with an empty HTML artifact and its `generation.agent_limit_error` populated with the failure reason. Subsequent turns for that sample are short-circuited with the same empty HTML and `generation.agent_limit_error` set (the sidecar conversation entry is marked `skipped: true` with a `skip_reason`). Empty HTML fails the node-runner checks, so those turns evaluate to `result = "FAIL"`. Earlier turns in the same sample remain evaluated normally.
@@ -424,6 +479,12 @@ When prompt variants exist:
 - The report includes an additional section that compares each variant against control.
 - Each composed prompt case is displayed as its own test entry and surfaces the base test name plus applied prompt dimensions.
 - If a sample includes `generation_conversation_path`, the sample details show an agent conversation section with a transcript preview.
+- For agent-mode (Copilot SDK) samples, the transcript preview surfaces structured tool activity from the captured `*.agent.json` events:
+  - `tool.execution.start` events render as `Agent action` entries with the tool name, the assistant's `intention_summary` (when present), and a compact list of arguments. Bulky payloads (`file_text`, `new_file_contents`, `diff`, `patch`, `content`, etc.) are not dumped — their presence is noted as `(file_text omitted)`.
+  - `tool.execution.complete` events render as `<tool_name> result` entries with the tool's `content` (truncated to ~400 chars). Errors render as `<tool_name> error`.
+  - `permission.requested` events render as `Permission requested` entries with the request kind, intention, and target file/command.
+  - `assistant.message.tool_requests` (stringified `AssistantMessageToolRequest(...)` reprs) are intentionally skipped to avoid duplication; the structured `tool.execution.start` events are the source of truth.
+  - The following SDK event prefixes are skipped from the preview to reduce noise: `session.`, `pending.`, `assistant.turn.`, `assistant.usage`, `assistant.reasoning`, `hook.`, `permission.completed`, `tool.execution.partial`.
 
 ### Acceptance criteria
 
