@@ -47,7 +47,7 @@ def test_load_skills_success(tmp_path: Path):
     assert len(skills) == 1
     s = skills[0]
     assert s["id"] == "demo"
-    assert s["skill_dir_abs_path"].endswith("/skills/demo")
+    assert Path(s["skill_dir_abs_path"]) == tmp_path / "skills" / "demo"
     assert len(s["turns"]) == 2
     assert s["turns"][0]["id"] == "generate"
     assert s["generation_mode"] == "copilot_agent"

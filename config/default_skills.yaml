@@ -2,16 +2,19 @@
 # Use with:
 #   python -m a11y_llm_tests.cli run --skills-file config/default_skills.yaml ...
 #
-# Each skill mounts a directory (containing SKILL.md and any support files) into the
-# sandboxed agent at /workspace/.skills/<id>/ and runs an N-turn conversation. The
-# agent's submission at the end of each turn is captured and evaluated as its own
-# artifact so the report can show control | turn 1 | turn 2 | ... deltas.
+# Each skill directory (containing SKILL.md and any support files) is part of the
+# repo workspace volume mounted at /workspace inside the container. The Copilot SDK's
+# skill_directories parameter is pointed at the parent of the skill directory so it
+# can discover SKILL.md. The agent runs an N-turn conversation; its submission at the
+# end of each turn is captured and evaluated as its own artifact so the report can
+# show control | turn 1 | turn 2 | ... deltas.
 #
 # Template tokens supported in turn prompts:
 #   {{test_case_prompt}}   - the user prompt composed from prompt.yaml (exactly one
 #                            turn must reference this, typically turn 0).
 #   {{skill_id}}           - the skill id.
-#   {{skill_path}}         - /workspace/<skill_dir>  (container-side path)
+#   {{skill_path}}         - absolute container path to the skill directory
+#                            (e.g. /workspace/config/skills/a11y-wizard)
 #   {{previous_submission}} - the HTML submitted on the previous turn (turns >= 1).
 
 skills:

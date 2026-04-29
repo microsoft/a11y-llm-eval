@@ -35,15 +35,16 @@ reuse it.
 - **Docker is a hard dependency.** Install Docker Desktop (or Docker
   Engine + Compose v2) before running.
 - **Authentication uses your existing dev login.** The harness
-  bind-mounts `~/.copilot` into the container read-write
-  so the CLI's OAuth token (and refreshes) round-trip back to the host.
-  Run the host CLI once (`copilot`) and complete the device-code flow
-  before your first harness run.
+  uses a named Docker volume (`copilot-auth`) so credentials stay inside
+  the container and are not exposed to the host. On first run the harness
+  verifies CLI connectivity and — if needed — runs `copilot login`
+  interactively in your terminal; the resulting token persists across
+  container rebuilds. `GH_TOKEN` / `GITHUB_TOKEN` environment variables
+  are forwarded per-`docker exec` as a CI/headless fallback.
 - **BYOK keys** flow through environment variables (`ANTHROPIC_API_KEY`,
   `OPENAI_API_KEY`, `AZURE_API_KEY`, `AZURE_API_BASE`,
   `AZURE_API_VERSION`) and are forwarded into the container per session.
-- Override the bind-mount locations with `COPILOT_CONFIG_DIR` (host path
-  to the Copilot config dir) and `COPILOT_WORKSPACE` (host path mounted
+- Override the workspace mount with `COPILOT_WORKSPACE` (host path mounted
   as `/workspace`, which must contain any skill directories you reference).
 - Stop the container with
   `docker compose -f config/copilot_sandbox/compose.yaml down`.

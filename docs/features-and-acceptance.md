@@ -23,9 +23,10 @@ This document describes the **current, user-visible behavior** of the A11y LLM E
 >   - Per-request `temperature` / `seed` are silently dropped for
 >     first-party Copilot routes; BYOK provider configs may still honor
 >     them.
-> - **Schema.** `GenerationMeta.agent_session_log_path` replaces the
->   internal `agent_eval_path` field. `ResultRecord.generation_eval_path`
->   keeps its name but now points at a `*.session.jsonl` log.
+> - **Schema.** `ResultRecord.generation_eval_path` keeps its name but now
+>   points at a `*.session.jsonl` log (the Copilot agent session
+>   transcript). The internal generator key `agent_session_log_path` is
+>   mapped to this field; it does not appear in the serialized schema.
 > - **Cache.** Filenames now use `_copilot_agent.html` (was `_agent.html`);
 >   pre-migration cache entries will not hit and should be removed.
 > - **Skills.** Skill directories are exposed via the SDK's
@@ -36,12 +37,15 @@ This document describes the **current, user-visible behavior** of the A11y LLM E
 >   The harness brings the container up automatically on first
 >   `run` and leaves it warm afterwards (stop with
 >   `docker compose -f config/copilot_sandbox/compose.yaml down`). Docker
->   is therefore a hard dependency. First-party Copilot authentication is
->   provided by bind-mounting the developer's
->   `~/.copilot` directory into the container; you must
->   complete the `copilot` login flow on the host once before running.
->   Override locations with `COPILOT_CONFIG_DIR` and `COPILOT_WORKSPACE`
->   environment variables. `meta.runtime.engine` remains `"copilot_sdk"`;
+>   is therefore a hard dependency. First-party Copilot authentication
+>   uses a named Docker volume (`copilot-auth`) so credentials stay
+>   inside the container and are not exposed to the host. On first run
+>   the harness verifies CLI connectivity and — if needed — runs
+>   `copilot login` interactively in the user's terminal; the resulting
+>   token persists across container rebuilds. `GH_TOKEN` / `GITHUB_TOKEN`
+>   are forwarded per-`docker exec` as a CI/headless fallback.
+>   Override the workspace mount with the `COPILOT_WORKSPACE` environment
+>   variable. `meta.runtime.engine` remains `"copilot_sdk"`;
 >   per-record sandbox labels now read
 >   `docker:config/copilot_sandbox/compose.yaml`.
 
