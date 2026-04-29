@@ -110,6 +110,6 @@ When `<dialog>` isn't an option:
 ### Pitfalls
 
 - Opening a dialog without moving focus — keyboard users are stranded on the trigger. Screen reader users will receive no confirmation of action for the changed state of the page or dialog.
-- Not restoring focus on close — keyboard users keyboard users may lose their place, screen reader users will commonly be returned to the top of the web page.
+- Not restoring focus on close — keyboard users may lose their place, screen reader users will commonly be returned to the top of the web page.
 - Forgetting `inert` on background content in the ARIA fallback — Keyboard tabbing can reach focusable elements outside of the modal dialog.
 - Auto-focusing the destructive button on open — accidental confirmation via Enter/Space.
