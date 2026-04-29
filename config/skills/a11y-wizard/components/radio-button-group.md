@@ -61,6 +61,6 @@ Omit `required` and the `<legend>` marker when the group isn't required; omit `a
 - Missing `<fieldset>`/`<legend>`: the group's name doesn't reach AT; options are read without context.
 - Putting `aria-describedby` on an inner `<div class="options">` or adding `<div role="group" aria-describedby="...">` inside the `<fieldset>`. `<fieldset>` is already the group — put `aria-describedby` on the `<fieldset>` itself.
 - Using a separate Tab stop for every radio: breaks native arrow-key / single-tabstop behavior.
-- Reimplementing as `role="radio"` on `<div>` without handling arrow keys, `tabindex` swapping, `aria-checked` state, and label associations.
+- Reimplementing as `role="radio"` on `<div>` without handling arrow keys, `tabindex` swapping, `aria-checked` state, and label associations. If an existing custom ARIA radio group is already in use and accessible, prefer it (see implementation priority in SKILL.md).
 - Putting `aria-required="true"` on the `<fieldset>` — not supported. Put `required` on the radios and a visible marker in the `<legend>`.
 - Duplicating the helper text's `aria-describedby` on every radio — makes AT announce the hint repeatedly. Describe the group instead.

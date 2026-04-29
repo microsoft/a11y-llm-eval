@@ -56,7 +56,7 @@ Omit `aria-describedby` / helper / error elements when not needed.
 - If the group has helper text, it's associated via `aria-describedby` on the `<fieldset>`, not on each checkbox.
 - If a single option is required, that `<input>` has `required` and its `<label>` carries a visible marker.
 - If the group requires "at least one", the `<legend>` carries a visible required marker, the helper text states the requirement, and validation enforces it on submit (no `required`/`aria-required` on the `<fieldset>`).
-- No `role="checkbox"` on `<div>` or `<span>` when a native `<input type="checkbox">` is viable.
+- No `role="checkbox"` on `<div>` or `<span>` when a native `<input type="checkbox">` is viable. If an existing custom ARIA checkbox group is already in use and accessible, prefer it (see implementation priority in SKILL.md).
 
 ### Pitfalls
 

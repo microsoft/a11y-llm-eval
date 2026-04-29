@@ -26,7 +26,7 @@ Use for a standalone consent, agreement, or on/off choice that isn't part of a g
 <label for="agree-terms">
   I agree to the <a href="/terms">terms of service</a>.
 </label>
-<p id="agree-error" hidden>You must agree to the terms to continue.</p>
+<p id="agree-error" hidden>Error: You must agree to the terms to continue.</p>
 ```
 
 ### Review checklist

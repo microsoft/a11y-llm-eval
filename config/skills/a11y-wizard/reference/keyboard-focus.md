@@ -51,8 +51,10 @@ Required when users navigate between pages with repeated navigation blocks. Not 
 
 ### Overlays, modals, disclosures
 
-- Opening a modal moves focus into the modal; closing it restores focus to the trigger.
-- Trap focus **only** inside modals. Non-modal overlays (popovers, menus, disclosures) should not trap focus.
+- Opening a modal moves focus into the modal. Native `<dialog>.showModal()` handles this automatically.
+- Closing restores focus to the trigger. For native `<dialog>`, the browser does this automatically — only manage focus manually if the trigger may no longer exist in the DOM.
+- With native `<dialog>.showModal()` or `inert` on background content, the browser prevents Tab from escaping — a manual JS focus trap is not needed.
+- Non-modal overlays (popovers, menus, disclosures) should not trap focus.
 - Escape closes overlays and disclosures; focus returns to the trigger.
 - While a modal is open, mark background content as `inert` so AT and keyboard can't reach it.
 
@@ -65,7 +67,7 @@ Required when users navigate between pages with repeated navigation blocks. Not 
 - [ ] Hidden content (via `hidden`, `display: none`, `visibility: hidden`, or inert ancestors) is not focusable and not in the AT tree.
 - [ ] Composite widgets (tabs, listbox, menu, grid, date picker) have exactly one sequential tab stop; arrow keys move within.
 - [ ] Roving tabindex or `aria-activedescendant` is used consistently — not a mix that leaves two elements with `tabindex="0"`.
-- [ ] Opening a modal moves focus into it; closing restores focus to the trigger; background is `inert` while open.
+- [ ] Opening a modal moves focus into it; closing restores focus to the trigger (automatic for native `<dialog>`); background is `inert` while open.
 - [ ] Non-modal overlays (disclosures, popovers, tooltips) do not trap focus; Escape closes and returns focus to the trigger.
 - [ ] For traditional multi-page sites, a skip link is the first focusable element and targets a focusable `<main>` (`tabindex="-1"`).
 - [ ] Default focus outlines are either preserved or replaced with an equally visible custom indicator (meets 3:1 contrast).
