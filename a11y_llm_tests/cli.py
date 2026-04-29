@@ -1132,7 +1132,7 @@ def run(
             latest_link.unlink()
         latest_link.symlink_to(out_dir)
     except OSError:
-        pass
+        pass  # Symlink creation may fail on Windows without Developer Mode
     # Clean up per-sample sandbox dirs unless explicitly preserved. The agent
     # may have created node_modules/ or other auxiliary files; the only
     # artifact the harness needs (index.html) has already been copied into

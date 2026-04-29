@@ -3,7 +3,7 @@
 Every generation is treated as an agentic Copilot session. The harness runs a
 single long-lived ``CopilotClient`` whose CLI process lives inside a Docker
 sandbox we own (``config/copilot_sandbox/``) and is reached via
-``scripts/copilot-docker.sh`` (``docker exec -i a11y-copilot-sandbox copilot``).
+``scripts/copilot-docker.py`` (``docker exec -i a11y-copilot-sandbox copilot``).
 
 First-party Copilot authentication is provided by bind-mounting the
 developer's ``~/.config/github-copilot`` directory into the container.
@@ -18,6 +18,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -299,7 +300,7 @@ class CopilotRuntime:
     _DOCKERFILE = _REPO_ROOT / "config" / "copilot_sandbox" / "Dockerfile"
     _IMAGE_HASH_SIDECAR = _REPO_ROOT / "config" / "copilot_sandbox" / ".image-hash"
     _IMAGE_TAG = "a11y-eval/copilot-sandbox:latest"
-    _WRAPPER_SCRIPT = _REPO_ROOT / "scripts" / "copilot-docker.sh"
+    _WRAPPER_SCRIPT = _REPO_ROOT / "scripts" / "copilot-docker.py"
     _CONTAINER_WORKSPACE = "/workspace"
 
     def __init__(
@@ -360,7 +361,8 @@ class CopilotRuntime:
             )
 
             config = SubprocessConfig(
-                cli_path=str(self._WRAPPER_SCRIPT),
+                cli_path=sys.executable,
+                cli_args=[str(self._WRAPPER_SCRIPT)],
                 env=env,
                 use_logged_in_user=True,
                 **({"github_token": github_token} if github_token else {}),
@@ -391,13 +393,6 @@ class CopilotRuntime:
             raise RuntimeError(f"Compose file not found: {cls._COMPOSE_FILE}")
         if not cls._WRAPPER_SCRIPT.exists():
             raise RuntimeError(f"Wrapper script not found: {cls._WRAPPER_SCRIPT}")
-        if not os.access(cls._WRAPPER_SCRIPT, os.X_OK):
-            try:
-                cls._WRAPPER_SCRIPT.chmod(0o755)
-            except OSError as exc:
-                raise RuntimeError(
-                    f"Wrapper script is not executable: {cls._WRAPPER_SCRIPT} ({exc})"
-                )
 
     def _ensure_container_auth(self) -> None:
         """Verify the in-container CLI is authenticated.
