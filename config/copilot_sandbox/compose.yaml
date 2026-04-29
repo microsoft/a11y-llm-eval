@@ -39,15 +39,6 @@ services:
       # wrapper script (scripts/copilot-docker.sh). They are NOT set as
       # static container env. GH_TOKEN / GITHUB_TOKEN flow the same way
       # as a CI/headless fallback for auth.
-      # Enable the Copilot CLI's SKILLS_INSTRUCTIONS feature flag inside
-      # the container. With this on, the CLI's `skill` tool description
-      # uses the stronger "BLOCKING REQUIREMENT" phrasing, which makes
-      # the model far more likely to invoke a skill autonomously when
-      # its frontmatter description matches the task. This flag is
-      # currently `staff`-gated upstream; we enable it here so the
-      # skill benchmark measures the mechanism's intended behavior.
-      COPILOT_CLI_ENABLED_FEATURE_FLAGS: ${COPILOT_CLI_ENABLED_FEATURE_FLAGS:-SKILLS_INSTRUCTIONS}
-      SKILLS_INSTRUCTIONS: ${SKILLS_INSTRUCTIONS:-true}
 
 volumes:
   copilot-auth:
