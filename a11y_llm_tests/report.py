@@ -1718,8 +1718,8 @@ document.addEventListener('DOMContentLoaded', function () {
   // Define heatmap endpoints
   const lowColor = getComputedStyle(document.documentElement).getPropertyValue('--heatmap-low').trim() || '#2d3748';
   const highColor = getComputedStyle(document.documentElement).getPropertyValue('--heatmap-high').trim() || '#16a34a';
-  const lowRgb = hexToRgb(lowColor.replace(/\s/g,''));
-  const highRgb = hexToRgb(highColor.replace(/\s/g,''));
+  const lowRgb = hexToRgb(lowColor.replace(/\\s/g,''));
+  const highRgb = hexToRgb(highColor.replace(/\\s/g,''));
 
   const cells = Array.from(document.querySelectorAll('.pass-at-k-cell'));
   cells.forEach(function(cell){
