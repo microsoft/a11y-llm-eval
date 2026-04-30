@@ -8,12 +8,14 @@ LLMs currently generate code with accessibility bugs, resulting in blockers for 
 ## Goal
 Create a public test suite which can be used to benchmark how well various LLMs generates accessible HTML code. Eventually, it could also be used to help train models to generate more accessible code by default.
 
-## Methdology
+## Methodology
 - Each test case contains a prompt to generate an HTML page to demonstrate a specific pattern or component.
-- This page is rendered in a real browser using Playwright (Chromium). Tests are executed against this rendered page.
+- All generations (control, instruction-set variants, and skills) are agentic sessions powered by the [GitHub Copilot SDK](https://pypi.org/project/github-copilot-sdk/) running inside a Docker sandbox. The agent can call built-in tools (e.g. file writes, shell commands) and iteratively refine its output.
+- **Control** uses the test prompt with no custom accessibility instructions, measuring baseline behavior. **Instruction-set variants** add custom instructions (delivered via `.github/copilot-instructions.md`). **Skills** use multi-turn conversations with explicit turn prompts and a mounted skill directory.
+- The resulting HTML is rendered in a real browser using Playwright (Chromium). Tests are executed against this rendered page.
 - The HTML is evaluated against axe-core, one of the most popular automated accessibility testing engines.
 - The HTML is also evaluated against a manually defined set of assertions, customized for the specific test case. This allows for more robust testing than just using axe-core.
-- Tests only pass if zero axe-core failures are found AND all *requirement* assertions pass. Best Practice (BP) assertion failures do not fail the test but are tracked separately.
+- Tests only pass if zero axe-core WCAG failures are found AND all *requirement* assertions pass. Best Practice (BP) assertion failures do not fail the test but are tracked separately.
 
 ## Features
 - Python orchestrator built on the [GitHub Copilot SDK](https://pypi.org/project/github-copilot-sdk/)
