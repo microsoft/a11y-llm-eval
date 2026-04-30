@@ -252,31 +252,53 @@ This produces, in a single run directory:
 
 
 ## Quick Start
+
+### Prerequisites
+
+- **Python 3.11+** and **Node.js 18+**
+- **Docker** — the generation step runs a Copilot sandbox container.
+  Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) (macOS/Windows) or Docker Engine (Linux) and make sure `docker` is on your PATH.
+- **GitHub CLI** — used to authenticate the Copilot sandbox.
+  Install with `brew install gh` (macOS), `winget install GitHub.cli` (Windows), or see [cli.github.com](https://cli.github.com). Then run:
+  ```
+  gh auth login
+  ```
+  Alternatively, set a `GITHUB_TOKEN` (or `GH_TOKEN`) environment variable with a token that has Copilot access.
+
+### macOS / Linux
+
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+python scripts/install_node_deps.py
 
-# Node deps
-bash scripts/install_node_deps.sh
+cp config/models.yaml.example config/models.yaml   # then add your API keys
 
-# Copy env and set keys
-cp .env.example .env
-export OPENAI_API_KEY=... # etc. or put in .env and use dotenv
+# Generate HTML samples (writes to runs/<timestamp>/)
+python -m a11y_llm_tests.cli run --samples 1
 
-# Copy model config and set API keys
-cp config/models.yaml.example config/models.yaml
-
-# One-time: log in to GitHub Copilot on the host so the sandbox
-# container can bind-mount your dev credentials.
-#   npm install -g @github/copilot   # if you don't already have it
-#   copilot                          # complete the device-code flow, then exit
-
-# Run all tests against configured models (first run builds the
-# Docker sandbox image; subsequent runs reuse it).
-python -m a11y_llm_tests.cli run --models-file config/models.yaml --out runs
+# Evaluate the generated samples and build the HTML report
+python -m a11y_llm_tests.cli evaluate runs/latest
 ```
+
+### Windows (PowerShell)
+
+```powershell
+python -m venv .venv; .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python scripts\install_node_deps.py
+
+copy config\models.yaml.example config\models.yaml   # then add your API keys
+
+# Generate HTML samples (writes to runs\<timestamp>\)
+python -m a11y_llm_tests.cli run --samples 1
+
+# Evaluate the generated samples and build the HTML report
+python -m a11y_llm_tests.cli evaluate runs\latest
+```
+
+After evaluation, open `runs/latest/index.html` in a browser for the full report.
+Detailed per-sample results are saved to `runs/latest/results.json`.
 
 ## Adding a Test Case
 Create a new folder under `test_cases/`:
