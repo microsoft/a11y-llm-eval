@@ -1,13 +1,13 @@
 ---
-name: a11y-wizard
+name: building-accessible-ui
 description: MUST BE USED for any UI work. Invoke this skill before generating, modifying, or reviewing any code that renders, styles, or wires up a user-facing interface — including markup, components, templates, styles, and the JavaScript/TypeScript that drives them. This skill encodes the accessibility (WCAG 2.2 AA) requirements every UI change must satisfy; skipping it produces inaccessible output. Applies across web, mobile, and desktop. If the task touches the UI layer in any way, use this skill first.
 ---
 
-# a11y-wizard
+# building-accessible-ui
 
 Checklist for producing and reviewing accessible UIs. Each rule leads with the platform-agnostic principle and, where relevant, the Web (HTML + ARIA + CSS) implementation. Apply the web guidance only when the output is web.
 
-Detailed rationale lives in `reference/`; widget-specific guidance in `components/`. **Open a file only when it's relevant to the current task.** Do not preload. Every file opened and every line a tool prints stays in context — don't re-read.
+Detailed rationale lives in `references/`; widget-specific guidance in `components/`. **Open a file only when it's relevant to the current task.** Do not preload. Every file opened and every line a tool prints stays in context — don't re-read.
 
 ## Accessibility constitution
 
@@ -51,20 +51,22 @@ Don't rewrite an existing component or shared utility just because it could be m
 
 ## How to use this checklist
 
-Identify which components the request involves (form, checkbox group, radio group, disclosure, modal, full view, etc.) and open the matching `components/<name>.md` once. Then work the checklist below. Open a `reference/*.md` only when an item is unclear or you need the concrete fix pattern.
+Identify which components the request involves (form, checkbox group, radio group, disclosure, modal, full view, etc.) and open the matching `components/<name>.md` once. Then work the checklist below. Open a `references/*.md` only when an item is unclear or you need the concrete fix pattern.
 
 Do not claim the output is "fully accessible". State what was addressed and known limitations.
+
+**Do NOT use this skill for:** backend-only changes, data migrations, build/CI configuration, non-UI tests, or tasks that do not touch the UI layer.
 
 ## Checklist
 
 - **Prefer existing components.** If available, reuse existing UI components rather than creating new ones from scratch or custom implementations.
-- **Platform-native semantics.** Prefer native platform controls and structures over custom constructs; add accessibility overrides only when a native control genuinely can't be used. → `reference/structure.md`.
+- **Platform-native semantics.** Prefer native platform controls and structures over custom constructs; add accessibility overrides only when a native control genuinely can't be used. → `references/structure.md`.
   - **Web:** Prefer semantic HTML (`<button>`, `<a>`, `<input>`, `<label>`, `<fieldset>`/`<legend>`, `<nav>`, `<main>`, `<header>`, `<footer>`, `<h1>`–`<h6>`) over `<div>`/`<span>` with ARIA. Use ARIA only when no native element fits.
 - **Regions / landmarks.** View structure is exposed via semantic regions/landmarks; duplicated landmarks have unique accessible names.
   - **Web:** Exactly one `<main>`; `<header>`, `<nav>`, `<footer>` used when applicable.
-- **Headings.** Logical outline labels sections without skipping levels; one top-level heading per view. → `reference/structure.md`.
+- **Headings.** Logical outline labels sections without skipping levels; one top-level heading per view. → `references/structure.md`.
   - **Web:** One `<h1>`, typically the first heading in `<main>`. Set a descriptive `<title>`.
-- **Bypass blocks on web pages.** Provide a mechanism to skip repeated navigation when delivering traditional web pages. (Not required for Electron or non-web surfaces.) → `reference/keyboard-focus.md`.
+- **Bypass blocks on web pages.** Provide a mechanism to skip repeated navigation when delivering traditional web pages. (Not required for Electron or non-web surfaces.) → `references/keyboard-focus.md`.
   - **Web:** A "Skip to main content" link as the first focusable element
 - **Name / role / value.** Every interactive element exposes an accurate accessible name; role matches purpose; dynamic states (pressed, expanded, selected, checked, disabled, invalid) stay in sync with visuals.
   - **Web:** Prefer native attributes over ARIA. If necessary, use the minimum ARIA needed and update state attributes alongside DOM/visual changes.
@@ -77,22 +79,22 @@ Do not claim the output is "fully accessible". State what was addressed and know
 - **Required fields.** Marked both visually and programmatically; not indicated by color alone.
   - **Web:** Use an asterisk to indicate required fields. Native `required` on the control or `aria-required="true"`.
 - **Keyboard operability.** Every interactive element is keyboard operable; tab order matches reading/visual order; expected keys work (activation, arrow keys inside composite widgets, Escape closes overlays); no keyboard traps; static content is not sequentially focusable.
-  - **Web:** Do not remove focus outlines without equal-or-better replacement. Use `tabindex="-1"` only for elements that need programmatic (not sequential) focus. → `reference/keyboard-focus.md`.
+  - **Web:** Do not remove focus outlines without equal-or-better replacement. Use `tabindex="-1"` only for elements that need programmatic (not sequential) focus. → `references/keyboard-focus.md`.
 - **Focus management.** Focus is always visible. Overlays/dialogs/disclosures move focus appropriately and restore it on close; no focus traps outside modals.
 - **Hidden content.** Content hidden from assistive technology is not focusable and is hidden consistently across visual, semantic, and focus layers.
   - **Web:** `hidden` / `display: none` / `aria-hidden="true"` used consistently.
-- **Graphics.** Informative graphics have meaningful text alternatives; decorative graphics are hidden from AT. → `reference/images-graphics.md`.
+- **Graphics.** Informative graphics have meaningful text alternatives; decorative graphics are hidden from AT. → `references/images-graphics.md`.
   - **Web:** `<img>` informative → `alt`; decorative → `alt=""`. Informative `<svg>` → `role="img"` + accessible name. Other decorative → `aria-hidden="true"`. 
-- **Contrast.** Text ≥ 4.5:1 (3:1 large); focus indicators and key boundaries ≥ 3:1. Never color-only cues. → `reference/contrast-forced-colors.md`.
-- **Respect OS accessibility settings.** Never override OS high contrast, reduced-motion, or color-scheme preferences; adapt to forced-colors / high-contrast. → `reference/contrast-forced-colors.md`.
-- **Reflow.** Content adapts to narrow viewports (target 320 CSS px) without two-dimensional scrolling for multi-line text; controls remain operable. → `reference/reflow.md`.
-- **Navigation.** Uses semantic navigation grouping with state-exposing toggles for expandable menus. → `reference/navigation.md`.
+- **Contrast.** Text ≥ 4.5:1 (3:1 large); focus indicators and key boundaries ≥ 3:1. Never color-only cues. → `references/contrast-forced-colors.md`.
+- **Respect OS accessibility settings.** Never override OS high contrast, reduced-motion, or color-scheme preferences; adapt to forced-colors / high-contrast. → `references/contrast-forced-colors.md`.
+- **Reflow.** Content adapts to narrow viewports (target 320 CSS px) without two-dimensional scrolling for multi-line text; controls remain operable. → `references/reflow.md`.
+- **Navigation.** Uses semantic navigation grouping with state-exposing toggles for expandable menus. → `references/navigation.md`.
   - **Web:** `<nav>`, not `role="menu"`; `aria-expanded` on triggers.
-- **Tables / grids.** Static tabular data uses table semantics with header/cell associations; interactive grids only when truly warranted. → `reference/tables-grids.md`.
-- **Status messages.** Provide status messages for dynamic content updates that are relevant to the user (loading indicators, form submission results, etc.). → `reference/status-messages.md`
+- **Tables / grids.** Static tabular data uses table semantics with header/cell associations; interactive grids only when truly warranted. → `references/tables-grids.md`.
+- **Status messages.** Provide status messages for dynamic content updates that are relevant to the user (loading indicators, form submission results, etc.). → `references/status-messages.md`
   - **Web:** Use `aria-live="polite"` or `aria-live="assertive"`.
-- **Testing.** Add and run automated accessibility tests unless the project explicitly opts out. Writing or configuring a test is not enough — execution, fixes, and a result report are part of the deliverable. **The final automated test run must be on the exact artifact you submit: any edit after a passing test invalidates that test, so re-run before submitting.** **Open `reference/testing.md` before writing any test code** for the opt-out signals, strategy precedence, runtime probe order, and reporting rules.
+- **Testing.** Add and run automated accessibility tests unless the project explicitly opts out. Writing or configuring a test is not enough — execution, fixes, and a result report are part of the deliverable. **The final automated test run must be on the exact artifact you submit: any edit after a passing test invalidates that test, so re-run before submitting.** **Open `references/testing.md` before writing any test code** for the opt-out signals, strategy precedence, runtime probe order, and reporting rules.
   - **Web:** Prefer `@axe-core/*` bindings that match the existing test runner; render the component/page fully so interactive state, focus, and live regions are evaluated.
   - **Other platforms:** Use the platform's native audit (Android `AccessibilityChecks`, iOS `XCUIAccessibilityAudit`, .NET `AccessibilityInsights`) under the same precedence.
-- **Specs/Documentation.** Follow the project's documentation pattern and document accessibility considerations for each view, component, and interaction. → `reference/specs-documentation.md`.
+- **Specs/Documentation.** Follow the project's documentation pattern and document accessibility considerations for each view, component, and interaction. → `references/specs-documentation.md`.
 

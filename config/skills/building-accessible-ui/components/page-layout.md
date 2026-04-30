@@ -17,7 +17,7 @@ Full views with navigation, hero content, product cards / listings, promos, and 
 ### General defaults
 
 - **Landmarks**: `<header>`, `<nav>`, `<main>`, `<footer>` used for their semantic roles. Exactly one `<main>`.
-- **Skip link**: first focusable element; targets `#maincontent` on `<main id="maincontent" tabindex="-1">`. See `reference/keyboard-focus.md`.
+- **Skip link**: first focusable element; targets `#maincontent` on `<main id="maincontent" tabindex="-1">`. See `references/keyboard-focus.md`.
 - **Headings**: one `<h1>`, typically in the hero or the start of `<main>`; section `<h2>`s; no skipped levels.
 - **Page title**: descriptive `<title>`.
 - **Multiple `<nav>`**: each has a unique accessible name (`aria-label="Primary"`, `aria-label="Footer"`, `aria-label="Breadcrumb"`).

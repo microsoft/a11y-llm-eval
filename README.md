@@ -171,16 +171,16 @@ A **skill** is a self-contained package (a directory containing at minimum a `SK
 
 Step 0: Start from the default skills file
 
-- Use `config/default_skills.yaml` as a starting point. It defines a single `a11y-wizard` skill that first generates a page (turn 1) and then is asked to review and remediate its own HTML (turn 2), using `config/skills/a11y-wizard/SKILL.md` as guidance.
+- Use `config/default_skills.yaml` as a starting point. It defines a single `building-accessible-ui` skill that first generates a page (turn 1) and then is asked to review and remediate its own HTML (turn 2), using `config/skills/building-accessible-ui/SKILL.md` as guidance.
 
 Example `skills.yaml`:
 
 ```yaml
 skills:
-  - id: a11y-wizard
-    name: Accessibility Wizard
+  - id: building-accessible-ui
+    name: Building Accessible UI
     description: Generate, then self-review using SKILL.md guidance.
-    skill_dir: skills/a11y-wizard
+    skill_dir: skills/building-accessible-ui
     # samples: 10                     # optional; defaults to --samples
     agent:                            # optional limits passed to the Copilot session
       limits:

@@ -2,6 +2,18 @@
 
 A worked example of the template applied to a real feature. Accessibility is one section of the normal spec, not a separate document.
 
+## Contents
+- [Summary](#summary)
+- [Goals / Non-goals](#goals)
+- [User stories](#user-stories)
+- [UX / interaction](#ux--interaction)
+- [Data model / API](#data-model--api)
+- [Implementation notes](#implementation-notes)
+- [Accessibility](#accessibility)
+- [Testing strategy](#testing-strategy)
+- [Acceptance criteria](#acceptance-criteria)
+- [Rollout](#rollout)
+
 ```markdown
 # Filter search results
 

@@ -83,9 +83,9 @@ def test_sandbox_label_is_docker():
 
 def test_host_path_to_container_translates_workspace_paths(tmp_path):
     rt = cr.CopilotRuntime(workspace_dir=str(tmp_path))
-    skill = tmp_path / "config" / "skills" / "a11y-wizard"
+    skill = tmp_path / "config" / "skills" / "building-accessible-ui"
     skill.mkdir(parents=True)
-    assert rt.host_path_to_container(str(skill)) == "/workspace/config/skills/a11y-wizard"
+    assert rt.host_path_to_container(str(skill)) == "/workspace/config/skills/building-accessible-ui"
 
 
 def test_host_path_to_container_rejects_paths_outside_workspace(tmp_path):
@@ -125,14 +125,14 @@ def test_generate_skill_multi_turn_passes_skill_directories(tmp_path):
     rt = cr.CopilotRuntime(workspace_dir=str(tmp_path))
     rt._client = FakeClient()
 
-    skill_dir = tmp_path / "config" / "skills" / "a11y-wizard"
+    skill_dir = tmp_path / "config" / "skills" / "building-accessible-ui"
     skill_dir.mkdir(parents=True)
 
     result = asyncio.run(rt.generate_skill_multi_turn(
         model="gpt-5-mini",
         rendered_turn_prompts=["build accessible UI"],
         skill_dir_abs_path=str(skill_dir),
-        skill_id="a11y-wizard",
+        skill_id="building-accessible-ui",
         timeout_s=1.0,
     ))
 

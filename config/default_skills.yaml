@@ -14,16 +14,16 @@
 #                            turn must reference this, typically turn 0).
 #   {{skill_id}}           - the skill id.
 #   {{skill_path}}         - absolute container path to the skill directory
-#                            (e.g. /workspace/config/skills/a11y-wizard)
+#                            (e.g. /workspace/config/skills/building-accessible-ui).
 #   {{previous_submission}} - the HTML submitted on the previous turn (turns >= 1).
 
 skills:
-  - id: a11y-wizard
-    name: Accessibility Wizard
+  - id: building-accessible-ui
+    name: Building Accessible UI
     description: >-
       A skill that implicitly steers generation toward accessible HTML and can be
       explicitly invoked to review and remediate previously produced HTML.
-    skill_dir: skills/a11y-wizard
+    skill_dir: skills/building-accessible-ui
     # Optional. Defaults to --samples.
     # samples: 10
     turns:

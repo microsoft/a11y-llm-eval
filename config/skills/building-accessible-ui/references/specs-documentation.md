@@ -4,8 +4,8 @@ Put accessibility intent in the same spec as the feature it describes, not a sep
 
 A fillable feature-spec template and a worked example are sidecar files. Both show a full feature spec with accessibility embedded as one section — not a standalone a11y doc:
 
-- Template: `reference/specs-documentation.template.md`
-- Example: `reference/specs-documentation.example.md`
+- Template: `references/specs-documentation.template.md`
+- Example: `references/specs-documentation.example.md`
 
 ## Where it lives
 
@@ -36,8 +36,8 @@ Each item must be concrete enough to verify.
 - **Grouping and associations.** `<fieldset>`/`<legend>` membership; help text targets (`aria-describedby`); error message targets (`aria-errormessage`, `aria-invalid`); required-field markers.
 - **Keyboard behavior.** Tab order, activation keys, arrow-key navigation in composite widgets, Escape, where focus moves on open, where it restores on close. Specify for every dynamic interaction.
 - **Dynamic state and ARIA.** State attributes that update (`aria-expanded`, `aria-pressed`, `aria-selected`, `aria-checked`, `aria-invalid`) and the events that update them. How hidden content is hidden (`hidden` vs `aria-hidden`) so the layers don't conflict.
-- **Status messages.** Every `aria-live` region: id, politeness (`polite` / `assertive` / `role="alert"`), message template, and trigger. Cover loading, empty, and error states explicitly. → `reference/status-messages.md`.
-- **Testing strategy.** The automated check that covers this feature (tool, target, test file), keyboard scenarios, manual checks, and explicit opt-outs. → `reference/testing.md`.
+- **Status messages.** Every `aria-live` region: id, politeness (`polite` / `assertive` / `role="alert"`), message template, and trigger. Cover loading, empty, and error states explicitly. → `references/status-messages.md`.
+- **Testing strategy.** The automated check that covers this feature (tool, target, test file), keyboard scenarios, manual checks, and explicit opt-outs. → `references/testing.md`.
 - **Known limitations.** Gaps, the affected persona, and the planned fix. No "fully accessible" claims.
 
 ## Writing for AI consumption

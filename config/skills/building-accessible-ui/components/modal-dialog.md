@@ -2,6 +2,15 @@
 
 A blocking overlay for focused tasks or destructive confirmations (e.g., "Delete this image?").
 
+## Contents
+- [Principles](#principles)
+- [Web implementation](#web-implementation)
+  - [Preferred: native `<dialog>`](#preferred-native-dialog)
+  - [Minimal pattern](#minimal-pattern-native-dialog)
+  - [Fallback: ARIA dialog](#fallback-aria-dialog)
+  - [Review checklist](#review-checklist)
+  - [Pitfalls](#pitfalls)
+
 ## Principles
 
 - A modal dialog has an accessible name and role exposing it as a dialog.

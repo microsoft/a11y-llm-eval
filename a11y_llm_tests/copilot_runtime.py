@@ -881,7 +881,7 @@ class CopilotRuntime:
         ``turns``.
 
         ``skill_dir_abs_path`` is the host-side path to the specific skill
-        directory (e.g. ``config/skills/a11y-wizard``). The SDK's
+        directory (e.g. ``config/skills/building-accessible-ui``). The SDK's
         ``skill_directories`` parameter expects the **parent** so it can
         discover ``SKILL.md`` files in immediate subdirectories.
         Output-format instructions are appended to each turn's user prompt
