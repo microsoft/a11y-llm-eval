@@ -35,7 +35,8 @@ No ARIA is better than bad ARIA. Don't duplicate native semantics (no `role="but
 
 - All functionality can be achieved by both mouse an keyboard; tab order matches reading/visual order.
 - Focus is always visible — do not remove focus outlines without an equal-or-better replacement.
-- No keyboard traps outside modals. Escape closes overlays.
+- Avoid keyboard traps.
+- Escape should close overlays.
 - Static content MUST NOT be sequentially focusable. Use `tabindex="-1"` only for programmatic focus targets.
 - Content hidden from AT (`aria-hidden="true"`) MUST NOT be focusable.
 - Dialogs move focus in and restore it on close.
