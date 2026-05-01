@@ -550,7 +550,8 @@ def generate_html_with_agent_meta(
             _invalidate_cache_entry(cache_file)
 
     config = agent_config or {}
-    timeout_s = float(config.get("timeout_s") or 600.0)
+    limits = config.get("limits") or {}
+    timeout_s = float(limits.get("timeout_s") or config.get("timeout_s") or 600.0)
     excluded_tools = config.get("excluded_tools") if isinstance(config.get("excluded_tools"), list) else None
 
     print(f"Generating HTML with model={model_display_name or model} (copilot_agent)...")
@@ -751,7 +752,8 @@ def generate_html_with_skill_multi_turn(
         raise ValueError(f"Skill '{skill_id}' has no turns configured")
 
     config = agent_config or {}
-    timeout_s = float(config.get("timeout_s") or 600.0)
+    limits = config.get("limits") or {}
+    timeout_s = float(limits.get("timeout_s") or config.get("timeout_s") or 600.0)
     excluded_tools = config.get("excluded_tools") if isinstance(config.get("excluded_tools"), list) else None
 
     base_prompt_hash_value = compute_prompt_hash(
