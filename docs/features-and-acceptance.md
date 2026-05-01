@@ -294,7 +294,7 @@ This is enabled via `run --instruction-sets-file <path>`.
 - Instruction sets may request a different number of samples than control.
 - Instruction sets always use the Copilot agent path.
 - Instruction-set YAML does not support `generation_mode`; configs that specify it are invalid.
-- Instruction sets may declare `agent.limits` overrides (e.g., `timeout_s`, `message_limit`).
+- Instruction sets may declare `agent.limits` overrides (e.g., `timeout_s`, `excluded_tools`). Only `timeout_s` (default 600) and `excluded_tools` (list of tool names) are currently consumed; other keys are stored as metadata.
 - Concurrent agent generations default to at most 4 in parallel when `--concurrency` is not specified. Pass `--concurrency` explicitly to override.
 
 Artifacts for variants are written under separate directories:

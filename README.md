@@ -67,7 +67,7 @@ python -m a11y_llm_tests.cli run \
 Step 2: Run the eval and generate the report
 ```bash
 python -m a11y_llm_tests.cli evaluate \
-  <path to run directory>
+  <path to run directory> \
   --k 1,5,10
 ```
 
@@ -92,7 +92,7 @@ You can optionally benchmark multiple **custom instruction sets** against the **
 Step 0: Start from the default instruction sets file
 
 - Use `config/default_instruction_sets.yaml` as a starting point.
-- The default set references `config/instructions/accessible-minimal.md` (a minimal hint that all output must be accessible).
+- The default set references `instructions/accessible-minimal.md` (a minimal hint that all output must be accessible), resolved relative to the YAML file's directory.
 
 You can also create your own instruction sets YAML file.
 
@@ -101,34 +101,31 @@ instruction_sets:
   - id: accessible_minimal
     name: Accessible Minimal
     description: Minimal reminder that all output must be accessible.
-    instructions_markdown: config/instructions/accessible-minimal.md
+    instructions_markdown: instructions/accessible-minimal.md
     # samples: 10
 
   - id: aria_guardrails
     name: ARIA Guardrails
     description: Strong ARIA guidance; avoid invalid ARIA.
-    instructions_markdown: config/instructions/aria_guardrails.md
+    instructions_markdown: instructions/aria_guardrails.md
     samples: 20
 
   - id: agentic_accessibility
     name: Agentic Accessibility
     description: Extra guidance for the Copilot agent.
-    instructions_markdown: config/instructions/accessible-minimal.md
+    instructions_markdown: instructions/accessible-minimal.md
     samples: 5
     agent:
       limits:
-        message_limit: 50
-        token_limit: 120000
-        time_limit: 600
-        working_limit: 420
+        timeout_s: 600
 ```
 
 All generations now use the Copilot SDK's agent path inside the Docker
 sandbox; the instruction-set YAML format does not support
 `generation_mode`, and `agent.sandbox` is ignored (the sandbox is fixed
-to `config/copilot_sandbox/compose.yaml`). `agent.limits.cost_limit` is
-optional and should only be set when model pricing is configured for
-every model in the run.
+to `config/copilot_sandbox/compose.yaml`). Only `agent.limits.timeout_s`
+(default 600) and `agent.limits.excluded_tools` are actively consumed;
+other limit keys are stored as metadata in `results.json`.
 
 Step 1: Generate control + instruction set variants
 
@@ -171,7 +168,7 @@ A **skill** is a self-contained package (a directory containing at minimum a `SK
 
 Step 0: Start from the default skills file
 
-- Use `config/default_skills.yaml` as a starting point. It defines a single `building-accessible-ui` skill that first generates a page (turn 1) and then is asked to review and remediate its own HTML (turn 2), using `config/skills/building-accessible-ui/SKILL.md` as guidance.
+- Use `config/default_skills.yaml` as a starting point. It defines a single `building-accessible-ui` skill that first generates a page (turn 1) and then asks the agent to run accessibility tests, review the results, and remediate its own HTML (turn 2).
 
 Example `skills.yaml`:
 
@@ -184,20 +181,19 @@ skills:
     # samples: 10                     # optional; defaults to --samples
     agent:                            # optional limits passed to the Copilot session
       limits:
-        message_limit: 50
-        token_limit: 120000
-        time_limit: 600
+        timeout_s: 600
     turns:
       - id: generate
         name: Generate
         prompt: |
           {{test_case_prompt}}
       - id: review
-        name: Review & remediate
+        name: Review
         prompt: |
-          Review the HTML you just produced against the accessibility checklist
-          in {{skill_path}}/SKILL.md. Fix any issues you find and output the
-          complete, updated HTML document.
+          Add and run accessibility tests, review results, and remediate the HTML.
+          Fix any real accessibility issues you find. Leave correct markup
+          alone. Submit one corrected standalone HTML document as your final
+          answer. Do not wrap it in markdown fences or add commentary.
 ```
 
 Step 1: Generate control + skill turns
@@ -307,8 +303,7 @@ test_cases/
   form-labels/
     prompt.yaml
     test.js
-    example-fail/
-    example-pass/
+    examples/
 ```
 
 `prompt.yaml` defines the base prompt plus any prompt dimensions for the test case. A minimal example is:
@@ -335,7 +330,7 @@ Global prompt dimensions such as framework and style live in `config/prompt_dime
 `test.js` must export:
 
 ```js
-module.exports.run = async ({ page, assert }) => {
+module.exports.run = async ({ page, assert, utils }) => {
   await assert("Has an h1", async () => {
     const count = await page.$$eval('h1', els => els.length);
     return count >= 1; // truthy => pass, falsy => fail
@@ -370,19 +365,10 @@ Each assertion may now include a `type` field:
 
 If `type` is omitted it defaults to `R` for backward compatibility. The HTML report shows both Requirement Pass Rate (percentage of tests whose requirement assertions passed) and Best Practice Pass Rate (percentage of tests containing BP assertions where all BP assertions passed).
 
-Example assertion objects returned from `run`:
-
-```js
-return {
-  assertions: [
-    { name: 'has main landmark', status: 'pass', type: 'R' },
-    { name: 'images have alt text', status: 'fail', type: 'BP', message: '1 of 5 images missing alt' }
-  ]
-};
-```
+The `fn` callback can also return `{ status: "pass" | "fail" | "na", message?: string }` for assertions that may not be applicable to a given page.
 
 ## Report
-Generated at `runs/<timestamp>/report.html` with:
+Generated at `runs/<timestamp>/index.html` with:
 - Summary stats per model
 - Detailed per model/test breakdown
 - Axe violations
