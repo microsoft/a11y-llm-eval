@@ -24,6 +24,9 @@ skills:
       A skill that implicitly steers generation toward accessible HTML and can be
       explicitly invoked to review and remediate previously produced HTML.
     skill_dir: skills/building-accessible-ui
+    agent:
+      limits:
+        timeout_s: 1200
     # Optional. Defaults to --samples.
     # samples: 10
     turns:
