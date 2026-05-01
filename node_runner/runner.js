@@ -15,7 +15,8 @@ async function main() {
     console.error("Usage: node playwright_runner.js <htmlPath> <testJsPath> <outJsonPath> [screenshotPath]");
     process.exit(2);
   }
-  const html = fs.readFileSync(htmlPath, "utf-8");
+  const resolvedHtmlPath = path.resolve(htmlPath);
+  const htmlUrl = `file://${resolvedHtmlPath}`;
   let testFn;
   try {
     testFn = require(path.resolve(testJsPath));
@@ -40,8 +41,7 @@ async function main() {
   let errorMsg = null;
 
   async function loadHTML() {
-    await page.reload();
-    await page.setContent(html, { waitUntil: "load" });
+    await page.goto(htmlUrl, { waitUntil: "load" });
     await page.addScriptTag({ content: axeSource });
     await page.evaluate(() => { window.axe.setup();});
   }

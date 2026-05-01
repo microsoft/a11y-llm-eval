@@ -147,7 +147,10 @@ def _evaluate_worker(args_tuple):
     html = Path(html_path).read_text(encoding="utf-8")
     sp = Path(screenshot_path)
     sp.parent.mkdir(parents=True, exist_ok=True)
-    node_res = node_bridge.run(html, test_js_path, screenshot_path)
+    # Pass the directory containing the HTML so the runner can resolve relative
+    # CSS/JS references via file:// navigation.
+    html_dir = str(Path(html_path).parent)
+    node_res = node_bridge.run(html, test_js_path, screenshot_path, html_dir=html_dir)
     tf = node_res.get("testFunctionResult", {})
     assertions_raw = tf.get("assertions", [])
     norm_assertions = []
@@ -242,6 +245,33 @@ def _evaluate_worker(args_tuple):
     return json.loads(rec.model_dump_json())
 
 
+def _copy_sandbox_siblings(sandbox_workdir: str | None, dest_dir: Path) -> None:
+    """Copy non-HTML files from the agent sandbox into *dest_dir*.
+
+    This lets the runner resolve relative ``<link>`` / ``<script>`` references
+    when loading ``index.html`` via ``file://``.  ``index.html`` itself is NOT
+    copied — the harness writes it separately from the canonical HTML string.
+    """
+    if not sandbox_workdir:
+        return
+    src = Path(sandbox_workdir)
+    if not src.is_dir():
+        return
+    for item in src.iterdir():
+        # Skip index.html (the harness writes its own canonical copy) and any
+        # hidden directories (.github, etc.) that were placed for SDK config.
+        if item.name == "index.html" or item.name.startswith("."):
+            continue
+        dest = dest_dir / item.name
+        try:
+            if item.is_dir():
+                shutil.copytree(item, dest, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, dest)
+        except OSError:
+            pass  # best-effort; don't fail the run
+
+
 def _generate_worker(task):
     """Generation worker. Runs synchronously inside a thread for asyncio.gather."""
     test_name = task["test_name"]
@@ -304,9 +334,13 @@ def _generate_worker(task):
         total_turns = len(turn_records)
         for tr in turn_records:
             t_idx = tr["turn_index"]
-            html_path = Path(f"{html_out_path_stub}__t{t_idx}.html")
-            html_path.parent.mkdir(exist_ok=True, parents=True)
+            # Each turn gets its own subdirectory so sibling files from
+            # different samples/turns never collide.
+            turn_dir = Path(f"{html_out_path_stub}__t{t_idx}")
+            turn_dir.mkdir(exist_ok=True, parents=True)
+            html_path = turn_dir / "index.html"
             atomic_write_text(html_path, tr["html"] or "", encoding="utf-8")
+            _copy_sandbox_siblings(sandbox_workdir, turn_dir)
             meta = tr.get("meta") or {}
             skill_turn_records.append({
                 "test_name": test_name,
@@ -348,6 +382,11 @@ def _generate_worker(task):
     out_path = Path(html_out_path)
     out_path.parent.mkdir(exist_ok=True, parents=True)
     atomic_write_text(out_path, html, encoding="utf-8")
+
+    # Copy any sibling files the agent created in the sandbox (CSS, JS, images)
+    # into the same directory as the output HTML so relative references resolve
+    # when the runner loads the page via file://.
+    _copy_sandbox_siblings(sandbox_workdir, out_path.parent)
 
     conversation_path = None
     if conversation_payload is not None and conversation_out_path:
@@ -495,6 +534,23 @@ def _hash_skill_files(skill_dir: Path) -> str:
     return sha.hexdigest()[:16]
 
 
+def _merge_agent_timeout(agent_config: dict, cli_timeout: int | None) -> dict:
+    """Merge the CLI --agent-timeout into an agent_config dict.
+
+    The CLI value acts as a fallback: it is only applied when the YAML does
+    not already specify ``agent.limits.timeout_s``.  Returns a (shallow-)
+    copied dict so callers don't mutate the variant's original data.
+    """
+    if cli_timeout is None:
+        return agent_config
+    cfg = dict(agent_config)
+    limits = dict(cfg.get("limits") or {})
+    if "timeout_s" not in limits:
+        limits["timeout_s"] = cli_timeout
+        cfg["limits"] = limits
+    return cfg
+
+
 def _load_skills(skills_file: str, base_dir: Path, existing_ids: set[str] | None = None) -> list[dict]:
     """Load a skills YAML file.
 
@@ -628,6 +684,11 @@ def run(
         False,
         "--keep-sandbox",
         help="Preserve per-sample agent sandbox directories under <run_dir>/sandbox/. By default the sandbox tree is deleted after generation since the only artifact the harness needs (index.html) has already been copied to <run_dir>/raw[_variants|_skills]/.",
+    ),
+    agent_timeout: int = typer.Option(
+        None,
+        "--agent-timeout",
+        help="Per-session agent timeout in seconds. Overrides the default (600s) for all variants. Per-variant agent.limits.timeout_s in YAML takes precedence.",
     ),
 ):
     """Generate HTML samples ONLY (no evaluation). A later 'evaluate' command will run tests & build report."""
@@ -836,7 +897,7 @@ def run(
 
                     if variant_kind == "skill":
                         raw_path = out_dir / "raw_skills" / variant_id / prompt_case.prompt_case_id
-                        # One HTML file per turn; conversation sidecar is per-sample.
+                        # Each turn is a subdirectory: <stub>__t<N>/index.html
                         html_file_stub = raw_path / f"{model}__s{sample_index}"
                         conversation_file = raw_path / f"{model}__s{sample_index}.agent.json"
                         # Per-sample workdir under <run_dir>/sandbox/. The agent
@@ -872,7 +933,7 @@ def run(
                             "runtime_log_dir": str(copilot_logs_dir),
                             "sandbox_workdir": str(sandbox_workdir),
                             "provider_config": model_provider_lookup.get(model),
-                            "agent_config": variant.get("agent") or {},
+                            "agent_config": _merge_agent_timeout(variant.get("agent") or {}, agent_timeout),
                             "skill_config": {
                                 "id": variant["skill_id"],
                                 "skill_dir_abs_path": variant["skill_dir_abs_path"],
@@ -884,7 +945,9 @@ def run(
 
                     if variant_id == "control":
                         raw_path = out_dir / "raw" / prompt_case.prompt_case_id
-                        html_file = raw_path / (f"{model}__s{sample_index}.html" if n_samples > 1 else f"{model}.html")
+                        # Each sample is a subdirectory: <stem>/index.html
+                        stem = f"{model}__s{sample_index}" if n_samples > 1 else model
+                        html_file = raw_path / stem / "index.html"
                         # Control is now an agentic Copilot session like the
                         # other variants, so persist its conversation
                         # transcript next to the HTML for the detailed report.
@@ -901,7 +964,7 @@ def run(
                         )
                     else:
                         raw_path = out_dir / "raw_variants" / variant_id / prompt_case.prompt_case_id
-                        html_file = raw_path / f"{model}__s{sample_index}.html"
+                        html_file = raw_path / f"{model}__s{sample_index}" / "index.html"
                         conversation_file = raw_path / f"{model}__s{sample_index}.agent.json"
                         sandbox_workdir = (
                             sandbox_root
@@ -932,7 +995,7 @@ def run(
                         "runtime_log_dir": str(copilot_logs_dir),
                         "sandbox_workdir": str(sandbox_workdir),
                         "provider_config": model_provider_lookup.get(model),
-                        "agent_config": variant.get("agent") or {},
+                        "agent_config": _merge_agent_timeout(variant.get("agent") or {}, agent_timeout),
                     })
 
     # Flatten into a single task list using round-robin across models
@@ -1265,17 +1328,21 @@ def evaluate(
             if not raw_dir.exists():
                 continue
             for hf in sorted(raw_dir.glob("**/*.html")):
-                fname = hf.name
+                # New layout: <model__s0>/index.html → derive from parent dir name
+                # Legacy layout: <model__s0.html> → derive from filename
+                if hf.name == "index.html":
+                    fname = hf.parent.name
+                else:
+                    fname = hf.stem
                 if "__s" in fname:
                     model_part, sample_part = fname.split("__s", 1)
-                    sample_index_str = sample_part[:-5] if sample_part.endswith(".html") else sample_part
                     try:
-                        sample_index = int(sample_index_str)
+                        sample_index = int(sample_part)
                     except ValueError:
                         sample_index = None
                     model = model_part
                 else:
-                    model = fname[:-5]
+                    model = fname
                     sample_index = None
                 tasks.append({
                     "html_path": str(hf),

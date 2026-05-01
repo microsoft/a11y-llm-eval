@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -33,11 +34,8 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 # from ``DEFAULT_SYSTEM_PROMPT`` once the harness stopped sending its own
 # system_message and started suffixing the user prompt instead.
 DEFAULT_OUTPUT_FORMAT_INSTRUCTIONS = (
-    "Save your final answer as a single self-contained HTML document at "
-    "`index.html` in your current working directory. Use your file-writing "
-    "tool (e.g. `write`) to create or overwrite that file. Inline all CSS "
-    "and JavaScript in the same document so it loads as a standalone file. "
-    "After writing, you may briefly summarize what you did."
+    "Save your answer to `index.html`. Feel free to use separate CSS and JS "
+    "files in the same directory."
 )
 
 # Truncation retry policy for agent generations whose final HTML reads as
@@ -305,6 +303,7 @@ def _load_cached_agent_generation(
     custom_instructions: Optional[str],
     effective_output_format_instructions: str,
     runtime_log_dir: Optional[str] = None,
+    sandbox_workdir: Optional[str] = None,
 ) -> tuple[Optional[str], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[str]]:
     cached_html, reason = read_and_validate_cached_html(cache_file)
     if cached_html is None:
@@ -382,7 +381,6 @@ def _load_cached_agent_generation(
     restored_log_path = None
     if session_cache.exists() and runtime_log_dir:
         try:
-            import shutil
             dest_dir = Path(runtime_log_dir)
             dest_dir.mkdir(parents=True, exist_ok=True)
             dest = dest_dir / session_cache.name
@@ -391,6 +389,7 @@ def _load_cached_agent_generation(
         except Exception:
             pass
     meta["agent_session_log_path"] = restored_log_path
+    _restore_sandbox_files_from_cache(cache_file, sandbox_workdir)
     return cached_html, meta, transcript, None
 
 
@@ -405,6 +404,7 @@ def _write_agent_generation_cache(
     meta: Dict[str, Any],
     transcript: Dict[str, Any],
     session_log_path: Optional[str] = None,
+    sandbox_workdir: Optional[str] = None,
 ) -> None:
     cache_file.parent.mkdir(exist_ok=True, parents=True)
     html_bytes = html.encode("utf-8")
@@ -450,10 +450,11 @@ def _write_agent_generation_cache(
         src = Path(session_log_path)
         if src.exists():
             try:
-                import shutil
                 shutil.copy2(str(src), str(_agent_session_cache_path(cache_file)))
             except Exception:
                 pass
+
+    _cache_sandbox_files(cache_file, sandbox_workdir)
 
 
 def _invalidate_cache_entry(cache_file: Path) -> None:
@@ -468,6 +469,67 @@ def _invalidate_cache_entry(cache_file: Path) -> None:
             if p.exists():
                 p.unlink()
         except Exception:
+            pass
+    files_dir = _sandbox_files_cache_dir(cache_file)
+    if files_dir.is_dir():
+        try:
+            shutil.rmtree(files_dir)
+        except Exception:
+            pass
+
+
+def _sandbox_files_cache_dir(cache_file: Path) -> Path:
+    """Return the directory used to cache sandbox sibling files for *cache_file*."""
+    return cache_file.with_suffix(cache_file.suffix + ".files")
+
+
+def _cache_sandbox_files(cache_file: Path, sandbox_workdir: Optional[str]) -> None:
+    """Snapshot non-hidden sibling files from the agent sandbox into the cache."""
+    if not sandbox_workdir:
+        return
+    src = Path(sandbox_workdir)
+    if not src.is_dir():
+        return
+    dest = _sandbox_files_cache_dir(cache_file)
+    has_siblings = False
+    for item in src.iterdir():
+        if item.name == "index.html" or item.name.startswith("."):
+            continue
+        has_siblings = True
+        break
+    if not has_siblings:
+        return
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        if item.name == "index.html" or item.name.startswith("."):
+            continue
+        try:
+            target = dest / item.name
+            if item.is_dir():
+                shutil.copytree(item, target, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, target)
+        except OSError:
+            pass
+
+
+def _restore_sandbox_files_from_cache(cache_file: Path, sandbox_workdir: Optional[str]) -> None:
+    """Restore cached sibling files into the agent sandbox directory."""
+    if not sandbox_workdir:
+        return
+    cached_dir = _sandbox_files_cache_dir(cache_file)
+    if not cached_dir.is_dir():
+        return
+    dest = Path(sandbox_workdir)
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in cached_dir.iterdir():
+        try:
+            target = dest / item.name
+            if item.is_dir():
+                shutil.copytree(item, target, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, target)
+        except OSError:
             pass
 
 
@@ -543,6 +605,7 @@ def generate_html_with_agent_meta(
             custom_instructions=custom_instructions,
             effective_output_format_instructions=effective_output_format_instructions,
             runtime_log_dir=log_dir,
+            sandbox_workdir=sandbox_workdir,
         )
         if cached_html is not None and cached_meta is not None and cached_transcript is not None:
             return cached_html, cached_meta, cached_transcript
@@ -552,6 +615,7 @@ def generate_html_with_agent_meta(
     config = agent_config or {}
     limits = config.get("limits") or {}
     timeout_s = float(limits.get("timeout_s") or config.get("timeout_s") or 600.0)
+    max_output_tokens = int(limits.get("max_output_tokens") or 64000)
     excluded_tools = config.get("excluded_tools") if isinstance(config.get("excluded_tools"), list) else None
 
     print(f"Generating HTML with model={model_display_name or model} (copilot_agent)...")
@@ -581,6 +645,7 @@ def generate_html_with_agent_meta(
             provider_config=provider_config,
             excluded_tools=excluded_tools,
             timeout_s=timeout_s,
+            max_output_tokens=max_output_tokens,
             log_dir=log_dir,
             working_directory=sandbox_workdir,
         )
@@ -625,7 +690,7 @@ def generate_html_with_agent_meta(
     meta["generation_mode"] = "copilot_agent"
     meta["agent_sandbox"] = format_agent_sandbox(result.sandbox)
     meta["agent_limit_error"] = result.limit_error
-    meta["agent_limits"] = {"timeout_s": timeout_s}
+    meta["agent_limits"] = {"timeout_s": timeout_s, "max_output_tokens": max_output_tokens}
     meta["agent_session_log_path"] = result.session_log_path
     meta["iteration"] = iteration
     meta["output_source"] = output_source
@@ -645,6 +710,7 @@ def generate_html_with_agent_meta(
             meta=meta,
             transcript=transcript,
             session_log_path=result.session_log_path,
+            sandbox_workdir=sandbox_workdir,
         )
     return html, meta, transcript
 
@@ -753,7 +819,8 @@ def generate_html_with_skill_multi_turn(
 
     config = agent_config or {}
     limits = config.get("limits") or {}
-    timeout_s = float(limits.get("timeout_s") or config.get("timeout_s") or 600.0)
+    timeout_s = float(limits.get("timeout_s") or config.get("timeout_s") or 1200.0)
+    max_output_tokens = int(limits.get("max_output_tokens") or 64000)
     excluded_tools = config.get("excluded_tools") if isinstance(config.get("excluded_tools"), list) else None
 
     base_prompt_hash_value = compute_prompt_hash(
@@ -810,6 +877,7 @@ def generate_html_with_skill_multi_turn(
                 custom_instructions=custom_instructions,
                 effective_output_format_instructions=effective_output_format_instructions,
                 runtime_log_dir=log_dir,
+                sandbox_workdir=sandbox_workdir,
             )
             if cached_html is not None and cached_meta is not None and cached_transcript is not None:
                 cache_hit_html.append(cached_html)
@@ -871,6 +939,7 @@ def generate_html_with_skill_multi_turn(
         provider_config=provider_config,
         excluded_tools=excluded_tools,
         timeout_s=timeout_s,
+        max_output_tokens=max_output_tokens,
         log_dir=log_dir,
         working_directory=sandbox_workdir,
     )
@@ -937,6 +1006,7 @@ def generate_html_with_skill_multi_turn(
                 meta=turn_meta,
                 transcript=per_turn.get("transcript") or {},
                 session_log_path=result.session_log_path,
+                sandbox_workdir=sandbox_workdir,
             )
 
     aggregate_conversation = _build_skill_conversation_payload(

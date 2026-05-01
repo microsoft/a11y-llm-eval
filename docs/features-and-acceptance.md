@@ -80,11 +80,17 @@ Each generation runs the Copilot agent with an isolated working directory under 
 - Instruction-set variants: `<run_dir>/sandbox/variants/<variant_id>/<prompt_case_id>/<model>__s<sample_index>/`
 - Skill variants: `<run_dir>/sandbox/skills/<skill_id>/<prompt_case_id>/<model>__s<sample_index>/`
 
-The harness instructs the agent (via `DEFAULT_OUTPUT_FORMAT_INSTRUCTIONS`, appended to the user prompt) to write its final HTML to `index.html` in that directory, and reads it back after `session.idle`. The directory is also passed to the SDK's `working_directory`, so any tool the agent invokes (e.g. `write`, `bash`, test runners) operates inside the per-sample directory and cannot collide with other concurrent samples sharing the workspace mount.
+The harness instructs the agent (via `DEFAULT_OUTPUT_FORMAT_INSTRUCTIONS`, appended to the user prompt) to write its final HTML to `index.html` in that directory, and reads it back after `session.idle`. The agent may also create sibling files (CSS, JavaScript, images) referenced from `index.html` via relative paths. The directory is also passed to the SDK's `working_directory`, so any tool the agent invokes (e.g. `write`, `bash`, test runners) operates inside the per-sample directory and cannot collide with other concurrent samples sharing the workspace mount.
 
 If the agent does not produce an `index.html` (e.g. because it answered inline), the harness falls back to extracting the final assistant message. The `transcript` carries `output_source: "disk" | "message"` and the absolute working directory path so reports can show provenance.
 
-These sandbox directories are intentionally part of the run output: they contain the artifacts a real dev would have on disk (auxiliary files, scratch installs, etc.). By default `<run_dir>/sandbox/` is **deleted at the end of generation** because the only artifact the harness needs (`index.html`) has already been copied into `<run_dir>/raw[_variants|_skills]/...`. Pass `--keep-sandbox` to `run` to preserve the tree for debugging tool use. The sandbox tree is not part of the compatibility-critical artifact contract.
+These sandbox directories are intentionally part of the run output: they contain the artifacts a real dev would have on disk (auxiliary files, scratch installs, etc.). By default `<run_dir>/sandbox/` is **deleted at the end of generation** because the artifacts the harness needs (`index.html` plus any sibling files) have already been copied into `<run_dir>/raw[_variants|_skills]/...`. Pass `--keep-sandbox` to `run` to preserve the tree for debugging tool use. The sandbox tree is not part of the compatibility-critical artifact contract.
+
+### Multi-file output
+
+The default output-format instructions encourage the agent to split CSS and JavaScript into separate files when the output is large. Each sample's output is stored in its own subdirectory (e.g. `<model>__s<sample_index>/index.html`) to prevent filename collisions between samples. At generation time, all non-hidden files the agent wrote in the sandbox working directory (except `index.html` itself, which the harness writes from the canonical HTML string) are copied into that per-sample subdirectory.
+
+At evaluation time, the Node runner loads the page via `file://` navigation (not `page.setContent()`), so `<link>`, `<script src>`, and other relative references resolve against the per-sample directory. This enables the agent to produce arbitrarily large multi-file outputs without hitting per-turn output-token ceilings.
 
 ### Security model
 
@@ -181,7 +187,9 @@ Generation uses the GitHub Copilot SDK agent runtime:
 - The composed prompt case text built from `prompt.yaml` plus the configured global prompt dimensions, **suffixed** with the **base output-format instructions** (the "save your answer to `index.html`" task instructions). The harness does not send a custom `system_message` to the agent SDK; the SDK's default agent system prompt is left intact.
 - **Custom instructions** (from `defaults.custom_instructions_markdown` or an instruction-set variant) are delivered the way real Copilot users supply them: the harness writes the markdown to `<sandbox_workdir>/.github/copilot-instructions.md` before the SDK session starts, so the Copilot agent auto-discovers them from its `working_directory`. They are **not** appended to the user prompt. The text is still mixed into the local cache key so changes invalidate cached generations correctly.
 
-All generations are Copilot agent sessions. Concurrency is controlled by `--concurrency` (default 4).
+All generations are Copilot agent sessions. Concurrency is controlled by `--concurrency` (default 4). Each session has a wall-clock timeout (default 600 s / 10 min); if the agent does not complete within the limit the session is terminated and the result is recorded as a limit error. The timeout can be overridden globally with `--agent-timeout <seconds>` or per-variant via `agent.limits.timeout_s` in the instruction-set / skills YAML (the YAML value takes precedence over the CLI flag).
+
+The SDK's per-turn output-token limit is overridden to **64 000 tokens** by default (the Copilot CLI default is 16 000, which can cause tool-call truncation on large HTML pages). This can be configured per-variant via `agent.limits.max_output_tokens` in the YAML.
 
 The effective output-format instructions are:
 
@@ -254,14 +262,16 @@ On cache hits, the generator returns `cached: True` and can optionally load toke
 
 ### Behavior
 
-During `run`, generated HTML is written under:
+During `run`, each sample's generated HTML is written as `index.html` inside a per-sample subdirectory under:
 
 - `<run_dir>/raw/<prompt_case_id>/`
 
 Naming depends on `--samples`:
 
-- Multi-sample (`samples > 1`): `<model>__s<sample_index>.html`
-- Legacy single-sample (`samples == 1`): `<model>.html`
+- Multi-sample (`samples > 1`): `<model>__s<sample_index>/index.html`
+- Legacy single-sample (`samples == 1`): `<model>/index.html`
+
+The subdirectory may also contain sibling files (CSS, JS, images) that the agent created alongside `index.html`. These are copied from the per-sample sandbox working directory.
 
 During `evaluate`, screenshots are written under:
 
@@ -299,7 +309,7 @@ This is enabled via `run --instruction-sets-file <path>`.
 
 Artifacts for variants are written under separate directories:
 
-- Variant HTML: `<run_dir>/raw_variants/<variant_id>/<prompt_case_id>/<model>__s<sample_index>.html`
+- Variant HTML: `<run_dir>/raw_variants/<variant_id>/<prompt_case_id>/<model>__s<sample_index>/index.html`
 - Agent conversation sidecar for agent-mode variants: `<run_dir>/raw_variants/<variant_id>/<prompt_case_id>/<model>__s<sample_index>.agent.json`
 - Variant screenshots: `<run_dir>/screenshots_variants/<variant_id>/<prompt_case_id>__<model>__s<sample_index>.png`
 
@@ -353,7 +363,7 @@ This is enabled via `run --skills-file <path>` and is independent of `--instruct
 
 Artifacts for skills are written under separate directories:
 
-- Skill HTML: `<run_dir>/raw_skills/<skill_id>/<prompt_case_id>/<model>__s<sample_index>__t<turn_index>.html`
+- Skill HTML: `<run_dir>/raw_skills/<skill_id>/<prompt_case_id>/<model>__s<sample_index>__t<turn_index>/index.html`
 - Skill agent conversation sidecar (one per sample, stitched across turns): `<run_dir>/raw_skills/<skill_id>/<prompt_case_id>/<model>__s<sample_index>.agent.json`
 - Skill screenshots: `<run_dir>/screenshots_skills/<skill_id>/<prompt_case_id>__<model>__s<sample_index>__t<turn_index>.png`
 
@@ -367,7 +377,7 @@ Schema additions:
 
 - When `--skills-file` is provided:
   - Control samples are still written to `<run_dir>/raw/` using existing naming rules.
-  - For every configured skill, every (test, model, sample) produces one HTML file per turn named `…__s<idx>__t<turn_index>.html`, plus one stitched `.agent.json` sidecar per sample.
+  - For every configured skill, every (test, model, sample) produces one subdirectory per turn named `…__s<idx>__t<turn_index>/index.html`, plus one stitched `.agent.json` sidecar per sample.
   - `results.json` includes one result record per (test, model, sample, turn) with `prompt_variant_kind = "skill"`.
   - `results.json` includes one aggregate per (test, model, skill, turn).
   - `meta.prompt_variants` includes an entry per skill with `kind: "skill"` and a non-empty `turns` list.
@@ -512,7 +522,7 @@ The Python orchestrator invokes the Node runner with:
 The runner:
 
 - Launches Playwright Chromium headless by default.
-- Loads the HTML into a real browser page.
+- Navigates to the HTML file via `file://` URL, so relative CSS/JS references resolve against the file's directory.
 - Injects axe-core and runs `axe.run()`.
 - Executes `test.js` assertions via an injected `assert(name, fn, opts)` helper.
 - Custom form-control assertions derive accessible names and descriptions from the corresponding Chromium accessibility tree nodes for the DOM elements under test.

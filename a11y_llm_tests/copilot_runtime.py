@@ -710,6 +710,7 @@ class CopilotRuntime:
         skill_directories: Optional[List[str]] = None,
         excluded_tools: Optional[List[str]] = None,
         timeout_s: float = 600.0,
+        max_output_tokens: Optional[int] = None,
         seed_messages: Optional[List[Dict[str, str]]] = None,
         working_directory: Optional[str] = None,
     ) -> AgentGenerationResult:
@@ -759,6 +760,11 @@ class CopilotRuntime:
             ]
         if excluded_tools:
             kwargs["excluded_tools"] = list(excluded_tools)
+        if max_output_tokens is not None:
+            from copilot.client import ModelCapabilitiesOverride, ModelLimitsOverride
+            kwargs["model_capabilities"] = ModelCapabilitiesOverride(
+                limits=ModelLimitsOverride(max_output_tokens=max_output_tokens),
+            )
 
         events: List[Dict[str, Any]] = []
         idle_event = asyncio.Event()
@@ -849,6 +855,7 @@ class CopilotRuntime:
         skill_directories: Optional[List[str]] = None,
         excluded_tools: Optional[List[str]] = None,
         timeout_s: float = 600.0,
+        max_output_tokens: Optional[int] = None,
         working_directory: Optional[str] = None,
     ) -> AgentGenerationResult:
         return await self._run_single(
@@ -858,6 +865,7 @@ class CopilotRuntime:
             skill_directories=skill_directories,
             excluded_tools=excluded_tools,
             timeout_s=timeout_s,
+            max_output_tokens=max_output_tokens,
             working_directory=working_directory,
         )
 
@@ -871,6 +879,7 @@ class CopilotRuntime:
         provider_config: Optional[Dict[str, Any]] = None,
         excluded_tools: Optional[List[str]] = None,
         timeout_s: float = 600.0,
+        max_output_tokens: Optional[int] = None,
         working_directory: Optional[str] = None,
     ) -> AgentGenerationResult:
         """Run a skill's ordered turn prompts on a single session.
@@ -920,6 +929,11 @@ class CopilotRuntime:
                 kwargs["provider"] = payload
         if excluded_tools:
             kwargs["excluded_tools"] = list(excluded_tools)
+        if max_output_tokens is not None:
+            from copilot.client import ModelCapabilitiesOverride, ModelLimitsOverride
+            kwargs["model_capabilities"] = ModelCapabilitiesOverride(
+                limits=ModelLimitsOverride(max_output_tokens=max_output_tokens),
+            )
 
         events: List[Dict[str, Any]] = []
         idle_event = asyncio.Event()
@@ -1137,6 +1151,7 @@ def run_agent_generation_sync(
     skill_directories: Optional[List[str]] = None,
     excluded_tools: Optional[List[str]] = None,
     timeout_s: float = 600.0,
+    max_output_tokens: Optional[int] = None,
     log_dir: Optional[str] = None,
     working_directory: Optional[str] = None,
 ) -> AgentGenerationResult:
@@ -1152,6 +1167,7 @@ def run_agent_generation_sync(
             skill_directories=skill_directories,
             excluded_tools=excluded_tools,
             timeout_s=timeout_s,
+            max_output_tokens=max_output_tokens,
             working_directory=working_directory,
         )
 
@@ -1167,6 +1183,7 @@ def run_skill_multi_turn_sync(
     provider_config: Optional[Dict[str, Any]] = None,
     excluded_tools: Optional[List[str]] = None,
     timeout_s: float = 600.0,
+    max_output_tokens: Optional[int] = None,
     log_dir: Optional[str] = None,
     working_directory: Optional[str] = None,
 ) -> AgentGenerationResult:
@@ -1182,6 +1199,7 @@ def run_skill_multi_turn_sync(
             provider_config=provider_config,
             excluded_tools=excluded_tools,
             timeout_s=timeout_s,
+            max_output_tokens=max_output_tokens,
             working_directory=working_directory,
         )
 
