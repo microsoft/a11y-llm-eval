@@ -24,7 +24,7 @@ No ARIA is better than bad ARIA. Don't duplicate native semantics (no `role="but
 - Use landmark elements (`<header>`, `<nav>`, `<main>`, `<footer>`). Exactly one `<main>`. Give duplicated landmarks unique accessible names.
 - One `<h1>` per view, typically first heading in `<main>`. Don't skip heading levels.
 - Set a descriptive `<title>`.
-- **Web pages only:** Provide a "Skip to main content" link as the first focusable element (not required for SPAs or Electron).
+- **Web pages only:** Provide a "Skip to main content" link as the first focusable element.
 
 ## Name, role, value
 
@@ -33,20 +33,20 @@ No ARIA is better than bad ARIA. Don't duplicate native semantics (no `role="but
 
 ## Keyboard and focus
 
-- All interactive elements are keyboard operable; tab order matches reading/visual order.
+- All functionality can be achieved by both mouse an keyboard; tab order matches reading/visual order.
 - Focus is always visible — do not remove focus outlines without an equal-or-better replacement.
 - No keyboard traps outside modals. Escape closes overlays.
 - Static content MUST NOT be sequentially focusable. Use `tabindex="-1"` only for programmatic focus targets.
-- Content hidden from AT (`hidden`, `display:none`, `aria-hidden="true"`) MUST NOT be focusable.
-- Overlays/dialogs/disclosures move focus in and restore it on close.
+- Content hidden from AT (`aria-hidden="true"`) MUST NOT be focusable.
+- Dialogs move focus in and restore it on close.
 - Composite widgets (tabs, listbox, menu, grid): one tab stop total; arrow keys move focus internally via roving `tabindex` or `aria-activedescendant`.
 
 ## Forms
 
-- Every control has a visual and programmatic label (`<label for>` or wrapping `<label>`). Never rely on placeholder alone.
+- Every form field has a visual and programmatic label (`<label for>` or wrapping `<label>`). Never rely on placeholder alone.
 - Associate help/error text via `aria-describedby`.
 - Group related options (checkboxes, radios) with `<fieldset>` + `<legend>`.
-- Required fields: visible indicator (e.g. `*`) AND `required` / `aria-required="true"`. Never color alone.
+- Required fields: visible indicator (e.g., `*`) AND `required` / `aria-required="true"`. Never color alone. This is a MUST when the form contains both required and optional fields.
 - Invalid fields: `aria-invalid="true"`; remove when corrected. Error messages explain how to fix.
 - On submit with invalid input, focus the first invalid control. Don't disable submit solely to prevent submission.
 
@@ -60,17 +60,18 @@ No ARIA is better than bad ARIA. Don't duplicate native semantics (no `role="but
 
 ## Forced colors / OS settings
 
-- Never override OS high-contrast, reduced-motion, or color-scheme preferences. Do not use `forced-color-adjust: none`.
+- Never override OS high-contrast, reduced-motion, or color-scheme preferences without good reason.
+- Do not use `forced-color-adjust: none` without good reason (e.g., data-viz where color needs to remain the same).
 - In `@media (forced-colors: active)`, use system color keywords (`ButtonText`, `ButtonBorder`, `CanvasText`, `Canvas`) — never fixed hex/RGB.
 - Use `currentColor` for SVG `fill`/`stroke` so icons inherit the foreground.
 - If relying on `box-shadow` for focus, add a transparent `outline` so focus renders in forced colors.
 
 ## Reflow (SC 1.4.10)
 
-- Content MUST adapt to 320 CSS pixels wide without two-dimensional scrolling for multi-line text.
-- Multi-column layouts stack; text wraps; controls remain operable.
+- Content MUST be able to 320 CSS pixels wide without two-dimensional scrolling for multi-line text.
+- For multi-column layouts that are not necessary to convey meaning or important to the UX of the interface, content stacks; text wraps; controls remain operable.
 - Use fluid `flex`/`grid`. Set `max-width: 100%` on media, `min-width: 0` on flex/grid children, `overflow-wrap: anywhere` for long strings.
-- Exception: inherently 2D components (large tables, maps, charts) may scroll horizontally at component level; the surrounding view still reflows.
+- Exception: inherently 2D components (large tables, maps, charts, media, interfaces with toolbars or interfaces that require 2D layout) may scroll horizontally at component level; the surrounding view still reflows.
 
 ## Graphics
 
@@ -80,7 +81,7 @@ No ARIA is better than bad ARIA. Don't duplicate native semantics (no `role="but
 ## Navigation
 
 - Use `<nav>` with lists and links — not `role="menu"` / `role="menubar"`.
-- Expandable menus: toggle uses `aria-expanded`. Escape MAY close sub-navigations.
+- Expandable navigation: toggle uses `button[aria-expanded]`. Escape MAY close sub-navigations.
 
 ## Tables and grids
 
@@ -89,7 +90,7 @@ No ARIA is better than bad ARIA. Don't duplicate native semantics (no `role="but
 
 ## Status messages
 
-- Announce dynamic updates (loading, submission results, validation summaries) via `aria-live="polite"` or `aria-live="assertive"`.
+- Announce dynamic updates (loading, success, failure, error, validation summaries) via `aria-live="polite"` or `aria-live="assertive"`.
 
 ## Final verification
 
