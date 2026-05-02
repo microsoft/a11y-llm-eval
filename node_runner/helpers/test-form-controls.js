@@ -1140,6 +1140,21 @@ testFn.discoverRadios = async (scope) => {
             groupKind = 'aria-fallback';
         }
 
+                // Detect if the radio has a visible associated label
+                let labelVisible = false;
+                if (isNativeRadio) {
+                    const rId = radio.id;
+                    const associatedLabel = rId ? document.querySelector(`label[for="${CSS.escape(rId)}"]`) : null;
+                    const parentLabel = radio.closest('label');
+                    const label = associatedLabel || parentLabel;
+                    if (label) {
+                        const rect = label.getBoundingClientRect();
+                        const style = window.getComputedStyle(label);
+                        labelVisible = rect.width > 0 && rect.height > 0
+                            && style.display !== 'none' && style.visibility !== 'hidden';
+                    }
+                }
+
         return {
             domIndex: idx,
             groupKey,
@@ -1159,6 +1174,7 @@ testFn.discoverRadios = async (scope) => {
             programmaticallyRequired,
             groupProgrammaticallyRequired,
             controlText,
+            labelVisible,
         };
             }, { idx: index }),
         ]);
@@ -1190,6 +1206,7 @@ testFn.discoverRadios = async (scope) => {
             visualLabel,
             helperText,
             visible,
+            labelVisible: meta.labelVisible,
             disabled: meta.disabled,
             tabIndex: meta.tabIndex,
             checked: meta.checked,
@@ -1474,6 +1491,23 @@ testFn.discoverCheckboxes = async (scope) => {
                     }
                 }
 
+                // Detect if the checkbox has a visible associated label (common
+                // accessible pattern: native input visually hidden, label styled
+                // as the visual control).
+                let labelVisible = false;
+                if (isNativeCheckbox) {
+                    const cbId = checkbox.id;
+                    const associatedLabel = cbId ? document.querySelector(`label[for="${CSS.escape(cbId)}"]`) : null;
+                    const parentLabel = checkbox.closest('label');
+                    const label = associatedLabel || parentLabel;
+                    if (label) {
+                        const rect = label.getBoundingClientRect();
+                        const style = window.getComputedStyle(label);
+                        labelVisible = rect.width > 0 && rect.height > 0
+                            && style.display !== 'none' && style.visibility !== 'hidden';
+                    }
+                }
+
                 return {
                     domIndex: idx,
                     groupKey,
@@ -1492,6 +1526,7 @@ testFn.discoverCheckboxes = async (scope) => {
                     tabIndex: checkbox.tabIndex,
                     programmaticallyRequired,
                     controlText,
+                    labelVisible,
                 };
             }, { idx: index, wrapperSelector }),
         ]);
@@ -1523,6 +1558,7 @@ testFn.discoverCheckboxes = async (scope) => {
             visualLabel,
             helperText,
             visible,
+            labelVisible: meta.labelVisible,
             disabled: meta.disabled,
             tabIndex: meta.tabIndex,
             checked: meta.checked,
@@ -1780,6 +1816,56 @@ testFn.testIdentifyInputPurposeAutocomplete = async (scope, discoveryCache) => {
     }
 
     return results;
+};
+
+/**
+ * Tabs through the page and returns a Set of domIndex values (relative to
+ * controlSelector) that actually received focus during the traversal.
+ * This tests real keyboard reachability rather than inferring it from
+ * properties like tabIndex or visibility.
+ */
+testFn.collectTabReachableIndexes = async (page, controlSelector, maxTabs = 300) => {
+    // Reset focus to the start of the document
+    await page.evaluate(() => {
+        if (document.activeElement && document.activeElement !== document.body) {
+            document.activeElement.blur();
+        }
+        window.__firstTabStop = null;
+    });
+
+    const reachedIndexes = new Set();
+
+    for (let i = 0; i < maxTabs; i++) {
+        await page.keyboard.press('Tab');
+
+        const result = await page.evaluate((selector) => {
+            const ae = document.activeElement;
+            if (!ae || ae === document.body || ae === document.documentElement) {
+                return { done: true, index: -1 };
+            }
+
+            // Cycle detection: if we return to the first tab stop, the full
+            // tab ring has been traversed.
+            if (!window.__firstTabStop) {
+                window.__firstTabStop = ae;
+            } else if (ae === window.__firstTabStop) {
+                return { done: true, index: -1 };
+            }
+
+            const controls = document.querySelectorAll(selector);
+            for (let j = 0; j < controls.length; j++) {
+                if (controls[j] === ae) return { done: false, index: j };
+            }
+            return { done: false, index: -1 };
+        }, controlSelector);
+
+        if (result.done) break;
+        if (result.index >= 0) {
+            reachedIndexes.add(result.index);
+        }
+    }
+
+    return reachedIndexes;
 };
 
 module.exports = testFn;

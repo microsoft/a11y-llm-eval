@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Native Single Checkbox – Visually Hidden Input</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has a valid role": "pass",
+      "Each checkbox has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Visual labels are defined and persistent": "pass",
+      "Helper text is programmatically associated": "na",
+      "Required fields are indicated visually": "na",
+      "Required fields are indicated programmatically": "na",
+      "Each checkbox is keyboard reachable": "pass",
+      "Space toggles checkbox state": "pass",
+      "ARIA attributes match native checkbox attributes if used": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 2rem; }
+    .toggle { position: relative; display: inline-flex; align-items: center; gap: 0.75rem; }
+    .toggle input[type="checkbox"] {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .toggle label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      padding: 0.5rem 1rem;
+      border: 1px solid #999;
+      border-radius: 6px;
+    }
+    .toggle label .indicator {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid #666;
+      border-radius: 3px;
+    }
+    .toggle input[type="checkbox"]:checked + label .indicator { background: #0060df; border-color: #0060df; }
+    .toggle input[type="checkbox"]:focus-visible + label { outline: 2px solid #0060df; outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <form>
+    <div class="toggle">
+      <input id="agree-terms" type="checkbox" />
+      <label for="agree-terms"><span class="indicator"></span> I agree to the terms and conditions</label>
+    </div>
+    <div style="margin-top: 1rem;">
+      <button type="submit">Continue</button>
+    </div>
+  </form>
+</body>
+</html>
