@@ -1080,6 +1080,39 @@ details li { margin-bottom: 0.35rem; }
         {% endfor %}
       </tbody>
     </table>
+    {% if skill.per_test_rows %}
+    <details>
+      <summary><strong>Pass rate by test case</strong></summary>
+      {% for test_row in skill.per_test_rows %}
+      <table class="agg-table">
+        <caption>{{ test_row.test_name }}</caption>
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th>Control*</th>
+            {% for t in skill.turns %}
+              <th>{{ t.name or t.id }}*</th>
+            {% endfor %}
+            <th>Δ last vs control*</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for mr in test_row.models %}
+          <tr>
+            <td>{{ mr.model_display }}</td>
+            <td class="pass-at-k-cell" {% if mr.control_pass_rate is not none %}data-pass="{{ '%.4f'|format(mr.control_pass_rate) }}"{% endif %}>{% if mr.control_pass_rate is not none %}{{ '%.0f%%'|format(mr.control_pass_rate * 100) }}{% else %}&mdash;{% endif %}</td>
+            {% for tp in mr.turn_pass_rates %}
+              <td class="pass-at-k-cell" {% if tp.pass_rate is not none %}data-pass="{{ '%.4f'|format(tp.pass_rate) }}"{% endif %}>{% if tp.pass_rate is not none %}{{ '%.0f%%'|format(tp.pass_rate * 100) }}{% else %}&mdash;{% endif %}</td>
+            {% endfor %}
+            <td>{% if mr.delta_last_vs_control is not none %}{{ '%+.1fpp'|format(mr.delta_last_vs_control * 100) }}{% else %}&mdash;{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endfor %}
+      {{ pass_rate_note() }}
+    </details>
+    {% endif %}
     {% endfor %}
   </section>
 
@@ -1153,6 +1186,9 @@ details li { margin-bottom: 0.35rem; }
 <p id="filter-count" class="filters-summary" aria-live="polite" aria-atomic="true"></p>
 <p id="no-results-message" hidden>No samples match the current filters.</p>
 {% for test_name, test_data in grouped_results.items() %}
+{% set ns = namespace(total=0) %}
+{% for m in test_data.models %}{% set ns.total = ns.total + m.samples|length %}{% endfor %}
+{% if ns.total > 0 %}
 <section>
   <details>
     <summary><h3>{{ test_name }}</h3></summary>
@@ -1378,6 +1414,7 @@ details li { margin-bottom: 0.35rem; }
     {% endfor %}
   </details>
 </section>
+{% endif %}
 {% endfor %}
 </section>
   </section>
@@ -3068,6 +3105,44 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
   # Build skill benchmark tables. A skill variant emits one results[] record
   # per (sample, turn) so we compute per-turn pass rates separately and compare
   # against control. One table per skill.
+
+  def _build_skill_per_test_rows(vid, turns_meta, skill_models, all_test_names,
+                                  test_stats_by_key, control_stats_by_test_model,
+                                  model_display_names):
+    """Build per-test-case breakdown rows for a single skill."""
+    rows = []
+    for test_name in all_test_names:
+      model_rows = []
+      for model_name in skill_models:
+        c = control_stats_by_test_model.get((test_name, model_name))
+        ctrl_rate = (c["n_pass"] / c["n_samples"]) if (c and c["n_samples"] > 0) else None
+        turn_rates = []
+        has_data = False
+        for turn in turns_meta:
+          tid = turn.get("id")
+          e = test_stats_by_key.get((vid, tid, test_name, model_name))
+          if e and e["n_samples"] > 0:
+            has_data = True
+            turn_rates.append({"pass_rate": e["n_pass"] / e["n_samples"]})
+          else:
+            turn_rates.append({"pass_rate": None})
+        if not has_data:
+          continue
+        last_rate = turn_rates[-1]["pass_rate"] if turn_rates else None
+        delta = None
+        if last_rate is not None and ctrl_rate is not None:
+          delta = last_rate - ctrl_rate
+        model_rows.append({
+          "model_name": model_name,
+          "model_display": model_display_names.get(model_name, model_name),
+          "control_pass_rate": ctrl_rate,
+          "turn_pass_rates": turn_rates,
+          "delta_last_vs_control": delta,
+        })
+      if model_rows:
+        rows.append({"test_name": test_name, "models": model_rows})
+    return rows
+
   skill_benchmark_tables = []
   skill_benchmark_variants_list = []
   skill_variant_ids_ordered = []
@@ -3186,6 +3261,10 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
         "description": pv.get("description"),
         "turns": turns_meta,
         "rows": table_rows,
+        "per_test_rows": _build_skill_per_test_rows(
+          vid, turns_meta, skill_models, data.get("tests") or [],
+          test_stats_by_key, control_stats_by_test_model, model_display_names,
+        ),
       })
       skill_benchmark_variants_list.append({
         "id": vid,
