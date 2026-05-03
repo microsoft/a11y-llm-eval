@@ -620,6 +620,8 @@ const hasTextualRequiredIndicator = (rawText) => {
     if (/\bis required\b/.test(t)) return true;
     if (/\brequired field\b/.test(t)) return true;
     if (/(^|\s)required[\s\.!?)]*$/.test(t)) return true;
+    if (/\brequired\s+to\s+(continue|proceed|submit|sign|create|complete|accept|register|finish)\b/.test(t)) return true;
+    if (/\bmust\s+(accept|agree|check|select|confirm|consent)\b/.test(t)) return true;
 
     if (/\brequired\s+(length|format|characters?|fields?|value|values|minimum|password|pattern|items?)\b/.test(t)) {
         return false;
