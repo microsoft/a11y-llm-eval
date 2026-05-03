@@ -220,6 +220,7 @@ module.exports.run = async ({ page, assert, utils }) => {
         const totalTriggers = await triggers.count();
         let totalSuccess = 0;
 
+        let failureReasons = [];
         for (const trigger of await triggers.all()) {
             await dismissDialog(page);
             await trigger.click();
@@ -228,7 +229,7 @@ module.exports.run = async ({ page, assert, utils }) => {
             }
 
             // Determine if native modal dialog is opened, which always hides background content.
-            let isNativeModal = await page.evaluate(el => {
+            let isNativeModal = await page.evaluate(() => {
                 return !!document.querySelector(':modal')
             });
 
@@ -242,13 +243,43 @@ module.exports.run = async ({ page, assert, utils }) => {
             
                 if (!isScreenReaderHidden) {
                     // Trigger is still visible to screen reader users, so fail this iteration.
+                    // Detect partial attempts so the message can explain what's missing.
+                    const { hasAriaModal, hasAriaHidden } = await page.evaluate(() => {
+                        const dialogs = document.querySelectorAll('[role="dialog"], [role="alertdialog"]');
+                        let hasAriaModal = false;
+                        for (const d of dialogs) {
+                            if (d.getAttribute('aria-modal') === 'true') hasAriaModal = true;
+                        }
+                        // Check for aria-hidden on elements outside the dialog(s).
+                        let hasAriaHidden = false;
+                        document.querySelectorAll('[aria-hidden="true"]').forEach(el => {
+                            for (const d of dialogs) {
+                                if (d.contains(el)) return;
+                            }
+                            hasAriaHidden = true;
+                        });
+                        return { hasAriaModal, hasAriaHidden };
+                    });
+
+                    const triggerText = await trigger.textContent();
+                    let reason = `Background content (trigger "${triggerText.trim()}") is still exposed to assistive technology while the dialog is open.`;
+                    if (hasAriaModal && !hasAriaHidden) {
+                        reason += ` Found aria-modal="true" on the dialog, but this alone does not remove background content from the focus order or accessibility tree.`;
+                    } else if (hasAriaHidden && !hasAriaModal) {
+                        reason += ` Found aria-hidden="true" on background content, but this alone does not remove it from the focus order.`;
+                    } else if (hasAriaModal && hasAriaHidden) {
+                        reason += ` Found aria-modal="true" and aria-hidden="true", but these alone do not remove background content from the focus order.`;
+                    }
+                    reason += ` Use the inert attribute on background content or a native <dialog> element with showModal().`;
+                    failureReasons.push(reason);
                     continue;
                 }
             }
             
             totalSuccess += 1;
         }
-        return totalSuccess === totalTriggers;
+        if (totalSuccess === totalTriggers) return true;
+        return { pass: false, message: failureReasons.join(' ') };
     });
 
   return {}; // assertions collected via injected assert
