@@ -6,7 +6,7 @@ const dismissDialog = async (page, reload = true) => {
 
     if (await dialogIsOpen(page)) {
         // Try pressing escape on the dialog
-        await page.getByRole('dialog').press('Escape');
+        await page.getByRole('dialog').or(page.getByRole('alertdialog')).press('Escape');
     }
 
     if (await dialogIsOpen(page)) {
@@ -20,13 +20,13 @@ const dismissDialog = async (page, reload = true) => {
     }
 
     const closeButton = await page.getByRole('button', { name: /\b(close|okay|ok|dismiss|exit|cancel|submit|apply|x)\b/iu });
-    if (await closeButton.count() > 0) {
+    if (await dialogIsOpen(page) && await closeButton.count() > 0) {
         await closeButton.first().click();
     }
 
     const closeControl = await page.getByRole('*', { name: /\b(close|okay|ok|dismiss|exit|cancel|submit|apply|x)\b/iu });
-    if (await closeButton.count() > 0) {
-        await closeButton.first().click();
+    if (await dialogIsOpen(page) && await closeControl.count() > 0) {
+        await closeControl.first().click();
     }
 
     if (reload && await dialogIsOpen(page)) {
@@ -53,9 +53,19 @@ const dialogIsOpen = async (page) => {
     const body = await page.locator('body');
     await waitForAnimationEnd(body);
 
-    // Now, check for dialog presence
+    // Now, check for dialog presence and visibility.
+    // Some implementations keep the dialog in the DOM but hide it with opacity/pointer-events/hidden attr.
     const dialog = page.getByRole('dialog').or(page.getByRole('alertdialog'));
-    return await dialog.count() > 0;
+    if (await dialog.count() === 0) return false;
+
+    // Playwright's isVisible() doesn't account for opacity:0, so check it ourselves.
+    return await dialog.first().evaluate(el => {
+        if (el.hidden) return false;
+        const s = window.getComputedStyle(el);
+        if (s.display === 'none' || s.visibility === 'hidden') return false;
+        if (parseFloat(s.opacity) === 0) return false;
+        return true;
+    });
 }
 
 /* Function to check if focus is inside the dialog
@@ -63,7 +73,7 @@ const dialogIsOpen = async (page) => {
 */
 const focusIsInDialog = async (page) => {
     return await page.evaluate((obj) => obj.dialog.contains(document.activeElement) || document.activeElement.tagName === 'BODY', 
-        { dialog: await page.getByRole('dialog').elementHandle()});
+        { dialog: await page.getByRole('dialog').or(page.getByRole('alertdialog')).elementHandle()});
 }
 
 const tryToEscapeDialog = async (page, key, iterations) => {
@@ -119,7 +129,7 @@ module.exports.run = async ({ page, assert, utils }) => {
                 throw new Error("Unable to test because no dialog was found");
             }
 
-            await page.getByRole('dialog').press('Escape');
+            await page.getByRole('dialog').or(page.getByRole('alertdialog')).press('Escape');
             if (!(await dialogIsOpen(page))) {
                 totalSuccess += 1;
             }
@@ -213,6 +223,40 @@ module.exports.run = async ({ page, assert, utils }) => {
         return totalSuccess === totalTriggers;
     });
 
+    await assert("Closed dialogs are not exposed to assistive technology", async () => {
+        await utils.reload(); // Ensure clean state before starting
+        await dismissDialog(page, false); // Ensure no dialog is open
+
+        // Before any trigger is clicked, check that no dialog role appears in the
+        // accessibility tree. getByRole queries the accessibility tree, so if a
+        // dialog is found, it's exposed to assistive technology regardless of
+        // visual hiding (e.g. opacity:0).
+        const exposedDialogs = page.getByRole('dialog').or(page.getByRole('alertdialog'));
+        const exposedCount = await exposedDialogs.count();
+
+        if (exposedCount === 0) {
+            return true;
+        }
+
+        let failureReasons = [];
+        for (let i = 0; i < exposedCount; i++) {
+            const dialog = exposedDialogs.nth(i);
+            const label = await dialog.evaluate(el => {
+                return el.getAttribute('aria-label')
+                    || (el.getAttribute('aria-labelledby') && document.getElementById(el.getAttribute('aria-labelledby'))?.textContent?.trim())
+                    || '';
+            });
+            const displayLabel = label || `dialog ${i + 1}`;
+            failureReasons.push(
+                `Dialog "${displayLabel}" is exposed in the accessibility tree when closed. ` +
+                `Use the hidden attribute, display:none, or remove the dialog from the DOM when not open. ` +
+                `opacity:0 alone does not hide content from screen readers or the tab order.`
+            );
+        }
+
+        return { pass: false, message: failureReasons.join(' ') };
+    });
+
     await assert("Each modal dialog hides content behind it while open", async () => {
         await utils.reload(); // Ensure clean state before starting
         await dismissDialog(page, false); // Ensure no dialog is open
@@ -236,9 +280,20 @@ module.exports.run = async ({ page, assert, utils }) => {
             if (!isNativeModal) {
                 // If not a native modal dialog, check if content behind the dialog is hidden from screen reader users.
                 let isScreenReaderHidden = await trigger.evaluate(el => {
-                    // Use axe-core's util to determine hidden from screen reader users.
-                    let vEl = window.axe.utils.getNodeFromTree(el)
-                    return !window.axe.commons.dom.isVisibleToScreenReaders(vEl);
+                    try {
+                        // Use axe-core's util to determine hidden from screen reader users.
+                        let vEl = window.axe.utils.getNodeFromTree(el);
+                        return !window.axe.commons.dom.isVisibleToScreenReaders(vEl);
+                    } catch (e) {
+                        // axe tree may be stale (e.g. React re-render). Fall back to DOM checks.
+                        let current = el;
+                        while (current && current !== document.documentElement) {
+                            if (current.getAttribute('aria-hidden') === 'true') return true;
+                            if (current.hasAttribute('inert')) return true;
+                            current = current.parentElement;
+                        }
+                        return false;
+                    }
                 });
             
                 if (!isScreenReaderHidden) {

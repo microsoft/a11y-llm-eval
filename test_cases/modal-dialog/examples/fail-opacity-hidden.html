@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fail - Dialog Hidden With Opacity Only</title>
+<script id="a11y-assertions" type="application/json">{
+    "assertions": {
+        "Each dialog has a dialog role": "pass",
+        "Each dialog can be closed by escape key": "pass",
+        "Each modal dialog traps keyboard focus": "pass",
+        "Each modal dialog takes focus when opened": "pass",
+        "Focus is not lost when each dialog closes": "pass",
+        "Closed dialogs are not exposed to assistive technology": "fail",
+        "Each modal dialog hides content behind it while open": "fail"
+    }
+}</script>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 40px;
+            background: #f5f5f5;
+        }
+
+        .overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            /* BUG: using opacity alone does not hide from AT or keyboard */
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+        }
+
+        .overlay.is-open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .dialog {
+            background: white;
+            border-radius: 8px;
+            padding: 24px;
+            max-width: 400px;
+            width: 90%;
+        }
+
+        .dialog h2 { margin: 0 0 12px; }
+        .dialog p { margin: 0 0 20px; color: #555; }
+
+        .actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        button {
+            padding: 8px 16px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+            border-color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <h1>Fail - Dialog Hidden With Opacity Only</h1>
+    <p>This dialog uses <code>opacity: 0</code> to hide. The dialog content remains in the
+       accessibility tree and tab order when closed, which means screen reader users can
+       navigate to it and keyboard users can tab into it.</p>
+
+    <button class="trigger" id="openBtn">Delete item</button>
+
+    <div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+        <div class="dialog">
+            <h2 id="dlgTitle">Confirm deletion</h2>
+            <p>This item will be permanently removed. This cannot be undone.</p>
+            <div class="actions">
+                <button id="cancelBtn">Cancel</button>
+                <button class="btn-danger" id="confirmBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const openBtn = document.getElementById('openBtn');
+        const overlay = document.getElementById('overlay');
+        const cancelBtn = document.getElementById('cancelBtn');
+        const confirmBtn = document.getElementById('confirmBtn');
+
+        function openDialog() {
+            overlay.classList.add('is-open');
+            cancelBtn.focus();
+        }
+
+        function closeDialog() {
+            overlay.classList.remove('is-open');
+            openBtn.focus();
+        }
+
+        openBtn.addEventListener('click', openDialog);
+        cancelBtn.addEventListener('click', closeDialog);
+        confirmBtn.addEventListener('click', closeDialog);
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) closeDialog();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && overlay.classList.contains('is-open')) {
+                closeDialog();
+            }
+        });
+    </script>
+</body>
+</html>
