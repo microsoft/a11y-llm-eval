@@ -160,7 +160,7 @@ CASES = [
         {
             "combined": "enter your name",
             "helpers": [
-                {"text": "Enter your name", "source": "HELPER_NEARBY"},
+                {"text": "Enter your name", "source": "PLACEHOLDER_ATTR"},
             ],
             "accessible_description": "",
         },

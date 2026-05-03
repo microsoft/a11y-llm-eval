@@ -11,6 +11,7 @@ const SOURCE_HELPER_NEARBY = "HELPER_NEARBY";
 const SOURCE_ARIA_DESCRIBEDBY = "ARIA_DESCRIBEDBY";
 const SOURCE_ARIA_DESCRIPTION = "ARIA_DESCRIPTION";
 const SOURCE_ARIA_PLACEHOLDER = "ARIA_PLACEHOLDER";
+const SOURCE_PLACEHOLDER_ATTR = "PLACEHOLDER_ATTR";
 const SOURCE_TITLE = "TITLE";
 const SOURCE_CSS_PLACEHOLDER = "CSS_PLACEHOLDER";
 const SOURCE_NONE = "NONE";
@@ -44,6 +45,7 @@ const getHelperText = async (el, opts = {}) => {
             SOURCE_ARIA_DESCRIBEDBY,
             SOURCE_ARIA_DESCRIPTION,
             SOURCE_ARIA_PLACEHOLDER,
+            SOURCE_PLACEHOLDER_ATTR,
             SOURCE_TITLE,
             SOURCE_CSS_PLACEHOLDER,
             SOURCE_NONE,
@@ -226,7 +228,7 @@ const getHelperText = async (el, opts = {}) => {
             && placeholderText.toLowerCase() !== labelLower
             && !isMostlyFromLabel(placeholderText.toLowerCase(), labelLower)
         ) {
-            addHelper(placeholderText, SOURCE_HELPER_NEARBY, el);
+            addHelper(placeholderText, SOURCE_PLACEHOLDER_ATTR, el);
         }
 
         // --- 3.5. CSS pseudo-element content (e.g. content: attr(data-placeholder)) ---
@@ -462,6 +464,7 @@ const getHelperText = async (el, opts = {}) => {
         SOURCE_ARIA_DESCRIBEDBY,
         SOURCE_ARIA_DESCRIPTION,
         SOURCE_ARIA_PLACEHOLDER,
+        SOURCE_PLACEHOLDER_ATTR,
         SOURCE_TITLE,
         SOURCE_CSS_PLACEHOLDER,
         SOURCE_NONE,
@@ -498,6 +501,7 @@ module.exports.SOURCE_HELPER_NEARBY = SOURCE_HELPER_NEARBY;
 module.exports.SOURCE_ARIA_DESCRIBEDBY = SOURCE_ARIA_DESCRIBEDBY;
 module.exports.SOURCE_ARIA_DESCRIPTION = SOURCE_ARIA_DESCRIPTION;
 module.exports.SOURCE_ARIA_PLACEHOLDER = SOURCE_ARIA_PLACEHOLDER;
+module.exports.SOURCE_PLACEHOLDER_ATTR = SOURCE_PLACEHOLDER_ATTR;
 module.exports.SOURCE_TITLE = SOURCE_TITLE;
 module.exports.SOURCE_CSS_PLACEHOLDER = SOURCE_CSS_PLACEHOLDER;
 module.exports.SOURCE_NONE = SOURCE_NONE;

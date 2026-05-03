@@ -7,7 +7,7 @@ const {
     PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
     SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
 } = require('./get-form-field-wrapper');
-const { combineHelperTexts, getHelperText, SOURCE_ARIA_DESCRIBEDBY, SOURCE_ARIA_DESCRIPTION, SOURCE_TITLE, SOURCE_CSS_PLACEHOLDER } = require('./get-helper-text');
+const { combineHelperTexts, getHelperText, SOURCE_ARIA_DESCRIBEDBY, SOURCE_ARIA_DESCRIPTION, SOURCE_TITLE, SOURCE_CSS_PLACEHOLDER, SOURCE_PLACEHOLDER_ATTR } = require('./get-helper-text');
 const { discover } = require('./discovery');
 
 let testFn = {};
@@ -366,6 +366,7 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
             helper.source === SOURCE_ARIA_DESCRIBEDBY
             || helper.source === SOURCE_ARIA_DESCRIPTION
             || helper.source === SOURCE_TITLE
+            || helper.source === SOURCE_PLACEHOLDER_ATTR
         ));
     };
 
