@@ -22,17 +22,17 @@ const getFormFields = async (scope) => {
     return await getAllFormFieldWrappers(scope);
 };
 
-const getGroupDescriptionLocator = (locator, groupKind) => {
+const getGroupDescriptionLocator = (locator, groupKind, ancestorDepth = 1) => {
     if (groupKind === 'fieldset') {
-        return locator.locator('xpath=ancestor::fieldset[1]').first();
+        return locator.locator(`xpath=ancestor::fieldset[${ancestorDepth}]`).first();
     }
 
     if (groupKind === 'aria') {
-        return locator.locator('xpath=ancestor::*[@role="radiogroup" or @role="group"][1]').first();
+        return locator.locator(`xpath=ancestor::*[@role="radiogroup" or @role="group"][${ancestorDepth}]`).first();
     }
 
     if (groupKind === 'group') {
-        return locator.locator('xpath=ancestor::*[@role="group"][1]').first();
+        return locator.locator(`xpath=ancestor::*[@role="group"][${ancestorDepth}]`).first();
     }
 
     if (groupKind === 'wrapper') {
@@ -1076,7 +1076,22 @@ testFn.discoverRadios = async (scope) => {
         const fieldsets = Array.from(document.querySelectorAll('fieldset'));
         const forms = Array.from(document.querySelectorAll('form'));
         const nativeFieldset = radio.closest('fieldset');
-        const ariaGroup = radio.closest('[role="radiogroup"], [role="group"]');
+
+        // Find the nearest ARIA group. If it has no accessible name, walk up
+        // to find a labeled ancestor group (same pattern as checkbox discovery).
+        let ariaGroup = radio.closest('[role="radiogroup"], [role="group"]');
+        if (ariaGroup && ariaGroup.getAttribute('role') !== 'radiogroup') {
+            const hasName = ariaGroup.hasAttribute('aria-label')
+                || ariaGroup.hasAttribute('aria-labelledby');
+            if (!hasName) {
+                const outer = ariaGroup.parentElement
+                    && ariaGroup.parentElement.closest('[role="radiogroup"], [role="group"], fieldset');
+                if (outer) {
+                    ariaGroup = outer.tagName === 'FIELDSET' ? null : outer;
+                }
+            }
+        }
+
         const isNativeRadio = radio.matches('input[type="radio"]');
         const ariaGroupRole = ariaGroup ? ariaGroup.getAttribute('role') : '';
         const requiredAttr = radio.getAttribute('required');
@@ -1118,11 +1133,24 @@ testFn.discoverRadios = async (scope) => {
         let groupKind;
         let groupLabel = '';
                 let groupHasProgrammaticDescription = false;
+        let groupId = null;
+        let groupAncestorDepth = 1;
 
         if (ariaGroup) {
             const groupIndex = ariaGroups.indexOf(ariaGroup);
             groupKey = `aria:${groupIndex}:${getNodePath(ariaGroup)}`;
             groupKind = 'aria';
+            groupId = ariaGroup.id || null;
+            // Compute ancestor depth for the resolved group
+            const selector = '[role="radiogroup"], [role="group"]';
+            let depth = 0;
+            let cur = radio.closest(selector);
+            while (cur) {
+                depth++;
+                if (cur === ariaGroup) break;
+                cur = cur.parentElement && cur.parentElement.closest(selector);
+            }
+            groupAncestorDepth = depth || 1;
         } else if (nativeFieldset) {
             const fieldsetIndex = fieldsets.indexOf(nativeFieldset);
             groupKey = `fieldset:${fieldsetIndex}:${getNodePath(nativeFieldset)}`;
@@ -1160,6 +1188,8 @@ testFn.discoverRadios = async (scope) => {
             groupKey,
             groupKind,
             groupLabel,
+            groupId,
+            groupAncestorDepth,
             groupHasProgrammaticDescription,
             disabled,
             checked,
@@ -1185,7 +1215,17 @@ testFn.discoverRadios = async (scope) => {
         let groupHasProgrammaticDescription = false;
         let groupLabel = meta.groupLabel;
         let groupVisualLabel = '';
-        const groupLocator = getGroupDescriptionLocator(locator, meta.groupKind);
+        // When the resolved group has an id, use it directly instead of
+        // relying on ancestor axis which may find a different (nested) group.
+        // Otherwise use ancestor depth to skip past intermediate wrappers.
+        let groupLocator;
+        if (meta.groupId) {
+            groupLocator = scope.locator(`[id="${meta.groupId.replace(/"/g, '\\"')}"]`);
+        } else if (meta.groupAncestorDepth && meta.groupAncestorDepth > 1) {
+            groupLocator = getGroupDescriptionLocator(locator, meta.groupKind, meta.groupAncestorDepth);
+        } else {
+            groupLocator = getGroupDescriptionLocator(locator, meta.groupKind);
+        }
         let visualLabel = rawVisualLabel;
 
         if (groupLocator && await groupLocator.count()) {
@@ -1426,7 +1466,24 @@ testFn.discoverCheckboxes = async (scope) => {
                 const groupContainers = Array.from(document.querySelectorAll('fieldset, [role="group"]'));
                 const fieldsets = Array.from(document.querySelectorAll('fieldset'));
                 const isNativeCheckbox = checkbox.matches('input[type="checkbox"]');
-                const groupContainer = checkbox.closest('fieldset, [role="group"]');
+
+                // Find the nearest grouping ancestor. If it's a role="group"
+                // without an accessible name, walk up to see if a labeled
+                // ancestor group/fieldset exists (common pattern: decorative
+                // inner wrapper inside a properly labeled outer group).
+                let groupContainer = checkbox.closest('fieldset, [role="group"]');
+                if (groupContainer && groupContainer.tagName !== 'FIELDSET') {
+                    const hasName = groupContainer.hasAttribute('aria-label')
+                        || groupContainer.hasAttribute('aria-labelledby');
+                    if (!hasName) {
+                        const outer = groupContainer.parentElement
+                            && groupContainer.parentElement.closest('fieldset, [role="group"]');
+                        if (outer) {
+                            groupContainer = outer;
+                        }
+                    }
+                }
+
                 const wrapperContainers = Array.from(document.querySelectorAll(wrapperSelector));
                 const wrapperContainer = findWrapperContainer(checkbox, wrapperSelector);
                 const requiredAttr = checkbox.getAttribute('required');
@@ -1470,15 +1527,36 @@ testFn.discoverCheckboxes = async (scope) => {
                 let groupLabel = '';
                 let groupProgrammaticallyRequired = false;
                 let groupHasProgrammaticDescription = false;
+                let groupId = null;
+                let groupAncestorDepth = 1;
 
                 if (groupContainer) {
                     if (groupContainer.tagName === 'FIELDSET') {
                         groupKey = `fieldset:${fieldsets.indexOf(groupContainer)}:${getNodePath(groupContainer)}`;
                         groupKind = 'fieldset';
                         groupLabel = getLegendText(groupContainer);
+                        // Count how many fieldset ancestors are between the checkbox and this one
+                        let depth = 0;
+                        let cur = checkbox.closest('fieldset');
+                        while (cur) {
+                            depth++;
+                            if (cur === groupContainer) break;
+                            cur = cur.parentElement && cur.parentElement.closest('fieldset');
+                        }
+                        groupAncestorDepth = depth || 1;
                     } else {
                         groupKey = `group:${groupContainers.indexOf(groupContainer)}:${getNodePath(groupContainer)}`;
                         groupKind = 'group';
+                        groupId = groupContainer.id || null;
+                        // Count how many [role="group"] ancestors are between the checkbox and this one
+                        let depth = 0;
+                        let cur = checkbox.closest('[role="group"]');
+                        while (cur) {
+                            depth++;
+                            if (cur === groupContainer) break;
+                            cur = cur.parentElement && cur.parentElement.closest('[role="group"]');
+                        }
+                        groupAncestorDepth = depth || 1;
                         if (groupContainer.getAttribute('aria-required') === 'true') {
                             groupProgrammaticallyRequired = true;
                         }
@@ -1513,6 +1591,8 @@ testFn.discoverCheckboxes = async (scope) => {
                     groupKey,
                     groupKind,
                     groupLabel,
+                    groupId,
+                    groupAncestorDepth,
                     groupProgrammaticallyRequired,
                     disabled,
                     checked,
@@ -1537,7 +1617,17 @@ testFn.discoverCheckboxes = async (scope) => {
         let groupHasProgrammaticDescription = false;
         let groupLabel = meta.groupLabel;
         let groupVisualLabel = '';
-        const groupLocator = getGroupDescriptionLocator(locator, meta.groupKind);
+        // When the resolved group has an id, use it directly instead of
+        // relying on ancestor axis which may find a different (nested) group.
+        // Otherwise use ancestor depth to skip past intermediate wrappers.
+        let groupLocator;
+        if (meta.groupId) {
+            groupLocator = scope.locator(`[id="${meta.groupId.replace(/"/g, '\\"')}"]`);
+        } else if (meta.groupAncestorDepth && meta.groupAncestorDepth > 1) {
+            groupLocator = getGroupDescriptionLocator(locator, meta.groupKind, meta.groupAncestorDepth);
+        } else {
+            groupLocator = getGroupDescriptionLocator(locator, meta.groupKind);
+        }
         let visualLabel = rawVisualLabel;
 
         if (groupLocator && await groupLocator.count()) {
