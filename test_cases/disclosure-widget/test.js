@@ -1,4 +1,6 @@
 // New harness signature: module.exports.run = async ({ page, assert }) => { ... }
+const { isExposedToAccessibilityTree } = require('../../node_runner/helpers/get-accessibility-tree');
+
 module.exports.run = async ({ page, assert }) => {
   const examples = await page.$$(".example");
 
@@ -31,19 +33,21 @@ module.exports.run = async ({ page, assert }) => {
       }
 
       applicableExamples += 1;
-      
-      let isHidden = await example.$eval(".details", el => {
-        const virtualNode = window.axe.utils.getNodeFromTree(el);
+
+      // Visual check: is the content hidden from sighted users?
+      let isVisuallyHidden = await example.$eval(".details", el => {
         const hasNoContentBox = el.clientHeight === 0;
         const style = window.getComputedStyle(el);
         const clipsOverflow = /(hidden|clip)/.test(`${style.overflow} ${style.overflowX} ${style.overflowY}`);
-        const isVisuallyHidden = !window.axe.commons.dom.isVisible(el, false, true)
+        return !window.axe.commons.dom.isVisible(el, false, true)
           || (hasNoContentBox && clipsOverflow);
-        const isScreenReaderHidden = !window.axe.commons.dom.isVisibleToScreenReaders(virtualNode);
-        return isVisuallyHidden && isScreenReaderHidden;
       });
 
-      if (!isHidden) {
+      // AT check: is the content hidden from the accessibility tree?
+      const detailsHandle = await example.$(".details");
+      let isScreenReaderHidden = detailsHandle ? !(await isExposedToAccessibilityTree(detailsHandle)) : true;
+
+      if (!isVisuallyHidden || !isScreenReaderHidden) {
         return false;
       }
     }

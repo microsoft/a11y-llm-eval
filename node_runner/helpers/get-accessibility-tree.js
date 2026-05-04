@@ -68,9 +68,18 @@ const restoreTargetNode = async (target, markerState) => {
     });
 };
 
-const getAccessibilityNodeInfo = async (target) => {
+/**
+ * Core: resolve a Playwright ElementHandle / Locator to its raw CDP
+ * accessibility node.  Returns the AXNode object, or null when the
+ * element cannot be found.
+ *
+ * A temporary data-attribute marker is stamped on the DOM element so
+ * the CDP DOM.querySelector can locate it by nodeId.  The marker is
+ * always cleaned up in the finally block.
+ */
+const getAXNode = async (target) => {
     if (!target) {
-        return emptyNodeInfo();
+        return null;
     }
 
     const markerValue = `ax-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -89,7 +98,7 @@ const getAccessibilityNodeInfo = async (target) => {
         });
 
         if (!nodeId) {
-            return emptyNodeInfo();
+            return null;
         }
 
         const { nodes = [] } = await session.send('Accessibility.getPartialAXTree', {
@@ -97,14 +106,9 @@ const getAccessibilityNodeInfo = async (target) => {
             fetchRelatives: false,
         });
 
-        const axNode = nodes[0];
-        return {
-            role: normalizeText(axNode && axNode.role && axNode.role.value),
-            name: normalizeText(axNode && axNode.name && axNode.name.value),
-            description: normalizeText(axNode && axNode.description && axNode.description.value),
-        };
+        return nodes[0] || null;
     } catch {
-        return emptyNodeInfo();
+        return null;
     } finally {
         try {
             await restoreTargetNode(target, markerState);
@@ -112,6 +116,18 @@ const getAccessibilityNodeInfo = async (target) => {
             // Ignore cleanup failures if the node is detached or the page navigated.
         }
     }
+};
+
+const getAccessibilityNodeInfo = async (target) => {
+    const axNode = await getAXNode(target);
+    if (!axNode) {
+        return emptyNodeInfo();
+    }
+    return {
+        role: normalizeText(axNode.role && axNode.role.value),
+        name: normalizeText(axNode.name && axNode.name.value),
+        description: normalizeText(axNode.description && axNode.description.value),
+    };
 };
 
 const getAccessibleName = async (target) => {
@@ -124,6 +140,19 @@ const getAccessibleDescription = async (target) => {
     return node.description;
 };
 
+/**
+ * Returns true when the element is present in the accessibility tree
+ * (i.e. exposed to assistive technology).  Uses the CDP `ignored` flag
+ * which accounts for aria-hidden, inert, display:none, visibility:hidden,
+ * the <dialog> open state, and every other browser-level hiding mechanism.
+ */
+const isExposedToAccessibilityTree = async (target) => {
+    const axNode = await getAXNode(target);
+    return axNode != null && !axNode.ignored;
+};
+
+module.exports.getAXNode = getAXNode;
 module.exports.getAccessibilityNodeInfo = getAccessibilityNodeInfo;
 module.exports.getAccessibleName = getAccessibleName;
 module.exports.getAccessibleDescription = getAccessibleDescription;
+module.exports.isExposedToAccessibilityTree = isExposedToAccessibilityTree;

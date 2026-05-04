@@ -1,3 +1,5 @@
+const { isExposedToAccessibilityTree } = require('../../node_runner/helpers/get-accessibility-tree');
+
 /* Function to dismiss the dialog by clicking a button with common dismissal names, pressing Escape, or refreshing the page */
 const dismissDialog = async (page, reload = true) => {
     if (!await dialogIsOpen(page)) {
@@ -278,25 +280,11 @@ module.exports.run = async ({ page, assert, utils }) => {
             });
 
             if (!isNativeModal) {
-                // If not a native modal dialog, check if content behind the dialog is hidden from screen reader users.
-                let isScreenReaderHidden = await trigger.evaluate(el => {
-                    try {
-                        // Use axe-core's util to determine hidden from screen reader users.
-                        let vEl = window.axe.utils.getNodeFromTree(el);
-                        return !window.axe.commons.dom.isVisibleToScreenReaders(vEl);
-                    } catch (e) {
-                        // axe tree may be stale (e.g. React re-render). Fall back to DOM checks.
-                        let current = el;
-                        while (current && current !== document.documentElement) {
-                            if (current.getAttribute('aria-hidden') === 'true') return true;
-                            if (current.hasAttribute('inert')) return true;
-                            current = current.parentElement;
-                        }
-                        return false;
-                    }
-                });
-            
-                if (!isScreenReaderHidden) {
+                // Check the accessibility tree directly — if the trigger is still
+                // exposed, background content hasn't been properly hidden.
+                let isTriggerExposed = await isExposedToAccessibilityTree(trigger);
+
+                if (isTriggerExposed) {
                     // Trigger is still visible to screen reader users, so fail this iteration.
                     // Detect partial attempts so the message can explain what's missing.
                     const { hasAriaModal, hasAriaHidden } = await page.evaluate(() => {
