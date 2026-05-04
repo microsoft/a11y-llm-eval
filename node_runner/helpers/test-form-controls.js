@@ -951,11 +951,13 @@ testFn.testLabelInName = async (scope, discoveryCache) => {
     }
 
     // Normalize for comparison:
+    // - strip emoji pictographics (non-speakable for voice input)
     // - replace all Unicode punctuation with spaces
     // - collapse whitespace (including NBSP)
     // - trim + lowercase
     const normalizeForCompare = (s) => (s || '')
         .toString()
+        .replace(/[\p{Extended_Pictographic}\uFE0F\u200D]/gu, ' ')
         .replace(/\p{P}+/gu, ' ')
         .replace(/[\s\u00A0]+/g, ' ')
         .trim()
