@@ -667,10 +667,14 @@ def generate_html_with_agent_meta(
     # Warn loudly when the agent failed to produce usable HTML so the user
     # understands *why* a test will fail rather than seeing a silent FAIL.
     if not html or not is_probably_complete_html(html):
+        # Surface the empty generation through the existing limit-error
+        # reporting pipeline so the post-run summary is explicit.
+        if not result.limit_error:
+            result.limit_error = "empty_generation"
         print(
             f"Warning: agent did not produce valid HTML "
             f"(model={model_display_name or model}, output_source={output_source}"
-            f"{', limit_error=' + result.limit_error if result.limit_error else ''})"
+            f", limit_error={result.limit_error})"
         )
 
     meta = _build_generation_meta(
@@ -975,6 +979,12 @@ def generate_html_with_skill_multi_turn(
             ),
             "custom_instructions_path": custom_instructions_path,
         })
+        # Surface empty generation through the limit-error pipeline.
+        turn_limit_error = per_turn.get("limit_error")
+        if (not turn_html or not is_probably_complete_html(turn_html)) and not turn_limit_error:
+            turn_limit_error = "empty_generation"
+            turn_meta["agent_limit_error"] = turn_limit_error
+
         turn_records.append({
             "turn_id": turn["id"],
             "turn_index": turn_index,
@@ -982,7 +992,7 @@ def generate_html_with_skill_multi_turn(
             "html": turn_html,
             "meta": turn_meta,
             "conversation": per_turn.get("transcript") or {},
-            "error": per_turn.get("limit_error"),
+            "error": turn_limit_error,
         })
 
         if turn_html and is_probably_complete_html(turn_html) and not per_turn.get("limit_error"):

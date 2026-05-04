@@ -222,6 +222,7 @@ Prompt caching for Anthropic / Claude models is handled by the Copilot SDK and t
   - Stripping Markdown fences if present.
   - Extracting the first `<html> ... </html>` block if present.
 - If the agent hits a limit (timeout, token, message) during generation, the harness logs the error prominently and continues with remaining tasks. A summary of all limit errors is printed at the end of generation.
+- If the agent produces empty or invalid HTML (no `<html>…</html>` block, fewer than 50 characters, or missing `<body>`) without a pre-existing limit error, the harness records a synthetic `agent_limit_error` of `"empty_generation"`. This flows through the same limit-error reporting pipeline so the post-run summary is explicit. The empty artifact is still written to disk and evaluates to `FAIL`.
 - Prompt hashing:
   - `compute_prompt_hash(user_prompt)` depends on the configured output-format instructions, custom instructions, and the user prompt.
   - Changing output-format instructions or custom instructions changes the hash.
