@@ -206,6 +206,7 @@ The effective output-format instructions are:
 
 - `providers.<provider>.auth.mode` may be omitted or set to `env` to preserve the runtime's existing environment-based behavior.
 - `auth.mode = default_azure_credential` is no longer supported after the migration to the Copilot SDK. Configure a BYOK provider with an explicit `api_key` (or `api_key_env`), or use Copilot's first-party routing.
+- `providers.<provider>.api_key_cmd` (string) — a shell command whose stdout is used as the `api_key`. The result is cached for 30 minutes and automatically refreshed, making it suitable for short-lived tokens (e.g. `gcloud auth print-access-token` for Vertex AI). Takes effect only when neither `api_key` nor `api_key_env` resolves a value.
 
 If `run --temperature` is not provided, the effective temperature defaults to `defaults.temperature` if present.
 

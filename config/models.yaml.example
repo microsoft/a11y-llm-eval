@@ -48,6 +48,13 @@ providers:
   #   azure:
   #     api_version: "2024-08-01-preview"
 
+  # # Example BYOK: Google Vertex AI (via OpenAI-compatible endpoint).
+  # # Uses api_key_cmd to auto-refresh the access token for runs > 1 hour.
+  # google:
+  #   type: openai
+  #   base_url: https://us-central1-aiplatform.googleapis.com/v1beta1/projects/MY_PROJECT/locations/us-central1/endpoints/openapi
+  #   api_key_cmd: gcloud auth print-access-token
+
 models:
   # First-party Copilot routing (no provider config required):
   - name: claude-sonnet-4.6

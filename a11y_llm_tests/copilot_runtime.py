@@ -1059,10 +1059,46 @@ class CopilotRuntime:
             env_value = os.environ.get(api_key_env)
             if env_value:
                 payload["api_key"] = env_value
+        # Pull api_key by running a shell command (e.g. `gcloud auth
+        # print-access-token`).  The result is cached for 30 minutes so
+        # long runs automatically refresh expired tokens.
+        api_key_cmd = provider_config.get("api_key_cmd")
+        if "api_key" not in payload and isinstance(api_key_cmd, str):
+            payload["api_key"] = _run_credential_cmd(api_key_cmd)
         azure_cfg = provider_config.get("azure")
         if isinstance(azure_cfg, dict):
             payload["azure"] = dict(azure_cfg)
         return payload or None
+
+
+# ---- Credential command cache ----
+
+_CREDENTIAL_CMD_CACHE: Dict[str, tuple[str, float]] = {}  # cmd -> (value, expiry_time)
+_CREDENTIAL_CMD_TTL = 30 * 60  # 30 minutes
+
+
+def _run_credential_cmd(cmd: str) -> str:
+    """Run a shell command to obtain a credential, caching the result.
+
+    The cache TTL is 30 minutes, so long-running evaluations automatically
+    refresh expired tokens (e.g. ``gcloud auth print-access-token``).
+    """
+    cached = _CREDENTIAL_CMD_CACHE.get(cmd)
+    if cached is not None:
+        value, expiry = cached
+        if time.time() < expiry:
+            return value
+
+    result = subprocess.run(
+        cmd, shell=True, capture_output=True, text=True, timeout=30
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RuntimeError(
+            f"api_key_cmd failed (exit {result.returncode}): {result.stderr.strip() or '(no output)'}"
+        )
+    token = result.stdout.strip()
+    _CREDENTIAL_CMD_CACHE[cmd] = (token, time.time() + _CREDENTIAL_CMD_TTL)
+    return token
 
 
 # ---- Synchronous helpers used by the (still sync) generator API ----
