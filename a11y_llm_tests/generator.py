@@ -10,10 +10,12 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from . import node_bridge
 from .copilot_runtime import (
     AgentGenerationResult,
     run_agent_generation_sync,
@@ -342,6 +344,7 @@ def _load_cached_agent_generation(
                 "agent_sandbox",
                 "agent_limit_error",
                 "agent_limits",
+                "browser_smoke",
                 "custom_instructions_delivery",
                 "custom_instructions_path",
             ]:
@@ -376,6 +379,26 @@ def _load_cached_agent_generation(
             pass
 
     meta["generation_mode"] = meta.get("generation_mode") or "copilot_agent"
+    browser_smoke = meta.get("browser_smoke")
+    if not isinstance(browser_smoke, dict) or "rendered" not in browser_smoke:
+        browser_smoke = _run_browser_smoke_check(
+            cached_html,
+            sandbox_workdir=sandbox_workdir,
+            cache_file=cache_file,
+        )
+        meta["browser_smoke"] = browser_smoke
+        try:
+            loaded = {}
+            if meta_file.exists():
+                loaded = json.loads(meta_file.read_text(encoding="utf-8"))
+                if not isinstance(loaded, dict):
+                    loaded = {}
+            loaded["browser_smoke"] = browser_smoke
+            atomic_write_text(meta_file, json.dumps(loaded, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+    if not _browser_smoke_rendered(browser_smoke):
+        return None, None, None, "browser_smoke_render_failed"
 
     session_cache = _agent_session_cache_path(cache_file)
     restored_log_path = None
@@ -429,6 +452,7 @@ def _write_agent_generation_cache(
         "agent_sandbox": meta.get("agent_sandbox"),
         "agent_limit_error": meta.get("agent_limit_error"),
         "agent_limits": meta.get("agent_limits"),
+        "browser_smoke": meta.get("browser_smoke"),
         "custom_instructions_delivery": meta.get("custom_instructions_delivery"),
         "custom_instructions_path": meta.get("custom_instructions_path"),
     }
@@ -544,6 +568,36 @@ def format_agent_sandbox(value: Any) -> Optional[str]:
     if isinstance(value, list) and len(value) == 2:
         return f"{value[0]}:{value[1]}"
     return str(value)
+
+
+def _browser_smoke_rendered(browser_smoke: Any) -> bool:
+    return isinstance(browser_smoke, dict) and browser_smoke.get("rendered") is True
+
+
+def _run_browser_smoke_check(
+    html: str,
+    *,
+    sandbox_workdir: Optional[str] = None,
+    cache_file: Optional[Path] = None,
+) -> Dict[str, Any]:
+    if sandbox_workdir:
+        return node_bridge.run_browser_smoke_eval(html, html_dir=sandbox_workdir)
+
+    with tempfile.TemporaryDirectory() as td:
+        temp_dir = Path(td)
+        if cache_file is not None:
+            cached_files_dir = _sandbox_files_cache_dir(cache_file)
+            if cached_files_dir.is_dir():
+                for item in cached_files_dir.iterdir():
+                    try:
+                        target = temp_dir / item.name
+                        if item.is_dir():
+                            shutil.copytree(item, target, dirs_exist_ok=True)
+                        else:
+                            shutil.copy2(item, target)
+                    except OSError:
+                        pass
+        return node_bridge.run_browser_smoke_eval(html, html_dir=str(temp_dir))
 
 
 # ---- agent generation ---------------------------------------------------
@@ -702,12 +756,22 @@ def generate_html_with_agent_meta(
     meta["agent_session_log_path"] = result.session_log_path
     meta["iteration"] = iteration
     meta["output_source"] = output_source
+    if html and is_probably_complete_html(html) and not result.limit_error:
+        meta["browser_smoke"] = _run_browser_smoke_check(
+            html,
+            sandbox_workdir=sandbox_workdir,
+        )
     meta["custom_instructions_delivery"] = (
         "copilot-instructions-file" if custom_instructions_path else "none"
     )
     meta["custom_instructions_path"] = custom_instructions_path
 
-    if html and is_probably_complete_html(html) and not result.limit_error:
+    if (
+        html
+        and is_probably_complete_html(html)
+        and not result.limit_error
+        and _browser_smoke_rendered(meta.get("browser_smoke"))
+    ):
         _write_agent_generation_cache(
             cache_file=cache_file,
             meta_file=meta_file,
@@ -987,6 +1051,11 @@ def generate_html_with_skill_multi_turn(
             ),
             "custom_instructions_path": custom_instructions_path,
         })
+        if turn_html and is_probably_complete_html(turn_html) and not per_turn.get("limit_error"):
+            turn_meta["browser_smoke"] = _run_browser_smoke_check(
+                turn_html,
+                sandbox_workdir=sandbox_workdir,
+            )
         # Surface empty generation through the limit-error pipeline.
         turn_limit_error = per_turn.get("limit_error")
         if (not turn_html or not is_probably_complete_html(turn_html)) and not turn_limit_error:
@@ -1003,7 +1072,12 @@ def generate_html_with_skill_multi_turn(
             "error": turn_limit_error,
         })
 
-        if turn_html and is_probably_complete_html(turn_html) and not per_turn.get("limit_error"):
+        if (
+            turn_html
+            and is_probably_complete_html(turn_html)
+            and not per_turn.get("limit_error")
+            and _browser_smoke_rendered(turn_meta.get("browser_smoke"))
+        ):
             cache_file, meta_file = _skill_turn_cache_file(
                 model,
                 base_prompt_hash_value,

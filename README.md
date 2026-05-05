@@ -12,7 +12,7 @@ Create a public test suite which can be used to benchmark how well various LLMs 
 - Each test case contains a prompt to generate an HTML page to demonstrate a specific pattern or component.
 - All generations (control, instruction-set variants, and skills) are agentic sessions powered by the [GitHub Copilot SDK](https://pypi.org/project/github-copilot-sdk/) running inside a Docker sandbox. The agent can call built-in tools (e.g. file writes, shell commands) and iteratively refine its output.
 - **Control** uses the test prompt with no custom accessibility instructions, measuring baseline behavior. **Instruction-set variants** add custom instructions (delivered via `.github/copilot-instructions.md`). **Skills** use multi-turn conversations with explicit turn prompts and a mounted skill directory.
-- The resulting HTML is rendered in a real browser using Playwright (Chromium). Tests are executed against this rendered page.
+- The resulting artifact directory is served over localhost HTTP and rendered in a real browser using Playwright (Chromium). Tests are executed against this rendered page.
 - The HTML is evaluated against axe-core, one of the most popular automated accessibility testing engines.
 - The HTML is also evaluated against a manually defined set of assertions, customized for the specific test case. This allows for more robust testing than just using axe-core.
 - Tests only pass if zero axe-core WCAG failures are found AND all *requirement* assertions pass. Best Practice (BP) assertion failures do not fail the test but are tracked separately.
@@ -72,7 +72,7 @@ python -m a11y_llm_tests.cli evaluate \
 ```
 
 Artifacts:
-- Each sample's HTML: `runs/<ts>/raw/<test>/<model>__s<idx>.html` (single-sample keeps legacy `<model>.html`)
+- Each sample's artifact directory: `runs/<ts>/raw/<test>/<model>__s<idx>/` containing `index.html` plus any sibling CSS/JS files the agent wrote
 - Screenshots with analogous naming
 - `results.json` now includes per-sample records + an `aggregates` array with pass@k stats.
 - Report includes an aggregate pass@k table and grouped per-sample cards.
@@ -145,7 +145,7 @@ python -m a11y_llm_tests.cli evaluate \
 
 Variant artifacts:
 
-- Variant HTML: `runs/<ts>/raw_variants/<variant_id>/<test>/<model>__s<idx>.html`
+- Variant artifact directory: `runs/<ts>/raw_variants/<variant_id>/<test>/<model>__s<idx>/` containing `index.html` plus any sibling CSS/JS files the agent wrote
 - Agent conversation sidecar for instruction-set variants: `runs/<ts>/raw_variants/<variant_id>/<test>/<model>__s<idx>.agent.json`
 - Variant screenshots: `runs/<ts>/screenshots_variants/<variant_id>/<test>__<model>__s<idx>.png`
 
@@ -214,7 +214,7 @@ python -m a11y_llm_tests.cli evaluate \
 
 Skill artifacts:
 
-- Per-turn HTML: `runs/<ts>/raw_skills/<skill_id>/<test>/<model>__s<idx>__t<turn_index>.html`
+- Per-turn artifact directory: `runs/<ts>/raw_skills/<skill_id>/<test>/<model>__s<idx>__t<turn_index>/` containing `index.html` plus any sibling CSS/JS files the agent wrote for that turn
 - One stitched conversation sidecar per sample: `runs/<ts>/raw_skills/<skill_id>/<test>/<model>__s<idx>.agent.json`
 - Per-turn screenshots: `runs/<ts>/screenshots_skills/<skill_id>/<test>__<model>__s<idx>__t<turn_index>.png`
 - `results.json` emits one record per (test, model, sample, turn) with `prompt_variant_kind = "skill"`, `turn_id`, `turn_index`, and `turn_count_total`, plus one aggregate per (test, model, skill, turn).
@@ -241,9 +241,9 @@ python -m a11y_llm_tests.cli evaluate \
 
 This produces, in a single run directory:
 
-- `raw/…` — control samples
-- `raw_variants/<instruction_set_id>/…` — instruction-set samples (one HTML + `.agent.json` per sample)
-- `raw_skills/<skill_id>/…` — skill samples (one HTML per turn + one stitched `.agent.json` per sample)
+- `raw/…` — control sample directories, each containing `index.html` plus any sibling assets
+- `raw_variants/<instruction_set_id>/…` — instruction-set sample directories plus one `.agent.json` per sample
+- `raw_skills/<skill_id>/…` — skill turn directories plus one stitched `.agent.json` per sample
 - A report with three comparison sections: Control summary, **Instruction Benchmarks (vs Control)**, and **Skills (vs Control)**.
 
 
@@ -295,6 +295,14 @@ python -m a11y_llm_tests.cli evaluate runs\latest
 
 After evaluation, open `runs/latest/index.html` in a browser for the full report.
 Detailed per-sample results are saved to `runs/latest/results.json`.
+
+You can also serve an existing run directory over localhost HTTP:
+
+```bash
+python -m a11y_llm_tests.cli serve runs/latest --open
+```
+
+This serves the full run directory, including `index.html`, `results.json`, screenshots, raw artifacts, and conversation sidecars.
 
 ## Adding a Test Case
 Create a new folder under `test_cases/`:

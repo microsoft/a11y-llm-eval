@@ -218,6 +218,38 @@ class TestRunBasic:
         assert "events" in transcript
 
 
+class TestServeCommand:
+
+    def test_serve_prints_urls_and_closes_server(self, tmp_path, monkeypatch):
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "index.html").write_text("<html><body>report</body></html>", encoding="utf-8")
+
+        closed = []
+
+        class FakeServer:
+            base_url = "http://127.0.0.1:8123"
+            index_url = "http://127.0.0.1:8123/index.html"
+
+            def close(self):
+                closed.append(True)
+
+        monkeypatch.setattr(cli.node_bridge, "serve_directory", lambda *a, **kw: FakeServer())
+
+        def _stop_immediately():
+            raise KeyboardInterrupt()
+
+        monkeypatch.setattr(cli, "_wait_for_serve_interrupt", _stop_immediately)
+
+        result = _runner.invoke(cli.app, ["serve", str(run_dir), "--port", "8123"])
+
+        assert result.exit_code == 0, result.output + (result.stderr or "")
+        assert "Serving run directory" in result.output
+        assert "Base URL: http://127.0.0.1:8123/" in result.output
+        assert "Report URL: http://127.0.0.1:8123/index.html" in result.output
+        assert closed == [True]
+
+
 class TestConcurrency:
     """Concurrency flag wiring."""
 

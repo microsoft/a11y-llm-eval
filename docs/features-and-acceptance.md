@@ -89,7 +89,7 @@ These sandbox directories are intentionally part of the run output: they contain
 
 The default output-format instructions encourage the agent to split CSS and JavaScript into separate files when the output is large. Each sample's output is stored in its own subdirectory (e.g. `<model>__s<sample_index>/index.html`) to prevent filename collisions between samples. At generation time, all non-hidden files the agent wrote in the sandbox working directory (except `index.html` itself, which the harness writes from the canonical HTML string) are copied into that per-sample subdirectory.
 
-At evaluation time, the Node runner loads the page via `file://` navigation (not `page.setContent()`), so `<link>`, `<script src>`, and other relative references resolve against the per-sample directory. This enables the agent to produce arbitrarily large multi-file outputs without hitting per-turn output-token ceilings.
+At evaluation time, the Node runner serves the per-sample directory over a localhost HTTP server and loads `index.html` via `http://127.0.0.1:<port>/index.html` (not `page.setContent()`). This allows `<link>`, `<script src>`, and other relative references to resolve the way they would in a normal hosted deployment while still evaluating the exact generated artifact directory.
 
 ### Security model
 
@@ -146,6 +146,12 @@ The harness supports a two-phase workflow:
     - `aggregates` containing pass@k records (see Sampling section).
   - If report generation is enabled (default), writes `<run_dir>/index.html`.
   - `--test-cases single-checkbox,modal-dialog` limits evaluation to only the named base test cases from the existing run. Defaults to all test cases when omitted.
+- `python -m a11y_llm_tests.cli serve <run_dir> ...`:
+  - Requires an existing run directory.
+  - Serves the run directory over localhost HTTP until interrupted.
+  - Prints the base URL and, when `<run_dir>/index.html` exists, the report URL.
+  - `--port 0` chooses an ephemeral port automatically.
+  - `--open` opens the report URL in the default browser when `index.html` exists.
 
 ---
 
@@ -221,6 +227,7 @@ Prompt caching for Anthropic / Claude models is handled by the Copilot SDK and t
 - The generator normalizes model output by:
   - Stripping Markdown fences if present.
   - Extracting the first `<html> ... </html>` block if present.
+- After a successful fresh generation, the harness runs a lightweight browser smoke check against the artifact under the same localhost HTTP serving conditions used by evaluation. The resulting metadata is stored on `generation.browser_smoke` with at least `rendered`, `reason`, `page_errors`, `request_failures`, and `dom_state`. Artifacts whose smoke check reports `rendered: false` are not admitted into the generation cache.
 - If the agent hits a limit (timeout, token, message) during generation, the harness logs the error prominently and continues with remaining tasks. A summary of all limit errors is printed at the end of generation.
 - If the agent produces empty or invalid HTML (no `<html>…</html>` block, fewer than 50 characters, or missing `<body>`) without a pre-existing limit error, the harness records a synthetic `agent_limit_error` of `"empty_generation"`. This flows through the same limit-error reporting pipeline so the post-run summary is explicit. The empty artifact is still written to disk and evaluates to `FAIL`.
 - Prompt hashing:
@@ -254,6 +261,7 @@ On cache hits, the generator returns `cached: True` and can optionally load toke
   - `.cache/generations/<model>_<promptHash>_i<iteration>_copilot_agent.html` (when seed is not provided)
 - The cache directory may also contain sidecar integrity files (e.g., `.sha256`) alongside cached HTML.
 - Agent-mode cache entries may additionally include a cached transcript sidecar used to recreate the run-local `.agent.json` artifact on cache hits.
+- Agent-mode cache metadata may include `browser_smoke`. If an older cache entry is missing this field, the harness performs a one-time browser smoke check during cache validation and writes the result back to the cache metadata. Cache entries whose smoke metadata reports `rendered: false` are treated as cache misses and regenerated.
 - If a cached HTML file is incomplete/corrupted, it is treated as a cache miss and a fresh generation is performed.
 - The `--disable-cache` flag forces fresh generation even if a cache entry exists.
 
@@ -520,12 +528,12 @@ When prompt variants exist:
 
 The Python orchestrator invokes the Node runner with:
 
-- `node node_runner/runner.js <htmlPath> <testJsPath> <outJsonPath> [screenshotPath]`
+- `node node_runner/runner.js <htmlPathOrUrl> <testJsPath> <outJsonPath> [screenshotPath]`
 
 The runner:
 
 - Launches Playwright Chromium headless by default.
-- Navigates to the HTML file via `file://` URL, so relative CSS/JS references resolve against the file's directory.
+- Navigates to a localhost HTTP URL for the artifact directory, so relative CSS/JS references resolve the same way they would under normal static hosting.
 - Injects axe-core and runs `axe.run()`.
 - Executes `test.js` assertions via an injected `assert(name, fn, opts)` helper.
 - Custom form-control assertions derive accessible names and descriptions from the corresponding Chromium accessibility tree nodes for the DOM elements under test.

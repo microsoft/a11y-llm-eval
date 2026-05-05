@@ -10,13 +10,14 @@ const merge = require('deepmerge')
 const testFormControls = require('./helpers/test-form-controls');
 
 async function main() {
-  const [,, htmlPath, testJsPath, outJsonPath, screenshotPath] = process.argv;
-  if (!htmlPath || !testJsPath || !outJsonPath) {
-    console.error("Usage: node playwright_runner.js <htmlPath> <testJsPath> <outJsonPath> [screenshotPath]");
+  const [,, htmlTarget, testJsPath, outJsonPath, screenshotPath] = process.argv;
+  if (!htmlTarget || !testJsPath || !outJsonPath) {
+    console.error("Usage: node playwright_runner.js <htmlPathOrUrl> <testJsPath> <outJsonPath> [screenshotPath]");
     process.exit(2);
   }
-  const resolvedHtmlPath = path.resolve(htmlPath);
-  const htmlUrl = `file://${resolvedHtmlPath}`;
+  const htmlUrl = /^https?:\/\//i.test(htmlTarget)
+    ? htmlTarget
+    : `file://${path.resolve(htmlTarget)}`;
   let testFn;
   try {
     testFn = require(path.resolve(testJsPath));
@@ -33,12 +34,23 @@ async function main() {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   const consoleLogs = [];
+  const pageErrors = [];
+  const requestFailures = [];
   page.on("console", msg => consoleLogs.push(msg.text()));
+  page.on("pageerror", err => pageErrors.push(err && err.message ? err.message : String(err)));
+  page.on("requestfailed", request => {
+    const failure = request.failure();
+    requestFailures.push({
+      url: request.url(),
+      errorText: failure && failure.errorText ? failure.errorText : null,
+    });
+  });
 
   const start = Date.now();
   let testFunctionResult = { status: "error", assertions: [] };
   let axeResult = null;
   let errorMsg = null;
+  let renderEvaluation = null;
 
   async function loadHTML() {
     await page.goto(htmlUrl, { waitUntil: "load" });
@@ -49,6 +61,28 @@ async function main() {
   async function runAxeOnPage(page) {
     return await page.evaluate(async () => {
       return await window.axe.run();
+    });
+  }
+
+  async function evaluateRenderState(page) {
+    return await page.evaluate(() => {
+      const body = document.body;
+      const main = document.querySelector('main');
+      const root = document.getElementById('root');
+      const text = (body && body.innerText ? body.innerText : '').replace(/\s+/g, ' ').trim();
+      const interactiveCount = document.querySelectorAll('input, button, select, textarea, [role="checkbox"], [role="radio"], [role="textbox"], [role="button"]').length;
+      const bodyChildCount = body ? body.children.length : 0;
+      const rootChildCount = root ? root.children.length : 0;
+      const mainChildCount = main ? main.children.length : 0;
+      return {
+        bodyChildCount,
+        rootPresent: Boolean(root),
+        rootChildCount,
+        mainPresent: Boolean(main),
+        mainChildCount,
+        interactiveCount,
+        bodyTextLength: text.length,
+      };
     });
   }
 
@@ -163,6 +197,22 @@ async function main() {
       }
     }
 
+    const renderState = await evaluateRenderState(page);
+    const hasRuntimeBootstrapError = pageErrors.length > 0 || requestFailures.length > 0;
+    const looksUnrenderedShell = (
+      renderState.rootPresent &&
+      renderState.rootChildCount === 0 &&
+      renderState.interactiveCount === 0 &&
+      renderState.bodyTextLength <= 32
+    );
+    renderEvaluation = {
+      rendered: !(hasRuntimeBootstrapError && looksUnrenderedShell),
+      reason: hasRuntimeBootstrapError && looksUnrenderedShell ? 'artifact_failed_to_render' : null,
+      page_errors: pageErrors,
+      request_failures: requestFailures,
+      dom_state: renderState,
+    };
+
     axeResult = await runAxeOnPage(page);
 
     if (testFn.runAxe && typeof testFn.runAxe === 'function') {
@@ -188,6 +238,7 @@ async function main() {
     testFunctionResult,
     axeResult,
     consoleLogs,
+    renderEvaluation,
     error: errorMsg,
     total_duration_ms: Date.now() - start
   };

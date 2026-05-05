@@ -4,6 +4,7 @@ meta keys, and ``extract_html_from_transcript``.
 import hashlib
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -28,8 +29,23 @@ _HTML = "<html><head><title>T</title></head><body><p>hi</p></body></html>"
 _TRANSCRIPT = {"events": [{"type": "assistant.message", "data": {"content": _HTML}}]}
 
 
+def _fake_agent_result(html: str = _HTML):
+    from a11y_llm_tests.copilot_runtime import AgentGenerationResult
+
+    return AgentGenerationResult(
+        html=html,
+        transcript={"format": "copilot_agent_conversation/v1", "events": [], "output_source": "message"},
+        usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        elapsed_s=0.5,
+        sandbox="docker:test",
+        limit_error=None,
+        session_log_path=None,
+    )
+
+
 def _seed_cache(cache_file: Path, *, html: str = _HTML, meta_extra: dict | None = None,
-                transcript: dict | None = None, session_log: str | None = None):
+                transcript: dict | None = None, session_log: str | None = None,
+                include_browser_smoke: bool = True):
     """Write a full, valid cache entry."""
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     html_bytes = html.encode("utf-8")
@@ -37,6 +53,17 @@ def _seed_cache(cache_file: Path, *, html: str = _HTML, meta_extra: dict | None 
     write_sha256_sidecar(cache_file, html_bytes)
 
     meta = {"generation_mode": "copilot_agent", **(meta_extra or {})}
+    if include_browser_smoke:
+        meta.setdefault(
+            "browser_smoke",
+            {
+                "rendered": True,
+                "reason": None,
+                "page_errors": [],
+                "request_failures": [],
+                "dom_state": {},
+            },
+        )
     _meta_path(cache_file).write_text(json.dumps(meta), encoding="utf-8")
 
     t = transcript if transcript is not None else _TRANSCRIPT
@@ -190,6 +217,69 @@ class TestCacheHitMiss:
         assert html is None
         assert reason == "agent_limit_error_in_cache"
 
+    def test_missing_browser_smoke_is_backfilled_during_cache_validation(self, tmp_path, monkeypatch):
+        cache_file = tmp_path / "model_abc_i0_copilot_agent.html"
+        _seed_cache(cache_file, meta_extra={"generation_mode": "copilot_agent"}, include_browser_smoke=False)
+
+        monkeypatch.setattr(
+            generator.node_bridge,
+            "run_browser_smoke_eval",
+            lambda html, html_dir=None: {
+                "rendered": False,
+                "reason": "artifact_failed_to_render",
+                "page_errors": ["boom"],
+                "request_failures": [],
+                "dom_state": {"rootPresent": True},
+            },
+        )
+
+        html, meta, _, reason = _load_cached_agent_generation(
+            cache_file=cache_file,
+            meta_file=_meta_path(cache_file),
+            prompt_hash_value="abc",
+            temperature=None,
+            seed=None,
+            model_display_name=None,
+            base_output_format_instructions="",
+            custom_instructions=None,
+            effective_output_format_instructions="",
+        )
+        assert html is None
+        assert meta is None
+        assert reason == "browser_smoke_render_failed"
+        persisted = json.loads(_meta_path(cache_file).read_text(encoding="utf-8"))
+        assert persisted["browser_smoke"]["reason"] == "artifact_failed_to_render"
+
+    def test_existing_browser_smoke_render_failed_invalidates(self, tmp_path):
+        cache_file = tmp_path / "model_abc_i0_copilot_agent.html"
+        _seed_cache(
+            cache_file,
+            meta_extra={
+                "browser_smoke": {
+                    "rendered": False,
+                    "reason": "artifact_failed_to_render",
+                    "page_errors": ["boom"],
+                    "request_failures": [],
+                    "dom_state": {"rootPresent": True},
+                }
+            },
+        )
+
+        html, meta, _, reason = _load_cached_agent_generation(
+            cache_file=cache_file,
+            meta_file=_meta_path(cache_file),
+            prompt_hash_value="abc",
+            temperature=None,
+            seed=None,
+            model_display_name=None,
+            base_output_format_instructions="",
+            custom_instructions=None,
+            effective_output_format_instructions="",
+        )
+        assert html is None
+        assert meta is None
+        assert reason == "browser_smoke_render_failed"
+
 
 # ---------------------------------------------------------------------------
 # Back-compat meta keys
@@ -304,3 +394,55 @@ class TestCacheArtifacts:
         generator.configure_prompts("fmt", None)
         _, f, _ = _cache_artifacts("m", "p", 3, None)
         assert "_i3_" in f.name
+
+
+def test_fresh_generation_records_browser_smoke(monkeypatch):
+    smoke = {
+        "rendered": True,
+        "reason": None,
+        "page_errors": [],
+        "request_failures": [],
+        "dom_state": {"interactiveCount": 1},
+    }
+    monkeypatch.setattr(generator.node_bridge, "run_browser_smoke_eval", lambda html, html_dir=None: smoke)
+
+    with patch.object(generator, "run_agent_generation_sync", return_value=_fake_agent_result()):
+        html, meta, _ = generator.generate_html_with_agent_meta(
+            "test-model",
+            "prompt",
+            0,
+            disable_cache=True,
+        )
+
+    assert html == _HTML
+    assert meta["browser_smoke"] == smoke
+
+
+def test_fresh_generation_with_failed_browser_smoke_is_not_cached(monkeypatch, tmp_path):
+    smoke = {
+        "rendered": False,
+        "reason": "artifact_failed_to_render",
+        "page_errors": ["boom"],
+        "request_failures": [],
+        "dom_state": {"rootPresent": True},
+    }
+    monkeypatch.setattr(generator.node_bridge, "run_browser_smoke_eval", lambda html, html_dir=None: smoke)
+    cache_file = tmp_path / "test-model_prompt_i0_copilot_agent.html"
+    monkeypatch.setattr(
+        generator,
+        "_cache_artifacts",
+        lambda *args, **kwargs: ("prompt-hash", cache_file, _meta_path(cache_file)),
+    )
+
+    with patch.object(generator, "run_agent_generation_sync", return_value=_fake_agent_result()), \
+         patch.object(generator, "_write_agent_generation_cache") as write_cache:
+        html, meta, _ = generator.generate_html_with_agent_meta(
+            "test-model",
+            "prompt",
+            0,
+            disable_cache=False,
+        )
+
+    assert html == _HTML
+    assert meta["browser_smoke"] == smoke
+    write_cache.assert_not_called()

@@ -4,6 +4,7 @@ import hashlib
 import json
 import multiprocessing
 import shutil
+import threading
 from datetime import datetime
 from pathlib import Path
 import typer
@@ -39,6 +40,11 @@ app = typer.Typer(add_completion=False)
 _PROGRESS_LAST: Dict[str, Tuple[int, int, int]] = {}
 _WORKSPACE_VIEWS_DIRNAME = ".copilot_workspaces"
 _WORKSPACE_INSTRUCTIONS_REL_PATH = Path(".github") / "copilot-instructions.md"
+
+
+def _wait_for_serve_interrupt() -> None:
+    while True:
+        threading.Event().wait(86400)
 
 
 def _render_progress(prefix: str, done: int, total: int) -> None:
@@ -149,8 +155,8 @@ def _evaluate_worker(args_tuple):
     html = Path(html_path).read_text(encoding="utf-8")
     sp = Path(screenshot_path)
     sp.parent.mkdir(parents=True, exist_ok=True)
-    # Pass the directory containing the HTML so the runner can resolve relative
-    # CSS/JS references via file:// navigation.
+    # Pass the directory containing the HTML so the runner can serve relative
+    # CSS/JS references over a localhost HTTP URL.
     html_dir = str(Path(html_path).parent)
     node_res = node_bridge.run(html, test_js_path, screenshot_path, html_dir=html_dir)
     tf = node_res.get("testFunctionResult", {})
@@ -236,6 +242,7 @@ def _evaluate_worker(args_tuple):
             agent_sandbox=gen_meta.get("agent_sandbox"),
             agent_limit_error=gen_meta.get("agent_limit_error"),
             agent_limits=gen_meta.get("agent_limits"),
+            browser_smoke=gen_meta.get("browser_smoke"),
         ),
         sample_index=sample_index,
         prompt_variant_id=prompt_variant_id,
@@ -1147,6 +1154,7 @@ def run(
                         agent_sandbox=meta.get("agent_sandbox"),
                         agent_limit_error=meta.get("agent_limit_error"),
                         agent_limits=meta.get("agent_limits"),
+                        browser_smoke=meta.get("browser_smoke"),
                     ),
                     sample_index=sample_index,
                     prompt_variant_id=variant_id,
@@ -1631,6 +1639,37 @@ def report(
     from .report import render_report
     render_report(rd / "results.json", rd / "index.html", models_cfg)
     typer.echo("Report regenerated.")
+
+
+@app.command()
+def serve(
+    run_dir: str,
+    host: str = typer.Option("127.0.0.1", help="Host interface to bind the local HTTP server"),
+    port: int = typer.Option(8000, min=0, help="Port to bind. Use 0 to choose an ephemeral port automatically"),
+    open_browser: bool = typer.Option(False, "--open", help="Open the served report URL in the default browser"),
+):
+    """Serve an existing run directory over localhost HTTP until interrupted."""
+    rd = Path(run_dir)
+    if not rd.is_dir():
+        raise typer.BadParameter(f"Run directory does not exist: {rd}")
+
+    static_server = node_bridge.serve_directory(rd, host=host, port=port)
+    report_url = static_server.index_url
+    try:
+        typer.echo(f"Serving run directory: {rd}")
+        typer.echo(f"Base URL: {static_server.base_url}/")
+        if (rd / "index.html").exists():
+            typer.echo(f"Report URL: {report_url}")
+            if open_browser:
+                typer.launch(report_url)
+        else:
+            typer.echo("Report URL: <missing index.html; run evaluate or report first>")
+        typer.echo("Press Ctrl+C to stop.")
+        _wait_for_serve_interrupt()
+    except KeyboardInterrupt:
+        typer.echo("Stopping server...")
+    finally:
+        static_server.close()
 
 
 def main():  # pragma: no cover

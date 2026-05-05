@@ -68,6 +68,7 @@ class GenerationMeta(BaseModel):
     agent_limit_error: Optional[str] = None
     agent_limits: Optional[Dict[str, Any]] = None
     output_source: Optional[str] = None  # "disk" or "message"
+    browser_smoke: Optional[Dict[str, Any]] = None
 
 
 class PromptVariant(BaseModel):

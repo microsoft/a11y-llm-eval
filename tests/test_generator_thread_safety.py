@@ -43,7 +43,8 @@ def test_concurrent_calls_with_different_instructions_do_not_interfere(tmp_path)
             errors.append(f"{thread_id}: {exc}")
 
     # Apply the mock at module level so both threads see it.
-    with patch.object(generator, "run_agent_generation_sync", return_value=_fake_agent_result()):
+    with patch.object(generator, "run_agent_generation_sync", return_value=_fake_agent_result()), \
+         patch.object(generator.node_bridge, "run_browser_smoke_eval", return_value={"rendered": True, "reason": None, "page_errors": [], "request_failures": [], "dom_state": {}}):
         t1 = threading.Thread(target=_gen, args=("A", "Instructions-A"))
         t2 = threading.Thread(target=_gen, args=("B", "Instructions-B"))
         t1.start()
