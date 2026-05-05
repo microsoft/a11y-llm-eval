@@ -120,6 +120,87 @@ def test_render_report_handles_not_applicable_samples(tmp_path: Path):
     assert "Not applicable" in html
 
 
+def test_render_report_includes_detectable_difference_methodology_note(tmp_path: Path):
+    run_dir = tmp_path / "runs" / "2026-05-05_12-00-00"
+    run_dir.mkdir(parents=True)
+
+    prompt_cases = [f"sample-case-{index}" for index in range(32)]
+    run_json_path = run_dir / "results.json"
+    run_json_path.write_bytes(
+        orjson.dumps(
+            {
+                "run_id": "2026-05-05_12-00-00",
+                "models": ["provider/model-a"],
+                "tests": prompt_cases,
+                "prompts": {prompt_case: f"Prompt for {prompt_case}" for prompt_case in prompt_cases},
+                "meta": {
+                    "sampling": {"samples_per_case": 10},
+                    "status": "EVALUATED",
+                },
+                "results": [
+                    {
+                        "test_name": prompt_cases[0],
+                        "model_name": "provider/model-a",
+                        "timestamp": "2026-05-05T12:00:00Z",
+                        "generation_html_path": "runs/2026-05-05_12-00-00/raw/sample-case-0/model-a__s0.html",
+                        "screenshot_path": None,
+                        "test_function": {
+                            "status": "pass",
+                            "assertions": [],
+                            "total_assertion_failures": 0,
+                            "total_assertion_bp_failures": 0,
+                            "total_assertion_na": 0,
+                            "total_assertion_bp_na": 0,
+                        },
+                        "axe": {
+                            "failure_count": 0,
+                            "failures": [],
+                            "best_practice_count": 0,
+                            "best_practice_failures": [],
+                        },
+                        "result": "PASS",
+                        "generation": {
+                            "latency_s": 0.01,
+                            "prompt_hash": "abc",
+                            "cached": False,
+                            "cost_usd": None,
+                        },
+                        "sample_index": 0,
+                        "prompt_variant_id": "control",
+                    }
+                ],
+                "aggregates": [
+                    {
+                        "test_name": prompt_cases[0],
+                        "model_name": "provider/model-a",
+                        "prompt_variant_id": "control",
+                        "n_samples": 10,
+                        "n_applicable": 10,
+                        "n_not_applicable": 0,
+                        "n_pass": 7,
+                        "pass_at_k": {"1": 0.7},
+                        "k_values": [1],
+                        "computed_at": "2026-05-05T12:00:02Z",
+                    }
+                ],
+            }
+        )
+    )
+
+    out_html = run_dir / "index.html"
+    render_report(
+        run_json_path,
+        out_html,
+        {"models": [{"name": "provider/model-a", "display_name": "Model A"}]},
+    )
+
+    html = out_html.read_text(encoding="utf-8")
+    assert "Based on 32 prompt cases and 10 samples per case" in html
+    assert "320 samples per model" in html
+    assert "11.1" in html
+    assert "two-model comparison" in html
+
+
 def test_render_report_formats_assertion_messages_as_sublists(tmp_path: Path):
     run_dir = tmp_path / "runs" / "2026-04-09_18-26-19"
     run_dir.mkdir(parents=True)

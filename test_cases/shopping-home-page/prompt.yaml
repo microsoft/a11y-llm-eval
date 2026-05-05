@@ -2,12 +2,3 @@ name: Shopping Home Page
 base_prompt: |
   Build an ecommerce home page for a retail brand with sections for featured products, deals, and editorial content.
 dimensions:
-  promo-banner:
-    label: Promo Banner
-    values:
-      present:
-        label: Promo Banner Present
-        prompt_fragment: Include a promotional banner or campaign callout near the top of the page.
-      absent:
-        label: No Promo Banner
-        prompt_fragment: Do not include a promotional banner.

@@ -25,7 +25,7 @@ skills:
       explicitly invoked to review and remediate previously produced HTML.
     skill_dir: skills/building-accessible-ui
     # Optional. Defaults to --samples.
-    # samples: 10
+    # samples: 3
     turns:
       - id: generate
         name: Generate

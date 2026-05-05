@@ -1,5 +1,6 @@
 """HTML reporting for evaluation runs."""
 from pathlib import Path
+from math import sqrt
 import re
 import orjson
 from jinja2 import Template
@@ -658,6 +659,18 @@ details li { margin-bottom: 0.35rem; }
     <li>Each test case is run multiple times (samples) to evaluate the consistency and reliability of the LLM's output.</li>
     <li>By default, the harness does not explicitly set a temperature, so each provider/model uses its own default sampling behavior.</li>
   </ul>
+  {% if methodology_stats.samples_per_model and methodology_stats.detectable_difference_points is not none %}
+  <p>
+    Based on {{ methodology_stats.prompt_case_count }} prompt cases and {{ methodology_stats.samples_per_case }} samples per case
+    ({{ methodology_stats.samples_per_model }} samples per model), this run is roughly powered to detect model WCAG pass-rate
+    differences of about {% if methodology_stats.low_power %}more than 100{% else %}{{ '%.1f'|format(methodology_stats.detectable_difference_points) }}{% endif %}
+    percentage points or larger in a two-model comparison (approximate 95% confidence, 80% power; assumes independent samples).
+  </p>
+  <p><small>
+    This is a planning heuristic, not a confidence interval reported by the harness. Repeated samples within the same prompt case are correlated,
+    so the true detectable difference may be somewhat larger.
+  </small></p>
+  {% endif %}
   {% set output_format_instructions = prompting_meta.get('output_format_instructions') or prompting_meta.get('system_prompt') %}
   {% set effective_output_format_instructions = prompting_meta.get('effective_output_format_instructions') or prompting_meta.get('effective_system_prompt') %}
   {% set display_output_format_instructions = effective_output_format_instructions or output_format_instructions %}
@@ -3450,6 +3463,18 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
   common_axe_failures = _prepare_axe_list(axe_wcag_failure_stats)
   common_axe_bp_failures = _prepare_axe_list(axe_bp_failure_stats)
 
+  prompt_case_count = len(data.get("tests", []) or [])
+  samples_per_case = int(sampling_meta.get("samples_per_case", 0) or 0)
+  samples_per_model = prompt_case_count * samples_per_case
+  detectable_difference = sqrt(3.92 / samples_per_model) if samples_per_model > 0 else None
+  methodology_stats = {
+    "prompt_case_count": prompt_case_count,
+    "samples_per_case": samples_per_case,
+    "samples_per_model": samples_per_model,
+    "detectable_difference_points": (detectable_difference * 100.0) if detectable_difference is not None else None,
+    "low_power": detectable_difference is not None and detectable_difference >= 1.0,
+  }
+
   # Assertion-level analysis per test case (not compared across tests)
   analysis_assertions_by_test = {}
   for test_name, assertions in assertion_stats_by_test.items():
@@ -3500,5 +3525,6 @@ def render_report(run_json_path: Path, out_html: Path, models_cfg: dict):
     instruction_set_analysis=instruction_set_analysis,
     skill_benchmark_tables=skill_benchmark_tables,
     skill_benchmark_variants=skill_benchmark_variants_list,
+    methodology_stats=methodology_stats,
   )
   out_html.write_text(html, encoding="utf-8")
