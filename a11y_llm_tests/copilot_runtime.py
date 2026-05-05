@@ -49,16 +49,26 @@ def _make_scoped_permission_handler(container_workdir: Optional[str]):
     - WRITE → approved only if the target path is within *container_workdir*.
     - If *container_workdir* is None, returns ``PermissionHandler.approve_all``.
     """
+    try:
+        from copilot.session import PermissionHandler, PermissionRequestResult
+    except ModuleNotFoundError:
+        class PermissionRequestResult:  # type: ignore[no-redef]
+            def __init__(self, kind: str):
+                self.kind = kind
+
+        class PermissionHandler:  # type: ignore[no-redef]
+            @staticmethod
+            def approve_all(request, invocation):
+                return PermissionRequestResult(kind="approve-once")
+
     if not container_workdir:
         # No workdir configured → fall back to unrestricted (legacy).
-        from copilot.session import PermissionHandler
         return PermissionHandler.approve_all
 
     # Normalize: ensure trailing slash for prefix comparison.
     prefix = container_workdir.rstrip("/") + "/"
 
     def _handler(request, invocation):
-        from copilot.session import PermissionRequestResult
 
         # Only gate WRITE requests; everything else is approved.
         kind = getattr(request, "kind", None)
@@ -76,6 +86,10 @@ def _make_scoped_permission_handler(container_workdir: Optional[str]):
         # Resolve relative paths against the workdir (agent's cwd).
         if not target.startswith("/"):
             target = prefix + target
+
+        # Allow writes to the SDK's internal session-state directory (plan.md, etc.).
+        if target.startswith("/copilot/.copilot/session-state/"):
+            return PermissionRequestResult(kind="approve-once")
 
         # Allow only if the resolved target is within the workdir.
         if target.startswith(prefix) or target.rstrip("/") == container_workdir.rstrip("/"):
@@ -308,6 +322,7 @@ class CopilotRuntime:
         log_dir: Optional[str] = None,
         *,
         workspace_dir: Optional[str] = None,
+        container_identity_dir: Optional[str] = None,
     ) -> None:
         self._log_dir: Optional[Path] = Path(log_dir) if log_dir else None
         if self._log_dir:
@@ -316,10 +331,13 @@ class CopilotRuntime:
         self._lock = asyncio.Lock()
         ws = workspace_dir or os.environ.get("COPILOT_WORKSPACE") or os.getcwd()
         self._workspace_dir: Path = Path(ws).expanduser().resolve()
+        container_ws = container_identity_dir or ws
+        self._container_identity_dir: Path = Path(container_ws).expanduser().resolve()
         # Derive a unique container name from the workspace path so two
         # harness instances on the same Docker host don't collide.
-        ws_hash = hashlib.sha256(str(self._workspace_dir).encode()).hexdigest()[:8]
+        ws_hash = hashlib.sha256(str(self._container_identity_dir).encode()).hexdigest()[:8]
         self._container_name: str = f"a11y-copilot-sandbox-{ws_hash}"
+        self._compose_project_name: str = self._container_name
         self._preflight_done: bool = False
 
     async def preflight(self) -> None:
@@ -502,6 +520,7 @@ class CopilotRuntime:
             and hash_matches
             and self._container_is_running()
             and self._container_uses_current_image()
+            and self._container_uses_current_workspace()
         ):
             return
 
@@ -526,6 +545,7 @@ class CopilotRuntime:
 
         cmd = [
             "docker", "compose",
+            "-p", self._compose_project_name,
             "-f", str(self._COMPOSE_FILE),
             "up", "-d",
         ]
@@ -544,6 +564,21 @@ class CopilotRuntime:
         # Persist the hash so the next start can take the fast path.
         if force_rebuild or not hash_matches:
             self._write_cached_hash(current_hash)
+
+    def _compose_down(self) -> None:
+        env = self._compose_env()
+        cmd = [
+            "docker", "compose",
+            "-p", self._compose_project_name,
+            "-f", str(self._COMPOSE_FILE),
+            "down", "--remove-orphans",
+        ]
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"`docker compose down` failed (exit {result.returncode}):\n"
+                f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+            )
 
     @classmethod
     def _compute_build_hash(cls) -> str:
@@ -611,6 +646,22 @@ class CopilotRuntime:
             capture_output=True, text=True,
         )
         return probe.returncode == 0 and probe.stdout.strip() == "true"
+
+    def _container_uses_current_workspace(self) -> bool:
+        probe = subprocess.run(
+            [
+                "docker", "inspect", "-f",
+                "{{range .Mounts}}{{if eq .Destination \"/workspace\"}}{{.Source}}{{end}}{{end}}",
+                self._container_name,
+            ],
+            capture_output=True, text=True,
+        )
+        if probe.returncode != 0:
+            return False
+        mounted = probe.stdout.strip()
+        if not mounted:
+            return False
+        return Path(mounted).expanduser().resolve() == self._workspace_dir
 
     def _wait_for_container(self, timeout_s: float = 30.0) -> None:
         deadline = time.monotonic() + timeout_s
@@ -1104,7 +1155,7 @@ def _run_credential_cmd(cmd: str) -> str:
 # ---- Synchronous helpers used by the (still sync) generator API ----
 
 
-_default_runtime: Optional[CopilotRuntime] = None
+_default_runtimes: Dict[tuple[str, str], CopilotRuntime] = {}
 _runtime_loop: Optional[asyncio.AbstractEventLoop] = None
 _runtime_thread: Optional[threading.Thread] = None
 _runtime_lock = threading.Lock()
@@ -1153,30 +1204,100 @@ def _run_on_runtime_loop(coro: Any) -> Any:
     return future.result()
 
 
-def get_default_runtime(log_dir: Optional[str] = None) -> CopilotRuntime:
-    """Return a process-wide default runtime, creating it if needed.
+def get_default_runtime(
+    log_dir: Optional[str] = None,
+    *,
+    workspace_dir: Optional[str] = None,
+    container_identity_dir: Optional[str] = None,
+    reset: bool = False,
+) -> CopilotRuntime:
+    """Return a process-wide runtime for the requested workspace.
 
     The runtime is started lazily on the first ``run_*`` call. Callers that
     want full lifecycle control should construct ``CopilotRuntime`` directly.
     """
-    global _default_runtime
-    if _default_runtime is None:
-        _default_runtime = CopilotRuntime(log_dir=log_dir)
+    resolved_workspace = Path(
+        workspace_dir or os.environ.get("COPILOT_WORKSPACE") or os.getcwd()
+    ).expanduser().resolve()
+    resolved_identity = Path(
+        container_identity_dir or resolved_workspace
+    ).expanduser().resolve()
+    runtime_key = (str(resolved_workspace), str(resolved_identity))
+
+    runtime = _default_runtimes.get(runtime_key)
+    if runtime is not None and reset:
+        if runtime._client is not None:
+            _run_on_runtime_loop(runtime.stop())
+        _default_runtimes.pop(runtime_key, None)
+        runtime = None
+
+    if runtime is None:
+        runtime = CopilotRuntime(
+            log_dir=log_dir,
+            workspace_dir=str(resolved_workspace),
+            container_identity_dir=str(resolved_identity),
+        )
+        _default_runtimes[runtime_key] = runtime
     elif log_dir is not None:
-        _default_runtime._log_dir = Path(log_dir)
-        _default_runtime._log_dir.mkdir(parents=True, exist_ok=True)
-    return _default_runtime
+        runtime._log_dir = Path(log_dir)
+        runtime._log_dir.mkdir(parents=True, exist_ok=True)
+    return runtime
 
 
-def preflight_default_runtime_sync(log_dir: Optional[str] = None) -> None:
+def preflight_default_runtime_sync(
+    log_dir: Optional[str] = None,
+    *,
+    workspace_dir: Optional[str] = None,
+    container_identity_dir: Optional[str] = None,
+    reset: bool = False,
+) -> None:
     """Run the container preflight (compose-up + auth) synchronously.
 
     The CLI calls this once before the generation loop so that any
     interactive auth prompts happen in the user's foreground terminal
     rather than deep inside a concurrent worker.
     """
-    runtime = get_default_runtime(log_dir=log_dir)
+    runtime = get_default_runtime(
+        log_dir=log_dir,
+        workspace_dir=workspace_dir,
+        container_identity_dir=container_identity_dir,
+        reset=reset,
+    )
     _run_on_runtime_loop(runtime.preflight())
+
+
+def cleanup_default_runtime_sync(
+    *,
+    workspace_dir: Optional[str] = None,
+    container_identity_dir: Optional[str] = None,
+) -> None:
+    """Stop the SDK client (if running) and tear down the sandbox container.
+
+    This is best-effort cleanup for per-run temporary workspace views. The
+    shared ``copilot-auth`` Docker volume is preserved by using
+    ``docker compose down`` without ``--volumes``.
+    """
+    resolved_workspace = Path(
+        workspace_dir or os.environ.get("COPILOT_WORKSPACE") or os.getcwd()
+    ).expanduser().resolve()
+    resolved_identity = Path(
+        container_identity_dir or resolved_workspace
+    ).expanduser().resolve()
+    runtime_key = (str(resolved_workspace), str(resolved_identity))
+
+    runtime = _default_runtimes.get(runtime_key)
+    if runtime is None:
+        runtime = CopilotRuntime(
+            workspace_dir=str(resolved_workspace),
+            container_identity_dir=str(resolved_identity),
+        )
+
+    if runtime._client is not None:
+        _run_on_runtime_loop(runtime.stop())
+
+    runtime._compose_down()
+    runtime._preflight_done = False
+    _default_runtimes.pop(runtime_key, None)
 
 
 def run_agent_generation_sync(
@@ -1190,9 +1311,15 @@ def run_agent_generation_sync(
     max_output_tokens: Optional[int] = None,
     log_dir: Optional[str] = None,
     working_directory: Optional[str] = None,
+    workspace_dir: Optional[str] = None,
+    container_identity_dir: Optional[str] = None,
 ) -> AgentGenerationResult:
     """Synchronous entry point used by ``generator.generate_html_with_agent_meta``."""
-    runtime = get_default_runtime(log_dir=log_dir)
+    runtime = get_default_runtime(
+        log_dir=log_dir,
+        workspace_dir=workspace_dir,
+        container_identity_dir=container_identity_dir,
+    )
 
     async def _go() -> AgentGenerationResult:
         await runtime.start()
@@ -1222,8 +1349,14 @@ def run_skill_multi_turn_sync(
     max_output_tokens: Optional[int] = None,
     log_dir: Optional[str] = None,
     working_directory: Optional[str] = None,
+    workspace_dir: Optional[str] = None,
+    container_identity_dir: Optional[str] = None,
 ) -> AgentGenerationResult:
-    runtime = get_default_runtime(log_dir=log_dir)
+    runtime = get_default_runtime(
+        log_dir=log_dir,
+        workspace_dir=workspace_dir,
+        container_identity_dir=container_identity_dir,
+    )
 
     async def _go() -> AgentGenerationResult:
         await runtime.start()

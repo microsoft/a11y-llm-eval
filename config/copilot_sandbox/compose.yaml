@@ -1,7 +1,8 @@
 # docker compose file for the GitHub Copilot CLI sandbox.
 #
 # The harness brings this up with `docker compose -f config/copilot_sandbox/compose.yaml up -d`
-# at the start of a `run` and leaves it warm afterwards. The container is
+# at the start of a `run` and tears it down automatically when the run ends.
+# The container is
 # kept alive by the Dockerfile's `tail -f /dev/null` PID 1; sessions are
 # opened lazily through `docker exec -i <container> copilot ...`.
 #
@@ -42,3 +43,4 @@ services:
 
 volumes:
   copilot-auth:
+    name: copilot-auth

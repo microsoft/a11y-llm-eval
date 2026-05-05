@@ -562,6 +562,8 @@ def generate_html_with_agent_meta(
     runtime_log_dir: Optional[str] = None,
     agent_config: Optional[Dict[str, Any]] = None,
     sandbox_workdir: Optional[str] = None,
+    workspace_dir: Optional[str] = None,
+    container_identity_dir: Optional[str] = None,
     output_format_instructions: Optional[str] = None,
     custom_instructions_override: Optional[str] = None,
 ) -> tuple[str, Dict[str, Any], Dict[str, Any]]:
@@ -648,6 +650,8 @@ def generate_html_with_agent_meta(
             max_output_tokens=max_output_tokens,
             log_dir=log_dir,
             working_directory=sandbox_workdir,
+            workspace_dir=workspace_dir,
+            container_identity_dir=container_identity_dir,
         )
         html = clean_generation(extract_html_from_transcript(result.transcript, fallback_html=result.html))
         transcript = result.transcript
@@ -788,6 +792,8 @@ def generate_html_with_skill_multi_turn(
     agent_config: Optional[Dict[str, Any]] = None,
     skill_config: Dict[str, Any],
     sandbox_workdir: Optional[str] = None,
+    workspace_dir: Optional[str] = None,
+    container_identity_dir: Optional[str] = None,
     output_format_instructions: Optional[str] = None,
     custom_instructions_override: Optional[str] = None,
 ) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
@@ -946,6 +952,8 @@ def generate_html_with_skill_multi_turn(
         max_output_tokens=max_output_tokens,
         log_dir=log_dir,
         working_directory=sandbox_workdir,
+        workspace_dir=workspace_dir,
+        container_identity_dir=container_identity_dir,
     )
 
     turn_records: list[Dict[str, Any]] = []

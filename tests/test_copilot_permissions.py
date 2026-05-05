@@ -99,3 +99,13 @@ class TestScopedPermissionHandler:
         result = _call_handler(handler, req)
         assert result.kind == "approve-once"
 
+    def test_write_to_session_state_approved(self):
+        """SDK internal session-state writes (plan.md) should be allowed."""
+        handler = _make_scoped_permission_handler("/workspace/sandbox/control/test/model__s0")
+        req = FakePermissionRequest(
+            "write",
+            path="/copilot/.copilot/session-state/7b2cd492-23f6-440b-a058-1fbe513a049c/plan.md",
+        )
+        result = _call_handler(handler, req)
+        assert result.kind == "approve-once"
+

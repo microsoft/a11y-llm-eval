@@ -34,10 +34,9 @@ This document describes the **current, user-visible behavior** of the A11y LLM E
 >   into a Docker sandbox or injects a `system_prompt_preamble`.
 > - **Sandbox.** The Inspect Docker sandbox is gone. The Copilot CLI now
 >   runs **inside a sandbox container we own** (`config/copilot_sandbox/`).
->   The harness brings the container up automatically on first
->   `run` and leaves it warm afterwards (stop with
->   `docker compose -f config/copilot_sandbox/compose.yaml down`). Docker
->   is therefore a hard dependency. First-party Copilot authentication
+>   The harness brings per-workspace sandbox containers up automatically at
+>   the start of `run` and tears them down automatically when the run ends.
+>   Docker is therefore a hard dependency. First-party Copilot authentication
 >   uses a named Docker volume (`copilot-auth`) so credentials stay
 >   inside the container and are not exposed to the host. On first run
 >   the harness verifies CLI connectivity and — if needed — runs
@@ -101,7 +100,7 @@ The harness runs the Copilot CLI inside a Docker container (`config/copilot_sand
 - The agent can *read* any file in the workspace but can only *write* within its per-sample sandbox directory (enforced by the permission handler at the SDK layer).
 - The agent cannot access the host filesystem outside the workspace mount.
 
-**Authentication:** Copilot CLI authentication uses a named Docker volume (`copilot-auth`) so credentials stay inside the container and are not exposed to the host Python process. On first run (or after deleting the container), the harness runs a pre-flight check: it brings up the sandbox, verifies the CLI can reach the Copilot API, and — if not — runs `copilot login` interactively in the user's terminal. The resulting token persists in the Docker volume across container rebuilds. `GH_TOKEN` / `GITHUB_TOKEN` environment variables are forwarded per-`docker exec` as a CI/headless fallback. BYOK provider keys (e.g. `ANTHROPIC_API_KEY`) are forwarded the same way.
+**Authentication:** Copilot CLI authentication uses a named Docker volume (`copilot-auth`) so credentials stay inside the container and are not exposed to the host Python process. On first run (or after deleting the container), the harness runs a pre-flight check: it brings up the sandbox, verifies the CLI can reach the Copilot API, and — if not — runs `copilot login` interactively in the user's terminal. The resulting token persists in the Docker volume across container teardowns and rebuilds. `GH_TOKEN` / `GITHUB_TOKEN` environment variables are forwarded per-`docker exec` as a CI/headless fallback. BYOK provider keys (e.g. `ANTHROPIC_API_KEY`) are forwarded the same way.
 
 **Concurrent runs:** Each workspace uses a unique container name (derived from the workspace path hash), so two harness instances on the same host do not collide.
 
@@ -488,6 +487,7 @@ The report summarizes:
 - Requirement assertion and best-practice assertion rates.
 - Axe WCAG failures and axe best-practice failures tracked separately.
 - When multiple samples exist, per-prompt-case/per-model aggregates can be displayed.
+- The methodology section includes an approximate minimum detectable WCAG pass-rate gap for a two-model comparison, derived from the run's prompt-case count and `samples_per_case` metadata. This heuristic assumes independent samples and may be optimistic when repeated samples for the same prompt case are correlated.
 
 When prompt variants exist:
 
@@ -509,6 +509,7 @@ When prompt variants exist:
   1. `meta.models_info` in `results.json`
   2. the provided models config
   3. fall back to the last path segment of the model name
+- When `meta.sampling.samples_per_case` is present and greater than zero, the methodology section reports the corresponding prompt-case count, samples per model, and approximate minimum detectable WCAG pass-rate gap for a two-model comparison.
 - Assertion-level `na` results remain visible in detailed report sections and assertion analysis, but report pass-rate and pass@k denominators use all samples.
 
 ---

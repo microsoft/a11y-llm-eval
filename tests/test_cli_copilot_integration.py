@@ -27,6 +27,17 @@ def _stub_preflight(monkeypatch):
         "a11y_llm_tests.copilot_runtime.preflight_default_runtime_sync",
         lambda *a, **kw: None,
     )
+    monkeypatch.setattr(
+        "a11y_llm_tests.copilot_runtime.cleanup_default_runtime_sync",
+        lambda *a, **kw: None,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_test_workspace(tmp_path, monkeypatch):
+    """Keep isolated-workspace copies tiny during CLI tests."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("COPILOT_WORKSPACE", str(tmp_path))
 
 # ---------------------------------------------------------------------------
 # Helpers: minimal test-case fixture + models config on disk
@@ -58,6 +69,36 @@ def _write_prompt_dimensions(root: Path) -> Path:
     f = root / "prompt_dimensions.yaml"
     f.write_text("dimensions: {}\n")
     return f
+
+
+def _write_instruction_set_fixture(root: Path) -> tuple[Path, Path]:
+    instructions = root / "instructions.md"
+    instructions.write_text("# Repo Instructions\nUse semantic HTML.\n")
+    config = root / "instruction_sets.yaml"
+    config.write_text(
+        "instruction_sets:\n"
+        "  - id: concise\n"
+        "    name: Concise\n"
+        f"    instructions_markdown: {instructions.name}\n"
+    )
+    return config, instructions
+
+
+def _write_skill_fixture(root: Path) -> tuple[Path, Path]:
+    skill_dir = root / "skills" / "demo-skill"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text("# Demo Skill\nFollow the checklist.\n")
+    config = root / "skills.yaml"
+    config.write_text(
+        "skills:\n"
+        "  - id: demo-skill\n"
+        "    name: Demo Skill\n"
+        f"    skill_dir: {skill_dir.relative_to(root).as_posix()}\n"
+        "    turns:\n"
+        "      - id: generate\n"
+        "        prompt: \"{{test_case_prompt}}\"\n"
+    )
+    return config, skill_dir
 
 
 def _fake_generate_html_with_agent_meta(
@@ -304,3 +345,217 @@ class TestVariantRouting:
         for rec in data["results"]:
             assert rec["prompt_variant_id"] == "control"
             assert rec["prompt_variant_kind"] in (None, "control")
+
+
+class TestIsolatedWorkspaceCopy:
+    """Minimal variant workspace routing for Copilot sessions."""
+
+    def test_run_uses_disposable_workspace_copy(self, tmp_path, monkeypatch):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        tc_dir = workspace / "tc"
+        tc_dir.mkdir()
+        _write_test_case(tc_dir)
+        models = _write_models_yaml(workspace)
+        dims = _write_prompt_dimensions(workspace)
+        out = workspace / "out"
+
+        preflight_calls = []
+        sandbox_workdirs = []
+
+        def _fake_preflight(*args, **kwargs):
+            preflight_calls.append(kwargs)
+
+        def _fake_generate_with_leak(model, prompt, iteration, **kwargs):
+            sandbox_workdir = Path(kwargs["sandbox_workdir"])
+            sandbox_workdirs.append(sandbox_workdir)
+            workspace_copy_root = sandbox_workdir.parents[5]
+            (workspace_copy_root / "index.html").write_text("leaked", encoding="utf-8")
+            html = "<html><head><title>T</title></head><body><p>ok</p></body></html>"
+            meta = {
+                "latency_s": 0.01,
+                "prompt_hash": "abc123",
+                "cached": False,
+                "generation_mode": "copilot_agent",
+            }
+            transcript = {"events": [{"type": "assistant.message", "data": {"content": html}}]}
+            return html, meta, transcript
+
+        monkeypatch.chdir(workspace)
+        monkeypatch.setenv("COPILOT_WORKSPACE", str(workspace))
+        monkeypatch.setattr(
+            "a11y_llm_tests.copilot_runtime.preflight_default_runtime_sync",
+            _fake_preflight,
+        )
+        monkeypatch.setattr(
+            generator, "generate_html_with_agent_meta",
+            _fake_generate_with_leak,
+        )
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/docker" if cmd == "docker" else None)
+        monkeypatch.setattr(generator, "configure_runtime", lambda *a, **kw: None)
+
+        result = _runner.invoke(cli.app, [
+            "run",
+            "--models-file", str(models),
+            "--prompt-dimensions-file", str(dims),
+            "--test-cases-dir", str(tc_dir),
+            "--out", str(out),
+            "--samples", "1",
+            "--disable-cache",
+        ])
+        assert result.exit_code == 0, result.output + (result.stderr or "")
+
+        run_dir = next(d for d in out.iterdir() if d.is_dir() and not d.is_symlink())
+        workspace_root = run_dir / ".copilot_workspaces" / "control"
+
+        assert preflight_calls
+        assert preflight_calls[0]["workspace_dir"] == str(workspace_root)
+        assert preflight_calls[0]["container_identity_dir"] == str(workspace_root)
+        assert preflight_calls[0]["reset"] is True
+
+        assert sandbox_workdirs
+        assert str(sandbox_workdirs[0]).startswith(str(workspace_root / "sandbox"))
+        assert not (workspace / "index.html").exists()
+        assert not (run_dir / ".copilot_workspaces").exists()
+
+    def test_variants_get_minimal_workspace_views(self, tmp_path, monkeypatch):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        tc_dir = workspace / "tc"
+        tc_dir.mkdir()
+        _write_test_case(tc_dir)
+        models = _write_models_yaml(workspace)
+        dims = _write_prompt_dimensions(workspace)
+        instruction_sets, _ = _write_instruction_set_fixture(workspace)
+        skills_file, _ = _write_skill_fixture(workspace)
+        out = workspace / "out"
+
+        inspected_workspaces = {}
+        agent_workspaces = []
+        skill_workspaces = []
+
+        def _fake_preflight(*args, **kwargs):
+            workspace_dir = Path(kwargs["workspace_dir"])
+            inspected_workspaces[workspace_dir.name] = sorted(
+                p.relative_to(workspace_dir).as_posix()
+                for p in workspace_dir.rglob("*")
+                if p.is_file()
+            )
+
+        def _fake_generate_agent(model, prompt, iteration, **kwargs):
+            agent_workspaces.append(Path(kwargs["workspace_dir"]))
+            html = "<html><head><title>T</title></head><body><p>ok</p></body></html>"
+            meta = {
+                "latency_s": 0.01,
+                "prompt_hash": "abc123",
+                "cached": False,
+                "generation_mode": "copilot_agent",
+            }
+            transcript = {"events": [{"type": "assistant.message", "data": {"content": html}}]}
+            return html, meta, transcript
+
+        def _fake_generate_skill(model, prompt, iteration, **kwargs):
+            skill_workspaces.append(Path(kwargs["workspace_dir"]))
+            html = "<html><head><title>T</title></head><body><p>skill</p></body></html>"
+            meta = {
+                "latency_s": 0.01,
+                "prompt_hash": "skill123",
+                "cached": False,
+                "generation_mode": "copilot_agent",
+            }
+            return ([{
+                "turn_id": "generate",
+                "turn_index": 0,
+                "turn_name": "generate",
+                "html": html,
+                "meta": meta,
+                "conversation": {"events": []},
+                "error": None,
+            }], {"events": []})
+
+        monkeypatch.chdir(workspace)
+        monkeypatch.setenv("COPILOT_WORKSPACE", str(workspace))
+        monkeypatch.setattr(
+            "a11y_llm_tests.copilot_runtime.preflight_default_runtime_sync",
+            _fake_preflight,
+        )
+        monkeypatch.setattr(generator, "generate_html_with_agent_meta", _fake_generate_agent)
+        monkeypatch.setattr(generator, "generate_html_with_skill_multi_turn", _fake_generate_skill)
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/docker" if cmd == "docker" else None)
+        monkeypatch.setattr(generator, "configure_runtime", lambda *a, **kw: None)
+
+        result = _runner.invoke(cli.app, [
+            "run",
+            "--models-file", str(models),
+            "--prompt-dimensions-file", str(dims),
+            "--test-cases-dir", str(tc_dir),
+            "--instruction-sets-file", str(instruction_sets),
+            "--skills-file", str(skills_file),
+            "--out", str(out),
+            "--samples", "1",
+            "--disable-cache",
+        ])
+        assert result.exit_code == 0, result.output + (result.stderr or "")
+
+        assert inspected_workspaces["control"] == []
+        assert inspected_workspaces["concise"] == [".github/copilot-instructions.md"]
+        assert inspected_workspaces["demo-skill"] == ["skills/demo-skill/SKILL.md"]
+
+        assert agent_workspaces
+        assert {p.name for p in agent_workspaces} >= {"control", "concise"}
+        assert {p.name for p in skill_workspaces} == {"demo-skill"}
+
+    def test_run_cleans_up_all_variant_sandboxes(self, tmp_path, monkeypatch):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        tc_dir = workspace / "tc"
+        tc_dir.mkdir()
+        _write_test_case(tc_dir)
+        models = _write_models_yaml(workspace)
+        dims = _write_prompt_dimensions(workspace)
+        instruction_sets, _ = _write_instruction_set_fixture(workspace)
+        skills_file, _ = _write_skill_fixture(workspace)
+        out = workspace / "out"
+
+        cleaned_workspaces = []
+
+        def _fake_cleanup(*args, **kwargs):
+            cleaned_workspaces.append(Path(kwargs["workspace_dir"]).name)
+
+        monkeypatch.chdir(workspace)
+        monkeypatch.setenv("COPILOT_WORKSPACE", str(workspace))
+        monkeypatch.setattr(
+            "a11y_llm_tests.copilot_runtime.cleanup_default_runtime_sync",
+            _fake_cleanup,
+        )
+        monkeypatch.setattr(generator, "generate_html_with_agent_meta", _fake_generate_html_with_agent_meta)
+        monkeypatch.setattr(generator, "generate_html_with_skill_multi_turn", lambda *a, **kw: ([{
+            "turn_id": "generate",
+            "turn_index": 0,
+            "turn_name": "generate",
+            "html": "<html><body>skill</body></html>",
+            "meta": {
+                "latency_s": 0.01,
+                "prompt_hash": "skill123",
+                "cached": False,
+                "generation_mode": "copilot_agent",
+            },
+            "conversation": {"events": []},
+            "error": None,
+        }], {"events": []}))
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/docker" if cmd == "docker" else None)
+        monkeypatch.setattr(generator, "configure_runtime", lambda *a, **kw: None)
+
+        result = _runner.invoke(cli.app, [
+            "run",
+            "--models-file", str(models),
+            "--prompt-dimensions-file", str(dims),
+            "--test-cases-dir", str(tc_dir),
+            "--instruction-sets-file", str(instruction_sets),
+            "--skills-file", str(skills_file),
+            "--out", str(out),
+            "--samples", "1",
+            "--disable-cache",
+        ])
+        assert result.exit_code == 0, result.output + (result.stderr or "")
+        assert sorted(cleaned_workspaces) == ["concise", "control", "demo-skill"]

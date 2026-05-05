@@ -81,6 +81,72 @@ def test_sandbox_label_is_docker():
     assert rt.sandbox_label.endswith("compose.yaml")
 
 
+def test_compose_up_uses_workspace_scoped_project_name(monkeypatch, tmp_path):
+    rt = cr.CopilotRuntime(workspace_dir=str(tmp_path), container_identity_dir=str(tmp_path / "view-a"))
+
+    calls = []
+
+    class Result:
+        def __init__(self, returncode=0, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            return Result(returncode=0)
+        if cmd[:3] == ["docker", "inspect", "-f"]:
+            return Result(returncode=1)
+        if cmd[:3] == ["docker", "rm", "-f"]:
+            return Result(returncode=0)
+        if cmd[:2] == ["docker", "compose"]:
+            return Result(returncode=0)
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(cr.subprocess, "run", fake_run)
+    monkeypatch.setattr(rt, "_compute_build_hash", lambda: "hash123")
+    monkeypatch.setattr(rt, "_read_cached_hash", lambda: "hash123")
+    monkeypatch.setattr(rt, "_write_cached_hash", lambda value: None)
+
+    rt._compose_up()
+
+    compose_calls = [cmd for cmd, _ in calls if cmd[:2] == ["docker", "compose"]]
+    assert len(compose_calls) == 1
+    assert compose_calls[0][2] == "-p"
+    assert compose_calls[0][3] == rt._compose_project_name
+    assert compose_calls[0][3] == rt._container_name
+
+
+def test_compose_down_uses_workspace_scoped_project_name(monkeypatch, tmp_path):
+    rt = cr.CopilotRuntime(workspace_dir=str(tmp_path), container_identity_dir=str(tmp_path / "view-a"))
+
+    calls = []
+
+    class Result:
+        def __init__(self, returncode=0, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        if cmd[:2] == ["docker", "compose"]:
+            return Result(returncode=0)
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(cr.subprocess, "run", fake_run)
+
+    rt._compose_down()
+
+    assert len(calls) == 1
+    cmd = calls[0][0]
+    assert cmd[:2] == ["docker", "compose"]
+    assert cmd[2] == "-p"
+    assert cmd[3] == rt._compose_project_name
+    assert cmd[-2:] == ["down", "--remove-orphans"]
+
+
 def test_host_path_to_container_translates_workspace_paths(tmp_path):
     rt = cr.CopilotRuntime(workspace_dir=str(tmp_path))
     skill = tmp_path / "config" / "skills" / "building-accessible-ui"
