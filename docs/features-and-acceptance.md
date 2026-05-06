@@ -194,6 +194,17 @@ Generation uses the GitHub Copilot SDK agent runtime:
 
 All generations are Copilot agent sessions. Concurrency is controlled by `--concurrency` (default 4). Each session has a wall-clock timeout (default 600 s / 10 min); if the agent does not complete within the limit the session is terminated and the result is recorded as a limit error. The timeout can be overridden globally with `--agent-timeout <seconds>` or per-variant via `agent.limits.timeout_s` in the instruction-set / skills YAML (the YAML value takes precedence over the CLI flag).
 
+Skill multi-turn sessions may also stop early for behavioral limit reasons before the wall-clock timeout when the runtime determines the session is thrashing rather than making progress. Supported per-variant guardrails under `agent.limits` are:
+
+- `max_turns`
+- `max_cumulative_total_tokens`
+- `max_consecutive_no_progress_turns`
+- `max_intra_turn_no_progress_assistant_turns`
+
+These guards are evaluated only for multi-turn skill sessions. They do not change the `results.json` schema; they surface through the existing `generation.agent_limit_error` / per-turn `limit_error` fields with specific reason strings.
+
+`max_intra_turn_no_progress_assistant_turns` defaults to `20` when omitted. The runtime increments this counter when a skill turn keeps producing assistant sub-turns with an empty assistant message and no meaningful generated artifact changes on disk. The progress snapshot includes app/source artifacts such as `index.html`, CSS, and JavaScript, while ignoring transient validation/debug outputs such as `out.json`, `server.js`, `run-a11y.js`, and `node_modules/`. This is intended to stop tool-thrashing loops inside a single skill turn without penalizing long but still-progressing runs.
+
 The SDK's per-turn output-token limit is overridden to **64 000 tokens** by default (the Copilot CLI default is 16 000, which can cause tool-call truncation on large HTML pages). This can be configured per-variant via `agent.limits.max_output_tokens` in the YAML.
 
 The effective output-format instructions are:
@@ -229,6 +240,7 @@ Prompt caching for Anthropic / Claude models is handled by the Copilot SDK and t
   - Extracting the first `<html> ... </html>` block if present.
 - After a successful fresh generation, the harness runs a lightweight browser smoke check against the artifact under the same localhost HTTP serving conditions used by evaluation. The resulting metadata is stored on `generation.browser_smoke` with at least `rendered`, `reason`, `page_errors`, `request_failures`, and `dom_state`. Artifacts whose smoke check reports `rendered: false` are not admitted into the generation cache.
 - If the agent hits a limit (timeout, token, message) during generation, the harness logs the error prominently and continues with remaining tasks. A summary of all limit errors is printed at the end of generation.
+- For multi-turn skills, the runtime may also stop a session early for specific thrash reasons such as `max_turns_exceeded`, `token_budget_exceeded`, or `no_progress`. These are reported through the same limit-error pathway as timeouts.
 - If the agent produces empty or invalid HTML (no `<html>…</html>` block, fewer than 50 characters, or missing `<body>`) without a pre-existing limit error, the harness records a synthetic `agent_limit_error` of `"empty_generation"`. This flows through the same limit-error reporting pipeline so the post-run summary is explicit. The empty artifact is still written to disk and evaluates to `FAIL`.
 - Prompt hashing:
   - `compute_prompt_hash(user_prompt)` depends on the configured output-format instructions, custom instructions, and the user prompt.

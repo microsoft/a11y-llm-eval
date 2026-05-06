@@ -446,3 +446,85 @@ def test_fresh_generation_with_failed_browser_smoke_is_not_cached(monkeypatch, t
     assert html == _HTML
     assert meta["browser_smoke"] == smoke
     write_cache.assert_not_called()
+
+
+def test_skill_multi_turn_propagates_agent_guard_limits(monkeypatch, tmp_path):
+    from a11y_llm_tests.copilot_runtime import AgentGenerationResult
+
+    captured = {}
+
+    def fake_run_skill_multi_turn_sync(**kwargs):
+        captured.update(kwargs)
+        return AgentGenerationResult(
+            html=_HTML,
+            transcript={"format": "copilot_agent_conversation/v1", "turns": []},
+            usage={"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+            elapsed_s=0.4,
+            sandbox="docker:test",
+            limit_error=None,
+            session_log_path=None,
+            turns=[
+                {
+                    "turn_index": 0,
+                    "html": _HTML,
+                    "transcript": {
+                        "format": "copilot_agent_conversation/v1",
+                        "events": [],
+                        "output_source": "message",
+                    },
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+                    "elapsed_s": 0.4,
+                    "limit_error": None,
+                }
+            ],
+        )
+
+    monkeypatch.setattr(generator, "run_skill_multi_turn_sync", fake_run_skill_multi_turn_sync)
+    monkeypatch.setattr(generator, "_run_browser_smoke_check", lambda *args, **kwargs: {
+        "rendered": True,
+        "reason": None,
+        "page_errors": [],
+        "request_failures": [],
+        "dom_state": {"interactiveCount": 1},
+    })
+    monkeypatch.setattr(generator, "_write_agent_generation_cache", lambda *args, **kwargs: None)
+
+    turn_records, _conversation = generator.generate_html_with_skill_multi_turn(
+        "test-model",
+        "Build a form",
+        0,
+        disable_cache=True,
+        agent_config={
+            "limits": {
+                "timeout_s": 321,
+                "max_output_tokens": 12345,
+                "max_turns": 2,
+                "max_cumulative_total_tokens": 456,
+                "max_consecutive_no_progress_turns": 1,
+                "max_intra_turn_no_progress_assistant_turns": 3,
+            }
+        },
+        skill_config={
+            "id": "building-accessible-ui",
+            "skill_dir_abs_path": str(generator._REPO_ROOT / "config" / "skills" / "building-accessible-ui"),
+            "skill_files_hash": "abc123",
+            "turns": [
+                {"id": "generate", "name": "Generate", "prompt": "{{test_case_prompt}}"},
+            ],
+        },
+    )
+
+    assert captured["timeout_s"] == 321.0
+    assert captured["max_output_tokens"] == 12345
+    assert captured["max_turns"] == 2
+    assert captured["max_cumulative_total_tokens"] == 456
+    assert captured["max_consecutive_no_progress_turns"] == 1
+    assert captured["max_intra_turn_no_progress_assistant_turns"] == 3
+    assert turn_records[0]["meta"]["agent_limits"] == {
+        "timeout_s": 321.0,
+        "max_output_tokens": 12345,
+        "max_turns": 2,
+        "max_cumulative_total_tokens": 456,
+        "max_consecutive_no_progress_turns": 1,
+        "max_intra_turn_no_progress_assistant_turns": 3,
+    }

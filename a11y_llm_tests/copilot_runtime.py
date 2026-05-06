@@ -118,6 +118,98 @@ class AgentGenerationResult:
     turns: List[Dict[str, Any]] = field(default_factory=list)
 
 
+DEFAULT_MAX_INTRA_TURN_NO_PROGRESS_ASSISTANT_TURNS = 20
+_INTRA_TURN_PROGRESS_FILE_SUFFIXES = {
+    ".html",
+    ".css",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".json",
+}
+_INTRA_TURN_PROGRESS_EXCLUDED_NAMES = {
+    "out.json",
+    "package-lock.json",
+    "a11y-test.js",
+    "debug-test.js",
+    "run-a11y.js",
+    "server.js",
+}
+_INTRA_TURN_PROGRESS_EXCLUDED_PREFIXES = (
+    "test-",
+    "debug-",
+)
+
+
+def _artifact_progress_hash(html: str) -> Optional[str]:
+    if not isinstance(html, str):
+        return None
+    normalized = html.strip()
+    if not normalized:
+        return None
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _set_limit_error(error_holder: Dict[str, Any], message: str) -> None:
+    if "message" not in error_holder:
+        error_holder["message"] = message
+
+
+def _assistant_message_content(payload: Dict[str, Any]) -> str:
+    data = payload.get("data") or {}
+    if not isinstance(data, dict):
+        return ""
+    content = data.get("content")
+    return content if isinstance(content, str) else ""
+
+
+def _is_meaningful_progress_file(relative_path: Path) -> bool:
+    parts = relative_path.parts
+    if not parts:
+        return False
+    if any(part.startswith(".") for part in parts):
+        return False
+    if "node_modules" in parts:
+        return False
+    name = relative_path.name
+    if name in _INTRA_TURN_PROGRESS_EXCLUDED_NAMES:
+        return False
+    if any(name.startswith(prefix) for prefix in _INTRA_TURN_PROGRESS_EXCLUDED_PREFIXES):
+        return False
+    return relative_path.suffix.lower() in _INTRA_TURN_PROGRESS_FILE_SUFFIXES
+
+
+def _workdir_progress_hash(workdir: Optional[Path]) -> Optional[str]:
+    if workdir is None or not workdir.is_dir():
+        return None
+    hasher = hashlib.sha256()
+    saw_file = False
+    for path in sorted(workdir.rglob("*")):
+        if not path.is_file():
+            continue
+        try:
+            relative_path = path.relative_to(workdir)
+        except ValueError:
+            continue
+        if not _is_meaningful_progress_file(relative_path):
+            continue
+        try:
+            content = path.read_bytes()
+        except OSError:
+            continue
+        saw_file = True
+        hasher.update(relative_path.as_posix().encode("utf-8"))
+        hasher.update(b"\0")
+        hasher.update(content)
+        hasher.update(b"\0")
+    if not saw_file:
+        return None
+    return hasher.hexdigest()
+
+
 def _normalize_event_type(raw: Any) -> str:
     """Coerce an SDK event type into a stable lower-dotted string.
 
@@ -778,8 +870,6 @@ class CopilotRuntime:
         ``user_prompt`` itself at the generator layer, which keeps the SDK's
         default agent system prompt (and its tool-use priming) intact.
         """
-        from copilot.session import PermissionHandler
-
         if self._client is None:
             await self.start()
 
@@ -931,6 +1021,10 @@ class CopilotRuntime:
         excluded_tools: Optional[List[str]] = None,
         timeout_s: float = 600.0,
         max_output_tokens: Optional[int] = None,
+        max_turns: Optional[int] = None,
+        max_cumulative_total_tokens: Optional[int] = None,
+        max_consecutive_no_progress_turns: Optional[int] = None,
+        max_intra_turn_no_progress_assistant_turns: Optional[int] = DEFAULT_MAX_INTRA_TURN_NO_PROGRESS_ASSISTANT_TURNS,
         working_directory: Optional[str] = None,
     ) -> AgentGenerationResult:
         """Run a skill's ordered turn prompts on a single session.
@@ -947,8 +1041,6 @@ class CopilotRuntime:
         Output-format instructions are appended to each turn's user prompt
         at the generator layer.
         """
-        from copilot.session import PermissionHandler
-
         if self._client is None:
             await self.start()
         if not rendered_turn_prompts:
@@ -990,6 +1082,13 @@ class CopilotRuntime:
         idle_event = asyncio.Event()
         error_holder: Dict[str, Any] = {}
         stream = self._open_streaming_log()
+        session_id_holder: Dict[str, str] = {"value": "unknown"}
+        active_turn_state: Dict[str, Any] = {
+            "turn_index": None,
+            "assistant_message_has_content": False,
+            "assistant_turns_without_progress": 0,
+            "last_artifact_hash": None,
+        }
 
         def on_event(event: Any) -> None:
             payload = _serialize_session_event(event)
@@ -1003,14 +1102,52 @@ class CopilotRuntime:
                 if isinstance(data, dict):
                     error_holder["message"] = data.get("message") or data.get("error") or "session.error"
                 idle_event.set()
+            elif etype == "assistant.message":
+                if _assistant_message_content(payload).strip():
+                    active_turn_state["assistant_message_has_content"] = True
+            elif etype == "assistant.turn.end":
+                if active_turn_state.get("turn_index") is None or "message" in error_holder:
+                    return
+                current_progress_hash = (
+                    _workdir_progress_hash(host_workdir)
+                    or _artifact_progress_hash(self._read_workdir_artifact(host_workdir) or "")
+                )
+                artifact_made_progress = (
+                    current_progress_hash is not None
+                    and current_progress_hash != active_turn_state.get("last_artifact_hash")
+                )
+                assistant_made_progress = bool(active_turn_state.get("assistant_message_has_content"))
+                if artifact_made_progress or assistant_made_progress:
+                    active_turn_state["assistant_turns_without_progress"] = 0
+                else:
+                    active_turn_state["assistant_turns_without_progress"] += 1
+                    if (
+                        max_intra_turn_no_progress_assistant_turns is not None
+                        and active_turn_state["assistant_turns_without_progress"]
+                        >= max_intra_turn_no_progress_assistant_turns
+                    ):
+                        _set_limit_error(
+                            error_holder,
+                            "intra_turn_no_progress on turn "
+                            f"{active_turn_state['turn_index']} "
+                            f"(session={session_id_holder['value']})",
+                        )
+                        idle_event.set()
+                if current_progress_hash is not None:
+                    active_turn_state["last_artifact_hash"] = current_progress_hash
+                active_turn_state["assistant_message_has_content"] = False
 
         kwargs["on_event"] = on_event
 
         per_turn_records: List[Dict[str, Any]] = []
         total_start = time.monotonic()
+        cumulative_total_tokens = 0
+        previous_artifact_hash: Optional[str] = None
+        consecutive_no_progress_turns = 0
 
         async with await self._client.create_session(**kwargs) as session:
             session_id = getattr(session, "session_id", "unknown")
+            session_id_holder["value"] = str(session_id)
             stream.bind_session_id(str(session_id))
 
             for turn_index, prompt in enumerate(rendered_turn_prompts):
@@ -1030,14 +1167,63 @@ class CopilotRuntime:
                     })
                     continue
 
+                if max_turns is not None and turn_index >= max_turns:
+                    _set_limit_error(error_holder, f"max_turns_exceeded on turn {turn_index} (session={session_id})")
+                    per_turn_records.append({
+                        "turn_index": turn_index,
+                        "html": "",
+                        "transcript": {
+                            "format": "copilot_agent_conversation/v1",
+                            "turn_index": turn_index,
+                            "skipped": True,
+                            "skip_reason": error_holder["message"],
+                        },
+                        "usage": {},
+                        "elapsed_s": 0.0,
+                        "limit_error": error_holder["message"],
+                    })
+                    continue
+
+                if (
+                    max_cumulative_total_tokens is not None
+                    and cumulative_total_tokens >= max_cumulative_total_tokens
+                ):
+                    _set_limit_error(
+                        error_holder,
+                        f"token_budget_exceeded on turn {turn_index} (session={session_id})",
+                    )
+                    per_turn_records.append({
+                        "turn_index": turn_index,
+                        "html": "",
+                        "transcript": {
+                            "format": "copilot_agent_conversation/v1",
+                            "turn_index": turn_index,
+                            "skipped": True,
+                            "skip_reason": error_holder["message"],
+                        },
+                        "usage": {},
+                        "elapsed_s": 0.0,
+                        "limit_error": error_holder["message"],
+                    })
+                    continue
+
                 pre_event_count = len(events)
+                active_turn_state["turn_index"] = turn_index
+                active_turn_state["assistant_message_has_content"] = False
+                active_turn_state["assistant_turns_without_progress"] = 0
+                active_turn_state["last_artifact_hash"] = (
+                    _workdir_progress_hash(host_workdir)
+                    or _artifact_progress_hash(self._read_workdir_artifact(host_workdir) or "")
+                )
                 idle_event.clear()
                 turn_start = time.monotonic()
                 await session.send(prompt)
                 try:
                     await asyncio.wait_for(idle_event.wait(), timeout=timeout_s)
                 except asyncio.TimeoutError:
-                    error_holder["message"] = f"timeout on turn {turn_index} (session={session_id})"
+                    _set_limit_error(error_holder, f"timeout on turn {turn_index} (session={session_id})")
+                finally:
+                    active_turn_state["turn_index"] = None
 
                 turn_events = events[pre_event_count:]
                 disk_html = self._read_workdir_artifact(host_workdir)
@@ -1048,6 +1234,28 @@ class CopilotRuntime:
                     turn_html = _last_assistant_message(turn_events)
                     turn_output_source = "message"
                 turn_usage = _aggregate_usage(turn_events)
+                total_tokens = turn_usage.get("total_tokens")
+                if isinstance(total_tokens, (int, float)):
+                    cumulative_total_tokens += int(total_tokens)
+
+                current_artifact_hash = _artifact_progress_hash(turn_html)
+                if current_artifact_hash is not None and current_artifact_hash == previous_artifact_hash:
+                    consecutive_no_progress_turns += 1
+                else:
+                    consecutive_no_progress_turns = 0
+                if current_artifact_hash is not None:
+                    previous_artifact_hash = current_artifact_hash
+
+                if (
+                    max_consecutive_no_progress_turns is not None
+                    and current_artifact_hash is not None
+                    and consecutive_no_progress_turns >= max_consecutive_no_progress_turns
+                ):
+                    _set_limit_error(
+                        error_holder,
+                        f"no_progress on turn {turn_index} (session={session_id})",
+                    )
+
                 per_turn_records.append({
                     "turn_index": turn_index,
                     "html": turn_html,
@@ -1347,6 +1555,10 @@ def run_skill_multi_turn_sync(
     excluded_tools: Optional[List[str]] = None,
     timeout_s: float = 600.0,
     max_output_tokens: Optional[int] = None,
+    max_turns: Optional[int] = None,
+    max_cumulative_total_tokens: Optional[int] = None,
+    max_consecutive_no_progress_turns: Optional[int] = None,
+    max_intra_turn_no_progress_assistant_turns: Optional[int] = DEFAULT_MAX_INTRA_TURN_NO_PROGRESS_ASSISTANT_TURNS,
     log_dir: Optional[str] = None,
     working_directory: Optional[str] = None,
     workspace_dir: Optional[str] = None,
@@ -1369,6 +1581,10 @@ def run_skill_multi_turn_sync(
             excluded_tools=excluded_tools,
             timeout_s=timeout_s,
             max_output_tokens=max_output_tokens,
+            max_turns=max_turns,
+            max_cumulative_total_tokens=max_cumulative_total_tokens,
+            max_consecutive_no_progress_turns=max_consecutive_no_progress_turns,
+            max_intra_turn_no_progress_assistant_turns=max_intra_turn_no_progress_assistant_turns,
             working_directory=working_directory,
         )
 

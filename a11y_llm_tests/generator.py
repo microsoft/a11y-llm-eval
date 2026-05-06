@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from . import node_bridge
 from .copilot_runtime import (
     AgentGenerationResult,
+    DEFAULT_MAX_INTRA_TURN_NO_PROGRESS_ASSISTANT_TURNS,
     run_agent_generation_sync,
     run_skill_multi_turn_sync,
 )
@@ -895,6 +896,27 @@ def generate_html_with_skill_multi_turn(
     limits = config.get("limits") or {}
     timeout_s = float(limits.get("timeout_s") or config.get("timeout_s") or 1200.0)
     max_output_tokens = int(limits.get("max_output_tokens") or 64000)
+    max_turns = limits.get("max_turns")
+    if max_turns is not None:
+        max_turns = int(max_turns)
+    max_cumulative_total_tokens = limits.get("max_cumulative_total_tokens")
+    if max_cumulative_total_tokens is not None:
+        max_cumulative_total_tokens = int(max_cumulative_total_tokens)
+    max_consecutive_no_progress_turns = limits.get("max_consecutive_no_progress_turns")
+    if max_consecutive_no_progress_turns is not None:
+        max_consecutive_no_progress_turns = int(max_consecutive_no_progress_turns)
+    if "max_intra_turn_no_progress_assistant_turns" in limits:
+        max_intra_turn_no_progress_assistant_turns = limits.get(
+            "max_intra_turn_no_progress_assistant_turns"
+        )
+        if max_intra_turn_no_progress_assistant_turns is not None:
+            max_intra_turn_no_progress_assistant_turns = int(
+                max_intra_turn_no_progress_assistant_turns
+            )
+    else:
+        max_intra_turn_no_progress_assistant_turns = (
+            DEFAULT_MAX_INTRA_TURN_NO_PROGRESS_ASSISTANT_TURNS
+        )
     excluded_tools = config.get("excluded_tools") if isinstance(config.get("excluded_tools"), list) else None
 
     base_prompt_hash_value = compute_prompt_hash(
@@ -1014,6 +1036,10 @@ def generate_html_with_skill_multi_turn(
         excluded_tools=excluded_tools,
         timeout_s=timeout_s,
         max_output_tokens=max_output_tokens,
+        max_turns=max_turns,
+        max_cumulative_total_tokens=max_cumulative_total_tokens,
+        max_consecutive_no_progress_turns=max_consecutive_no_progress_turns,
+        max_intra_turn_no_progress_assistant_turns=max_intra_turn_no_progress_assistant_turns,
         log_dir=log_dir,
         working_directory=sandbox_workdir,
         workspace_dir=workspace_dir,
@@ -1043,7 +1069,14 @@ def generate_html_with_skill_multi_turn(
             "generation_mode": "copilot_agent",
             "agent_sandbox": format_agent_sandbox(result.sandbox),
             "agent_limit_error": per_turn.get("limit_error"),
-            "agent_limits": {"timeout_s": timeout_s},
+            "agent_limits": {
+                "timeout_s": timeout_s,
+                "max_output_tokens": max_output_tokens,
+                "max_turns": max_turns,
+                "max_cumulative_total_tokens": max_cumulative_total_tokens,
+                "max_consecutive_no_progress_turns": max_consecutive_no_progress_turns,
+                "max_intra_turn_no_progress_assistant_turns": max_intra_turn_no_progress_assistant_turns,
+            },
             "agent_session_log_path": result.session_log_path,
             "iteration": iteration,
             "custom_instructions_delivery": (
