@@ -2010,7 +2010,11 @@ def _report_relative_display_path(path_str: str | None, run_dir: Path) -> str | 
     return path_str
   if ":" in path_str:
     prefix, path_part = path_str.split(":", 1)
+    if len(prefix) == 1 and prefix.isalpha():
+      return _report_relative_href(path_str, run_dir)
     if path_part.startswith(("/", "\\")):
+      return f"{prefix}:{_report_relative_href(path_part, run_dir)}"
+    if re.match(r"^[A-Za-z]:[/\\]", path_part):
       return f"{prefix}:{_report_relative_href(path_part, run_dir)}"
     return path_str
   return _report_relative_href(path_str, run_dir)
