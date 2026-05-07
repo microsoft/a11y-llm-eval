@@ -591,3 +591,40 @@ class TestIsolatedWorkspaceCopy:
         ])
         assert result.exit_code == 0, result.output + (result.stderr or "")
         assert sorted(cleaned_workspaces) == ["concise", "control", "demo-skill"]
+
+
+def test_report_command_can_exclude_generated_html_samples(tmp_path, monkeypatch):
+    run_dir = tmp_path / "runs" / "2026-05-06_18-00-00"
+    run_dir.mkdir(parents=True)
+    (run_dir / "results.json").write_text("{}", encoding="utf-8")
+
+    models_file = tmp_path / "models.yaml"
+    models_file.write_text("models: []\n", encoding="utf-8")
+
+    captured = {}
+
+    def fake_render_report(run_json_path, out_html, models_cfg, **kwargs):
+        captured["run_json_path"] = run_json_path
+        captured["out_html"] = out_html
+        captured["models_cfg"] = models_cfg
+        captured.update(kwargs)
+
+    monkeypatch.setattr(cli, "load_models_config", lambda _path: ({"models": []}, None))
+    import a11y_llm_tests.report as report_module
+    monkeypatch.setattr(report_module, "render_report", fake_render_report)
+
+    result = _runner.invoke(
+        cli.app,
+        [
+            "report",
+            str(run_dir),
+            "--models-file",
+            str(models_file),
+            "--exclude-generated-html-samples",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output + (result.stderr or "")
+    assert captured["run_json_path"] == run_dir / "results.json"
+    assert captured["out_html"] == run_dir / "index.html"
+    assert captured["include_generated_html_samples"] is False

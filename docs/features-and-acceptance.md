@@ -145,7 +145,13 @@ The harness supports a two-phase workflow:
     - `results` containing evaluated records.
     - `aggregates` containing pass@k records (see Sampling section).
   - If report generation is enabled (default), writes `<run_dir>/index.html`.
+  - The main report may also write auxiliary lazy-loaded detail assets under `<run_dir>/report_pages/`. `index.html` remains the stable entry point.
+  - `--report-exclude-generated-html-samples` keeps the generated HTML files on disk but omits direct links to them from `<run_dir>/index.html`. Screenshots and other report content remain embedded.
   - `--test-cases single-checkbox,modal-dialog` limits evaluation to only the named base test cases from the existing run. Defaults to all test cases when omitted.
+- `python -m a11y_llm_tests.cli report <run_dir> ...`:
+  - Regenerates `<run_dir>/index.html` from an evaluated `results.json`.
+  - Regenerates any auxiliary report assets under `<run_dir>/report_pages/` when present.
+  - `--exclude-generated-html-samples` omits direct links to generated HTML files from the report while leaving those files on disk.
 - `python -m a11y_llm_tests.cli serve <run_dir> ...`:
   - Requires an existing run directory.
   - Serves the run directory over localhost HTTP until interrupted.
@@ -499,6 +505,7 @@ with edge cases:
 When report generation is enabled (default):
 
 - `evaluate` writes an HTML report to `<run_dir>/index.html`.
+- The main report may split sample-heavy sections into auxiliary HTML fragments/pages under `<run_dir>/report_pages/` and lazy-load them at runtime. This does not change the primary report URL.
 
 The report summarizes:
 
@@ -525,6 +532,7 @@ When prompt variants exist:
 ### Acceptance criteria
 
 - Report output path is stable: `<run_dir>/index.html`.
+- Auxiliary report pages, when generated, live under `<run_dir>/report_pages/` and are linked from the main report.
 - The report renderer derives model display names from (in order):
   1. `meta.models_info` in `results.json`
   2. the provided models config

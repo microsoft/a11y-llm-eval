@@ -1341,6 +1341,11 @@ def evaluate(
     test_cases: str = typer.Option(None, "--test-cases", help="Comma-separated base test case names to evaluate (e.g. single-checkbox,modal-dialog). Defaults to all."),
     k: str = typer.Option("1,5,10", help="Comma-separated k values for pass@k metrics."),
     generate_report: bool = typer.Option(True, help="Generate HTML report (index.html) after evaluation."),
+    report_include_generated_html_samples: bool = typer.Option(
+        True,
+        "--report-include-generated-html-samples/--report-exclude-generated-html-samples",
+        help="Include direct links to generated HTML samples in the HTML report.",
+    ),
     processes: int = typer.Option(None, "--processes", "-p", help="Number of parallel processes for evaluation (defaults to CPU count; use 1 to disable)."),
 ):
     """Evaluate previously generated HTML samples without requiring models config: run accessibility tests, compute aggregates, optionally render report."""
@@ -1622,7 +1627,12 @@ def evaluate(
                 for name in model_names
             ]
         }
-        render_report(results_json_path, rd / "index.html", synthesized_models_cfg)
+        render_report(
+            results_json_path,
+            rd / "index.html",
+            synthesized_models_cfg,
+            include_generated_html_samples=report_include_generated_html_samples,
+        )
         typer.echo(f"Evaluation complete. Report generated: {rd}/index.html")
     else:
         typer.echo("Evaluation complete. Report generation skipped.")
@@ -1631,13 +1641,23 @@ def evaluate(
 @app.command()
 def report(
     run_dir: str,
-    models_file: str = typer.Option("config/models.yaml", help="Models config YAML")
+    models_file: str = typer.Option("config/models.yaml", help="Models config YAML"),
+    include_generated_html_samples: bool = typer.Option(
+        True,
+        "--include-generated-html-samples/--exclude-generated-html-samples",
+        help="Include direct links to generated HTML samples in the HTML report.",
+    ),
     ):
     """Regenerate HTML report for an existing run directory."""
     models_cfg, _ = load_models_config(models_file)
     rd = Path(run_dir)
     from .report import render_report
-    render_report(rd / "results.json", rd / "index.html", models_cfg)
+    render_report(
+        rd / "results.json",
+        rd / "index.html",
+        models_cfg,
+        include_generated_html_samples=include_generated_html_samples,
+    )
     typer.echo("Report regenerated.")
 
 
