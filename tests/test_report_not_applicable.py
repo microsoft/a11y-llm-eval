@@ -646,6 +646,10 @@ def test_render_report_includes_detectable_difference_methodology_note(tmp_path:
     html = out_html.read_text(encoding="utf-8")
     assert "This report is not used for model training" in html
     assert "the testing is not comprehensive" in html
+    assert "<h2>Contributors</h2>" in html
+    assert "This report and evaluation harness are maintained by Michael Fairchild" in html
+    assert "Contributors include Scott O'hara, Aaron Gustafson, Shawn Lauriat, Dylan Isaac, and Cameron Cundiff" in html
+    assert 'href="mailto:mfairchild@microsoft.com"' in html
     assert "Based on 32 prompt cases and 10 samples per case" in html
     assert "320 samples per model" in html
     assert "11.1" in html

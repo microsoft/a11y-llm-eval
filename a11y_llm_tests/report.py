@@ -938,7 +938,8 @@ details li { margin-bottom: 0.35rem; }
   {% endif %}
   <p>All tests are automatic and deterministic (no human intervention). Only a fraction of accessibility requirements in WCAG can be covered in this way. Many requirements still need a human to evaluate. As such, these tests are not comprehensive. Even if a test passes, it may still fail WCAG and contain serious accessibility issues.</p>
   <p>Please leave feedback, review the source code, and contribute test cases, assertions, and other improvements at the <a href="https://github.com/microsoft/a11y-llm-eval">GitHub Project</a>.</p>
-
+<h2>Contributors</h2>
+  <p>This report and evaluation harness are maintained by Michael Fairchild. For questions about methodology, generated samples, or report interpretation, contact <a href="mailto:mfairchild@microsoft.com">mfairchild@microsoft.com</a>. Contributors include Scott O'hara, Aaron Gustafson, Shawn Lauriat, Dylan Isaac, and Cameron Cundiff. This project would not be possible without the support of the Microsoft Accessibility team and the GitHub Copilot SDK team.</p>
 <h2 id="glossary">Glossary</h2>
   <h3>Column Definitions</h3>
   <ul>
