@@ -6,12 +6,14 @@ instruction_sets:
   - id: accessible_minimal
     name: 0. Minimal
     description: Minimal reminder that all output must be accessible.
+    url: https://github.com/microsoft/a11y-llm-eval/blob/main/config/instructions/accessible-minimal.md
     instructions_markdown: instructions/accessible-minimal.md
     # Optional override. If omitted, defaults to the same value as --samples.
     # samples: 5
   - id: accessible_basic
     name: 1. Basic
     description: Basic reminder that all output must be accessible (includes slightly more instructions than minimal).
+    url: https://github.com/microsoft/a11y-llm-eval/blob/main/config/instructions/accessible-basic.md
     instructions_markdown: instructions/accessible-basic.md
     # Optional override. If omitted, defaults to the same value as --samples.
     # samples: 5

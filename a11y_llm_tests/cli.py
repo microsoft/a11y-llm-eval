@@ -517,6 +517,7 @@ def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[d
         - id: concise
           name: Concise
           description: ...
+          url: https://example.com/full-instructions
           instructions_markdown: path/to/file.md
           samples: 10
 
@@ -561,6 +562,7 @@ def _load_instruction_sets(instruction_sets_file: str, base_dir: Path) -> list[d
             "id": sid,
             "name": (s.get("name") or sid).strip(),
             "description": (s.get("description") or "").strip() or None,
+            "url": (s.get("url") or "").strip() or None,
             "markdown_path": str(mdp),
             "markdown_text": mdp.read_text(encoding="utf-8"),
             "samples": s.get("samples"),
@@ -612,6 +614,7 @@ def _load_skills(skills_file: str, base_dir: Path, existing_ids: set[str] | None
           - id: a11y-reviewer
             name: Accessibility Reviewer
             description: ...
+            url: https://example.com/full-skill
             skill_dir: skills/a11y-reviewer   # relative to base_dir or absolute
             samples: 10                       # optional
             agent:                            # optional; same shape as instruction sets
@@ -704,6 +707,7 @@ def _load_skills(skills_file: str, base_dir: Path, existing_ids: set[str] | None
             "id": sid,
             "name": name,
             "description": (s.get("description") or "").strip() or None,
+            "url": (s.get("url") or "").strip() or None,
             "skill_dir_abs_path": str(sdp),
             "skill_files_hash": files_hash,
             "turns": turns,
@@ -876,6 +880,7 @@ def run(
                 "id": s["id"],
                 "name": s.get("name") or s["id"],
                 "description": s.get("description"),
+                "url": s.get("url"),
                 "custom_instructions_path": s.get("markdown_path"),
                 "custom_instructions_text": s.get("markdown_text"),
                 "n_samples_requested": n_int,
@@ -907,6 +912,7 @@ def run(
                 "id": sk["id"],
                 "name": sk.get("name") or sk["id"],
                 "description": sk.get("description"),
+                "url": sk.get("url"),
                 # Skills no longer inject a system-prompt preamble: the SDK
                 # exposes the skill directory directly via skill_directories
                 # and the model auto-loads its SKILL.md.
@@ -1248,6 +1254,7 @@ def run(
                     id=v.get("id") or "control",
                     name=v.get("name"),
                     description=v.get("description"),
+                    url=v.get("url"),
                     custom_instructions_path=v.get("custom_instructions_path"),
                     n_samples_requested=v.get("n_samples_requested"),
                     generation_mode=v.get("generation_mode"),

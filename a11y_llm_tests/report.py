@@ -40,6 +40,22 @@ from .report_stats import (
 )
 from .report_text_utils import _format_assertion_message, _shorten_sandbox
 
+_DEFAULT_PROMPT_VARIANT_URLS = {
+  "accessible_minimal": "https://github.com/microsoft/a11y-llm-eval/blob/main/config/instructions/accessible-minimal.md",
+  "accessible_basic": "https://github.com/microsoft/a11y-llm-eval/blob/main/config/instructions/accessible-basic.md",
+  "building-accessible-ui": "https://github.com/microsoft/a11y-llm-eval/tree/main/config/skills/building-accessible-ui",
+}
+
+
+def _prompt_variant_url(prompt_variant: dict | None) -> str | None:
+  if not isinstance(prompt_variant, dict):
+    return None
+  url = (prompt_variant.get("url") or "").strip()
+  if url:
+    return url
+  return _DEFAULT_PROMPT_VARIANT_URLS.get(prompt_variant.get("id"))
+
+
 TEMPLATE = """<!DOCTYPE html>
 <html lang=\"en\">
 <head>
@@ -242,6 +258,12 @@ tbody th { text-align: left; }
   display: none;
 }
 .sample-card h4 {
+  margin-top: 0;
+  margin-bottom: 0.25rem;
+  font-size: 1.05rem;
+  color: var(--text-primary);
+}
+.sample-card h5 {
   margin-top: 0;
   margin-bottom: 0.25rem;
   font-size: 1.05rem;
@@ -478,6 +500,25 @@ body.dialog-open {
 .pass-rate-note strong { color: var(--text-primary); }
 
 /* Report navigation (single page) */
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: 1rem;
+  z-index: 100;
+  transform: translateY(-150%);
+  padding: 0.55rem 0.85rem;
+  border-radius: 0.5rem;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  font-weight: 700;
+  text-decoration: none;
+  box-shadow: var(--focus-ring);
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: translateY(0);
+  outline: none;
+}
 .report-nav {
   margin: 1rem 0 1.25rem;
   display: flex;
@@ -551,6 +592,7 @@ details li { margin-bottom: 0.35rem; }
 </style>
 </head>
 <body>
+<a class="skip-link" href="#overview">Skip to report content</a>
 {% macro pass_rate_note() -%}
 <p class="pass-rate-note"><strong>* Pass rate</strong> reflects only this harness's automated checks (a curated set of axe-core WCAG rules plus hand-written assertions per test case). Automated testing can detect only a subset of accessibility issues: 100% here means the sample passed every check that was run, <strong>not</strong> that the page is WCAG conformant or fully accessible.</p>
 {%- endmacro %}
@@ -576,33 +618,42 @@ details li { margin-bottom: 0.35rem; }
 
 <section id="overview">
 <h2>Overview</h2>
-<p>This page starts with a high-level summary of the control benchmark and, when present, the instruction-set and skill comparisons. Use the links below to jump into the detailed sections that explain each result.</p>
+<p>The A11y LLM Eval report provides a summary of accessibility evaluation results for different models, instruction sets, and skills. It can help identify how different approaches impact accessibility outcomes and highlight areas for improvement. All content is generated using GitHub Copilot SDK and results are based on automated checks and curated test cases.</p>
+<p class="overview-caption">Run scope: {{ overview.run.model_count }} models | {{ overview.run.prompt_case_count }} prompt cases | {{ overview.run.total_control_samples }} control samples | {{ overview.run.instruction_variant_count }} instruction sets | {{ overview.run.skill_variant_count }} skills</p>
 
-<div class="overview-grid" aria-label="Run overview metrics">
-  <article class="overview-card">
-    <h3>Control leader</h3>
-    <p class="overview-stat">{{ overview.control_leader.display_name }}</p>
-    <p class="overview-label">{{ '%.0f%%'|format(overview.control_leader.pass_rate * 100) }} pass rate across {{ overview.run.prompt_case_count }} prompt cases</p>
-  </article>
-  <article class="overview-card">
-    <h3>Models</h3>
-    <p class="overview-stat">{{ overview.run.model_count }}</p>
-    <p class="overview-label">{{ overview.run.total_control_samples }} control samples in this run</p>
-  </article>
-  <article class="overview-card">
-    <h3>Instruction sets</h3>
-    <p class="overview-stat">{{ overview.run.instruction_variant_count }}</p>
+<div class="overview-grid">
+  <div class="overview-card">
+    <h3>Control baseline</h3>
+    <p class="overview-stat">{{ '%.0f%%'|format(overview.control_baseline.pass_rate * 100) }}</p>
+    <p class="overview-label">Overall control pass rate*{% if overview.control_leader %}; best model {{ overview.control_leader.display_name }} at {{ '%.0f%%'|format(overview.control_leader.pass_rate * 100) }}{% endif %}</p>
+  </div>
+  <div class="overview-card">
+    <h3>Hardest case</h3>
+    {% if overview.hardest_case %}
+    <p class="overview-stat">{{ overview.hardest_case.test_name }}</p>
+    <p class="overview-label">{{ '%.0f%%'|format(overview.hardest_case.pass_rate * 100) }} pass rate*, {{ '%.2f'|format(overview.hardest_case.avg_wcag_failures) }} avg WCAG failures</p>
+    {% else %}
+    <p class="overview-stat">None</p>
+    <p class="overview-label">No failing control cases were found</p>
+    {% endif %}
+  </div>
+  <div class="overview-card">
+    <h3>Best instruction lift</h3>
+    <p class="overview-stat">{% if overview.top_instruction %}{{ overview.top_instruction.variant_name }}{% else %}None{% endif %}</p>
     <p class="overview-label">{% if overview.top_instruction %}Best delta {{ '%+.1fpp'|format(overview.top_instruction.delta_avg_pass_rate * 100) }} vs control{% else %}No instruction-set variants in this run{% endif %}</p>
-  </article>
-  <article class="overview-card">
-    <h3>Skills</h3>
-    <p class="overview-stat">{{ overview.run.skill_variant_count }}</p>
-    <p class="overview-label">{% if overview.top_skill %}Best final-turn delta {{ '%+.1fpp'|format(overview.top_skill.best_delta_last_vs_control * 100) }} vs control{% else %}No skill variants in this run{% endif %}</p>
-  </article>
+  </div>
+  <div class="overview-card">
+    <h3>Best skill lift</h3>
+    <p class="overview-stat">{% if overview.top_skill %}{{ overview.top_skill.name }}{% else %}None{% endif %}</p>
+    <p class="overview-label">{% if overview.top_skill %}Best final-turn delta {{ '%+.1fpp'|format(overview.top_skill.best_delta_last_vs_control * 100) }} vs control{% if overview.top_skill.best_delta_last_vs_first is not none %}; {{ '%+.1fpp'|format(overview.top_skill.best_delta_last_vs_first * 100) }} vs turn 1{% endif %}{% else %}No skill variants in this run{% endif %}</p>
+  </div>
 </div>
+
+{{ pass_rate_note() }}
 
 <div class="overview-subsection">
   <h3>Control snapshot</h3>
+  <p>Control results show how well models produce accessible code with no instructions or prompts to specifically create accessible code.</p>
   <table>
     <thead>
       <tr><th>Model</th><th>Rank</th><th>Pass rate*</th><th>Avg Total WCAG Failures</th></tr>
@@ -618,12 +669,12 @@ details li { margin-bottom: 0.35rem; }
       {% endfor %}
     </tbody>
   </table>
-  {{ pass_rate_note() }}
 </div>
 
 {% if overview.instruction_rows %}
 <div class="overview-subsection">
   <h3>Instruction-set snapshot</h3>
+  <p>Instruction-set results show how well models produce accessible code when given specific guidance at the system/instruction level. Instructions guide the agent's behavior throughout the generation session and can improve accessibility outcomes, but they also consume context, especially when they are lengthy or combined with other instructions.</p>
   <table>
     <thead>
       <tr><th>Instruction set</th><th>Rank</th><th>Variant pass rate*</th><th>Delta vs control</th></tr>
@@ -631,7 +682,7 @@ details li { margin-bottom: 0.35rem; }
     <tbody>
       {% for row in overview.instruction_rows %}
       <tr>
-        <th>{{ row.variant_name }}</th>
+        <th>{% if row.url %}<a href="{{ row.url|e }}">{{ row.variant_name }}</a>{% else %}{{ row.variant_name }}{% endif %}</th>
         <td>{{ row.rank }}</td>
         <td class="pass-at-k-cell" data-pass="{{ '%.4f'|format(row.avg_variant_pass_rate) }}">{{ '%.0f%%'|format(row.avg_variant_pass_rate * 100) }}</td>
         <td class="{% if row.delta_avg_pass_rate > 0 %}delta-positive{% elif row.delta_avg_pass_rate < 0 %}delta-negative{% endif %}">{{ '%+.1fpp'|format(row.delta_avg_pass_rate * 100) }}</td>
@@ -645,6 +696,7 @@ details li { margin-bottom: 0.35rem; }
 {% if overview.skill_rows %}
 <div class="overview-subsection">
   <h3>Skill snapshot</h3>
+  <p>Skills are reusable, task-specific packages that can include guidance, examples, supporting files, scripts, and tool-use workflows, while instruction sets are always-on guidance added to the agent's context for a run. Use instructions for broad behavior you want applied consistently across tasks; use a skill when the guidance is specialized, larger, procedural, or depends on files, scripts, or a focused sequence of tool-assisted steps. Skills keep general instructions lighter and can guide the model through a process, such as generating an answer and then reviewing it against a checklist.</p>
   <table>
     <thead>
       <tr><th>Skill</th><th>Best model</th><th>Final turn pass rate*</th><th>Delta vs control</th></tr>
@@ -652,7 +704,7 @@ details li { margin-bottom: 0.35rem; }
     <tbody>
       {% for row in overview.skill_rows %}
       <tr>
-        <th>{{ row.name }}</th>
+        <th>{% if row.url %}<a href="{{ row.url|e }}">{{ row.name }}</a>{% else %}{{ row.name }}{% endif %}</th>
         <td>{{ row.best_model_display }}</td>
         <td class="pass-at-k-cell" data-pass="{{ '%.4f'|format(row.best_final_turn_pass_rate) }}">{{ '%.0f%%'|format(row.best_final_turn_pass_rate * 100) }}</td>
         <td class="{% if row.best_delta_last_vs_control > 0 %}delta-positive{% elif row.best_delta_last_vs_control < 0 %}delta-negative{% endif %}">{{ '%+.1fpp'|format(row.best_delta_last_vs_control * 100) }}</td>
@@ -832,8 +884,8 @@ details li { margin-bottom: 0.35rem; }
 
 <section id="report-about" data-report-section="about">
 <h2 id="methodology">Methodology</h2>
-  <p>This report shows how well various LLMs generate accessible HTML.</p>
   <ul>
+    <li>This report is not used for model training, and the testing is not comprehensive. Results should be interpreted as a targeted accessibility evaluation of the included prompt cases, not a complete assessment of model quality or accessibility behavior.</li>
     <li>Each test uses a prompt to generate HTML. The generated HTML is then tested for accessibility.</li>
     {% if not report_include_generated_html_samples %}
     <li>This report intentionally omits direct links to the generated HTML samples. Screenshots and evaluation artifacts remain embedded here, and the generated content is available upon request from <a href="mailto:mfairchild@microsoft.com">mfairchild@microsoft.com</a>.</li>
@@ -975,6 +1027,7 @@ details li { margin-bottom: 0.35rem; }
         <details>
           <summary>{{ v.name }}</summary>
           {% if v.description %}<p>{{ v.description }}</p>{% endif %}
+          {% if v.url %}<p><a href="{{ v.url|e }}">Full instruction set</a></p>{% endif %}
           {% if v.n_samples_requested %}<p><strong>Variant samples per (test, model):</strong> {{ v.n_samples_requested }}</p>{% endif %}
           {% if v.generation_mode %}<p><strong>Generation mode:</strong> {{ v.generation_mode }}</p>{% endif %}
           {% if v.agent_sandbox %}<p><strong>Sandbox:</strong> {{ v.agent_sandbox }}</p>{% endif %}
@@ -1334,6 +1387,7 @@ details li { margin-bottom: 0.35rem; }
       <details>
         <summary>{{ v.name }}</summary>
         {% if v.description %}<p>{{ v.description }}</p>{% endif %}
+        {% if v.url %}<p><a href="{{ v.url|e }}">Full skill</a></p>{% endif %}
         {% if v.n_samples_requested %}<p><strong>Samples per (test, model):</strong> {{ v.n_samples_requested }}</p>{% endif %}
         {% if v.agent_sandbox %}<p><strong>Sandbox:</strong> {{ v.agent_sandbox }}</p>{% endif %}
         {% if v.skill_path %}<p><strong>Skill package:</strong> <code>{{ v.skill_path }}</code></p>{% endif %}
@@ -1941,11 +1995,25 @@ def _report_relative_href(path_str: str | None, run_dir: Path) -> str | None:
     try:
       return raw_path.resolve().relative_to(run_dir.resolve()).as_posix()
     except ValueError:
-      return raw_path.as_posix()
+      return os.path.relpath(raw_path, start=run_dir).replace(os.sep, "/")
   parts = raw_path.as_posix().split("/")
   if len(parts) >= 2 and parts[0] == "runs" and parts[1] == run_dir.name:
     return "/".join(parts[2:])
   return raw_path.as_posix()
+
+
+def _report_relative_display_path(path_str: str | None, run_dir: Path) -> str | None:
+  if not path_str:
+    return None
+  if "://" in path_str:
+    return path_str
+  if ":" in path_str:
+    prefix, path_part = path_str.split(":", 1)
+    if path_part.startswith(("/", "\\")):
+      return f"{prefix}:{_report_relative_href(path_part, run_dir)}"
+    return path_str
+  return _report_relative_href(path_str, run_dir)
+
 
 def render_report(
   run_json_path: Path,
@@ -1962,6 +2030,9 @@ def render_report(
 
   all_results = data.get("results", []) or []
   run_dir = run_json_path.parent
+  if isinstance(prompting_meta, dict) and prompting_meta.get("custom_instructions_path"):
+    prompting_meta = dict(prompting_meta)
+    prompting_meta["custom_instructions_path"] = _report_relative_display_path(prompting_meta.get("custom_instructions_path"), run_dir)
   report_pages_dir, detail_pages_dir, conversation_pages_dir = _prepare_report_pages(run_dir)
 
   conversation_slug_seen: set[str] = set()
@@ -2051,7 +2122,7 @@ def render_report(
   for result in all_results:
     gen = result.get("generation") or {}
     if gen.get("agent_sandbox"):
-      gen["agent_sandbox"] = _shorten_sandbox(gen["agent_sandbox"])
+      gen["agent_sandbox"] = _report_relative_display_path(gen.get("agent_sandbox"), run_dir)
 
   for result in all_results:
     test_function = result.get("test_function") or {}
@@ -2070,6 +2141,10 @@ def render_report(
 
   prompt_variants_meta = meta_block.get("prompt_variants") or []
   prompt_cases_meta = meta_block.get("prompt_cases") or []
+  for pv in prompt_variants_meta:
+    if isinstance(pv, dict):
+      pv["url"] = _prompt_variant_url(pv)
+
   prompt_variant_meta_by_id = {}
   for pv in prompt_variants_meta:
     if isinstance(pv, dict) and pv.get("id"):
@@ -2550,11 +2625,12 @@ def render_report(
         "id": vid,
         "name": variant_name,
         "description": pv.get("description"),
+        "url": pv.get("url"),
         "n_samples_requested": pv.get("n_samples_requested"),
         "generation_mode": pv.get("generation_mode"),
-        "agent_sandbox": _shorten_sandbox(pv.get("agent_sandbox")),
+        "agent_sandbox": _report_relative_display_path(pv.get("agent_sandbox"), run_dir),
         "agent_limits": pv.get("agent_limits"),
-        "custom_instructions_path": custom_instructions_path,
+        "custom_instructions_path": _report_relative_display_path(custom_instructions_path, run_dir),
         "custom_instructions_markdown": custom_instructions_markdown,
       })
 
@@ -2568,6 +2644,7 @@ def render_report(
       instruction_benchmark_summary.append({
         "variant_id": vid,
         "variant_name": variant_name,
+        "url": _prompt_variant_url(pv),
         "avg_control_pass_rate": avg_control,
         "avg_variant_pass_rate": avg_variant,
         "delta_avg_pass_rate": avg_variant - avg_control,
@@ -2722,10 +2799,11 @@ def render_report(
         "id": vid,
         "name": pv.get("name") or vid,
         "description": pv.get("description"),
+        "url": pv.get("url"),
         "n_samples_requested": pv.get("n_samples_requested"),
-        "agent_sandbox": _shorten_sandbox(pv.get("agent_sandbox")),
+        "agent_sandbox": _report_relative_display_path(pv.get("agent_sandbox"), run_dir),
         "agent_limits": pv.get("agent_limits"),
-        "skill_path": skill_path,
+        "skill_path": _report_relative_display_path(skill_path, run_dir),
         "skill_md_preview": skill_md_preview,
         "turns": turns_meta,
       })
@@ -2958,27 +3036,35 @@ def render_report(
     skill_overview_rows.append({
       "id": table.get("id"),
       "name": table.get("name"),
+      "url": _prompt_variant_url(prompt_variant_meta_by_id.get(table.get("id"))),
       "best_model_name": best_row.get("model_name"),
       "best_model_display": best_row.get("model_display"),
       "best_final_turn_pass_rate": final_turn_pass_rate,
       "best_delta_last_vs_control": best_row.get("delta_last_vs_control", 0.0),
+      "best_delta_last_vs_first": best_row.get("delta_last_vs_first"),
     })
 
   skill_overview_rows.sort(key=lambda row: (-row["best_final_turn_pass_rate"], -row["best_delta_last_vs_control"], row["name"]))
+
+  control_sample_count = len(control_results)
+  control_pass_count = sum(1 for row in control_results if row.get("result") == "PASS")
+  control_baseline = {
+    "pass_rate": (control_pass_count / control_sample_count) if control_sample_count else 0.0,
+    "sample_count": control_sample_count,
+  }
 
   overview = {
     "run": {
       "model_count": len(summary_rows),
       "prompt_case_count": prompt_case_count,
-      "total_control_samples": samples_per_model * len(summary_rows),
+      "total_control_samples": control_sample_count,
       "instruction_variant_count": len(instruction_benchmark_summary),
       "skill_variant_count": len(skill_overview_rows),
     },
     "control_rows": summary_rows[:5],
-    "control_leader": summary_rows[0] if summary_rows else {
-      "display_name": "No evaluated models",
-      "pass_rate": 0.0,
-    },
+    "control_baseline": control_baseline,
+    "control_leader": summary_rows[0] if summary_rows else None,
+    "hardest_case": global_hardest_tests[0] if global_hardest_tests else None,
     "hardest_tests": global_hardest_tests[:3],
     "instruction_rows": instruction_benchmark_summary[:5],
     "skill_rows": skill_overview_rows[:5],

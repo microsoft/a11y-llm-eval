@@ -21,8 +21,8 @@ skills:
   - id: building-accessible-ui
     name: Building Accessible UI
     description: >-
-      A skill that implicitly steers generation toward accessible HTML and can be
-      explicitly invoked to review and remediate previously produced HTML.
+      A skill that implicitly steers generation toward accessible HTML and can be explicitly invoked to review and remediate previously produced HTML. This skill provides expert guidance on accessibility best practices, including semantic HTML, ARIA roles, and color contrast.
+    url: https://github.com/microsoft/a11y-llm-eval/tree/main/config/skills/building-accessible-ui
     skill_dir: skills/building-accessible-ui
     # Optional. Defaults to --samples.
     # samples: 3

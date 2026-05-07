@@ -2,7 +2,26 @@ from pathlib import Path
 
 import orjson
 
-from a11y_llm_tests.report import render_report
+from a11y_llm_tests.report import _prompt_variant_url, _report_relative_display_path, render_report
+
+
+def test_prompt_variant_url_uses_default_config_fallbacks():
+    assert _prompt_variant_url({"id": "accessible_minimal", "url": None}) == "https://github.com/microsoft/a11y-llm-eval/blob/main/config/instructions/accessible-minimal.md"
+    assert _prompt_variant_url({"id": "accessible_basic", "url": ""}) == "https://github.com/microsoft/a11y-llm-eval/blob/main/config/instructions/accessible-basic.md"
+    assert _prompt_variant_url({"id": "building-accessible-ui"}) == "https://github.com/microsoft/a11y-llm-eval/tree/main/config/skills/building-accessible-ui"
+    assert _prompt_variant_url({"id": "custom-skill", "url": "https://example.com/custom"}) == "https://example.com/custom"
+    assert _prompt_variant_url({"id": "custom-skill"}) is None
+
+
+def test_report_relative_display_path_avoids_absolute_paths(tmp_path: Path):
+    run_dir = tmp_path / "runs" / "2026-05-07_12-00-00"
+    run_dir.mkdir(parents=True)
+    skill_dir = tmp_path / "config" / "skills" / "building-accessible-ui"
+    assert _report_relative_display_path(str(skill_dir), run_dir) == "../../config/skills/building-accessible-ui"
+    assert _report_relative_display_path(f"docker:{skill_dir}", run_dir) == "docker:../../config/skills/building-accessible-ui"
+    assert _report_relative_display_path(f"runs/{run_dir.name}/raw/sample/index.html", run_dir) == "raw/sample/index.html"
+    assert _report_relative_display_path("config/copilot_sandbox/compose.yaml", run_dir) == "config/copilot_sandbox/compose.yaml"
+    assert _report_relative_display_path("https://example.com/path", run_dir) == "https://example.com/path"
 
 
 def test_render_report_handles_not_applicable_samples(tmp_path: Path):
@@ -113,17 +132,12 @@ def test_render_report_handles_not_applicable_samples(tmp_path: Path):
     )
 
     html = out_html.read_text(encoding="utf-8")
+    assert '<a class="skip-link" href="#overview">Skip to report content</a>' in html
     assert 'href="index.html#overview" data-report-nav="overview"' in html
     assert '<section id="overview-section" data-report-section="overview">' in html
     assert '<h2>Overview</h2>' in html
     assert "const initialKey = keyFromHash() || (sectionByKey.has('overview') ? 'overview' : 'control');" in html
     assert 'Control snapshot' in html
-    assert 'aria-label="Detailed results global filters"' in html
-    assert 'id="detail-model-filter"' in html
-    assert 'id="detail-variant-filter"' in html
-    assert 'id="detail-result-filter"' in html
-    assert 'id="detail-reset-filters"' in html
-    assert 'data-detail-card' in html
     assert 'browser.__applyExternalFilters = function (filters)' in html
     assert "getExternalFilterValue('data-global-model-filter', '')" in html
     assert 'let syncLoadedReportDetailPanelFilters = function () {};' in html
@@ -334,6 +348,8 @@ def test_render_report_writes_lazy_loaded_conversation_fragment(tmp_path: Path):
 def test_render_report_overview_summarizes_instruction_sets_and_skills(tmp_path: Path):
     run_dir = tmp_path / "runs" / "2026-05-05_18-00-00"
     run_dir.mkdir(parents=True)
+    instructions_path = tmp_path / "config" / "instructions" / "better-labels.md"
+    skill_path = tmp_path / "config" / "skills" / "audit-loop"
 
     run_json_path = run_dir / "results.json"
     run_json_path.write_bytes(
@@ -346,18 +362,27 @@ def test_render_report_overview_summarizes_instruction_sets_and_skills(tmp_path:
                 "meta": {
                     "sampling": {"samples_per_case": 1},
                     "status": "EVALUATED",
+                    "prompting": {
+                        "custom_instructions": "Always include labels.",
+                        "custom_instructions_path": str(instructions_path),
+                    },
                     "prompt_variants": [
                         {
                             "id": "instructions-better-labels",
                             "name": "Better Labels",
                             "kind": "instruction_set",
                             "description": "Emphasize explicit labels.",
+                            "url": "https://example.com/instructions/better-labels",
+                            "agent_sandbox": f"docker:{tmp_path / 'config' / 'copilot_sandbox' / 'compose.yaml'}",
                         },
                         {
                             "id": "skill-audit-loop",
                             "name": "Audit Loop",
                             "kind": "skill",
                             "description": "Review and repair accessibility issues.",
+                            "url": "https://example.com/skills/audit-loop",
+                            "agent_sandbox": f"docker:{tmp_path / 'config' / 'copilot_sandbox' / 'compose.yaml'}",
+                            "skill_path": str(skill_path),
                             "turns": [
                                 {"id": "draft", "name": "Draft"},
                                 {"id": "repair", "name": "Repair"},
@@ -519,11 +544,27 @@ def test_render_report_overview_summarizes_instruction_sets_and_skills(tmp_path:
     )
 
     html = out_html.read_text(encoding="utf-8")
+    assert 'Run scope: 1 models | 1 prompt cases | 1 control samples | 1 instruction sets | 1 skills' in html
+    assert 'Control baseline' in html
+    assert 'Overall control pass rate*; best model Model A at 0%' in html
+    assert 'Hardest case' in html
+    assert '0% pass rate*, 2.00 avg WCAG failures' in html
+    assert 'Best instruction lift' in html
     assert 'Instruction-set snapshot' in html
     assert 'Better Labels' in html
+    assert '<th><a href="https://example.com/instructions/better-labels">Better Labels</a></th>' in html
+    assert '<a href="https://example.com/instructions/better-labels">Full instruction set</a>' in html
+    assert 'Best skill lift' in html
     assert 'Skill snapshot' in html
     assert 'Audit Loop' in html
+    assert '<th><a href="https://example.com/skills/audit-loop">Audit Loop</a></th>' in html
+    assert '<a href="https://example.com/skills/audit-loop">Full skill</a>' in html
+    assert str(tmp_path) not in html
+    assert '../../config/instructions/better-labels.md' in html
+    assert '../../config/skills/audit-loop' in html
+    assert 'docker:../../config/copilot_sandbox/compose.yaml' in html
     assert 'Best final-turn delta +100.0pp vs control' in html
+    assert '+100.0pp vs turn 1' in html
     assert '<option value="instructions-better-labels">Better Labels</option>' in html
     assert '<option value="skill-audit-loop">Audit Loop</option>' in html
 
@@ -603,6 +644,8 @@ def test_render_report_includes_detectable_difference_methodology_note(tmp_path:
     )
 
     html = out_html.read_text(encoding="utf-8")
+    assert "This report is not used for model training" in html
+    assert "the testing is not comprehensive" in html
     assert "Based on 32 prompt cases and 10 samples per case" in html
     assert "320 samples per model" in html
     assert "11.1" in html

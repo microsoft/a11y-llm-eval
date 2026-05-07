@@ -329,6 +329,7 @@ This is enabled via `run --instruction-sets-file <path>`.
   - Control is generated using the configured base system prompt **with no custom instructions**.
 - Each instruction set is benchmarked **separately** (no combining instruction sets).
 - Instruction sets may request a different number of samples than control.
+- Instruction sets may declare an optional `url` that links to the full instruction content in the HTML report. The default built-in instruction sets include this URL metadata, and regenerated reports may backfill links for older runs that used those built-in ids.
 - Instruction sets always use the Copilot agent path.
 - Instruction-set YAML does not support `generation_mode`; configs that specify it are invalid.
 - Instruction sets may declare `agent.limits` overrides (e.g., `timeout_s`, `excluded_tools`). Only `timeout_s` (default 600) and `excluded_tools` (list of tool names) are currently consumed; other keys are stored as metadata.
@@ -349,7 +350,7 @@ Schema additions:
 - Each `aggregates[]` record includes `prompt_variant_id`.
 - Each `aggregates[]` record includes `base_test_name`, `prompt_case_id`, and `prompt_dimensions` for the composed prompt case.
 - `generation` metadata may additionally include `generation_mode`, `agent_sandbox`, `agent_limit_error`, and `agent_limits`.
-- `meta.prompt_variants` describes the variants included in the run (id/name/description/custom instruction path/sample count, and agent metadata for instruction sets).
+- `meta.prompt_variants` describes the variants included in the run (id/name/description/optional URL/custom instruction path/sample count, and agent metadata for instruction sets).
 - `meta.prompt_cases` describes the expanded prompt cases included in the run.
 
 ### Acceptance criteria
@@ -378,7 +379,7 @@ The harness can benchmark **skills** — self-contained packages of files (at mi
 
 This is enabled via `run --skills-file <path>` and is independent of `--instruction-sets-file` (both may be supplied in the same run).
 
-- Each skill declares `id`, `name`, optional `description`, a `skill_dir` (directory containing `SKILL.md`, relative to the skills YAML file or absolute), `agent` settings (same shape as instruction-set `agent`), and a required **non-empty** `turns` list.
+- Each skill declares `id`, `name`, optional `description`, optional `url`, a `skill_dir` (directory containing `SKILL.md`, relative to the skills YAML file or absolute), `agent` settings (same shape as instruction-set `agent`), and a required **non-empty** `turns` list.
 - Each turn declares `id`, `name` (optional), and a `prompt` template.
 - Exactly **one** turn prompt in a skill must contain the token `{{test_case_prompt}}`. Other supported tokens: `{{skill_id}}`, `{{skill_path}}`, `{{previous_submission}}`.
 - Turn ids must be unique within the skill; skill ids must be unique across skills and must not collide with instruction-set ids or the reserved id `control`.
@@ -398,7 +399,7 @@ Schema additions:
 
 - Each `results[]` record for a skill turn includes `prompt_variant_kind = "skill"`, `turn_id`, `turn_index` (0-based), and `turn_count_total`.
 - Each `aggregates[]` record for a skill turn includes `prompt_variant_kind`, `turn_id`, and `turn_index`. Aggregates are grouped by `(test_name, base_test_name, prompt_case_id, model, prompt_variant_id, prompt_variant_kind, turn_id)` so every turn has its own pass@k row.
-- `meta.prompt_variants` entries for skills carry `kind: "skill"`, `skill_path`, and `turns` (the resolved list of `{id, name, prompt}` objects).
+- `meta.prompt_variants` entries for skills carry `kind: "skill"`, optional `url`, `skill_path`, and `turns` (the resolved list of `{id, name, prompt}` objects). The default built-in skill includes this URL metadata, and regenerated reports may backfill links for older runs that used that built-in id.
 
 ### Acceptance criteria
 

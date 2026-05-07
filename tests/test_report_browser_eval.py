@@ -41,12 +41,14 @@ def _write_report_fixture(run_dir: Path) -> None:
                     "name": "Better Labels",
                     "kind": "instruction_set",
                     "description": "Prefer explicit labeling and helper text.",
+                    "url": "https://example.com/instructions/better-labels",
                 },
                 {
                     "id": "skill-audit-loop",
                     "name": "Audit Loop",
                     "kind": "skill",
                     "description": "Draft, then repair accessibility issues.",
+                    "url": "https://example.com/skills/audit-loop",
                     "turns": [
                         {"id": "draft", "name": "Draft"},
                         {"id": "repair", "name": "Repair"},

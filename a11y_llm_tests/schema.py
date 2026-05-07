@@ -82,6 +82,7 @@ class PromptVariant(BaseModel):
     id: str  # e.g. "control", an instruction set id, or a skill id
     name: Optional[str] = None
     description: Optional[str] = None
+    url: Optional[str] = None
     custom_instructions_path: Optional[str] = None
     n_samples_requested: Optional[int] = None
     generation_mode: Optional[str] = None

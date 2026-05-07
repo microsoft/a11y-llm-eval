@@ -79,6 +79,7 @@ def _write_instruction_set_fixture(root: Path) -> tuple[Path, Path]:
         "instruction_sets:\n"
         "  - id: concise\n"
         "    name: Concise\n"
+        "    url: https://example.com/instructions/concise\n"
         f"    instructions_markdown: {instructions.name}\n"
     )
     return config, instructions
@@ -93,6 +94,7 @@ def _write_skill_fixture(root: Path) -> tuple[Path, Path]:
         "skills:\n"
         "  - id: demo-skill\n"
         "    name: Demo Skill\n"
+        "    url: https://example.com/skills/demo-skill\n"
         f"    skill_dir: {skill_dir.relative_to(root).as_posix()}\n"
         "    turns:\n"
         "      - id: generate\n"
@@ -528,10 +530,16 @@ class TestIsolatedWorkspaceCopy:
             "--disable-cache",
         ])
         assert result.exit_code == 0, result.output + (result.stderr or "")
+        run_dir = next(d for d in out.iterdir() if d.is_dir() and not d.is_symlink())
 
         assert inspected_workspaces["control"] == []
         assert inspected_workspaces["concise"] == [".github/copilot-instructions.md"]
         assert inspected_workspaces["demo-skill"] == ["skills/demo-skill/SKILL.md"]
+
+        data = json.loads((run_dir / "results.json").read_text())
+        variants_by_id = {v["id"]: v for v in data["meta"]["prompt_variants"]}
+        assert variants_by_id["concise"]["url"] == "https://example.com/instructions/concise"
+        assert variants_by_id["demo-skill"]["url"] == "https://example.com/skills/demo-skill"
 
         assert agent_workspaces
         assert {p.name for p in agent_workspaces} >= {"control", "concise"}
