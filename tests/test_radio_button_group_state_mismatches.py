@@ -123,6 +123,57 @@ CASES = [
         },
         {},
     ),
+    (
+        'singular_global_required_note',
+        '''<!doctype html>
+<html><body>
+  <form>
+    <p><span aria-hidden="true">*</span> Required field</p>
+    <fieldset>
+      <legend>Preferred Contact Method</legend>
+      <div class="form-field">
+        <input id="email" type="radio" name="contact-method" required checked>
+        <label for="email">Email</label>
+      </div>
+      <div class="form-field">
+        <input id="phone" type="radio" name="contact-method">
+        <label for="phone">Phone</label>
+      </div>
+    </fieldset>
+  </form>
+</body></html>''',
+        {
+            'Required fields are indicated visually': 'pass',
+            'Required fields are indicated programmatically': 'pass',
+            'ARIA attributes match native radio attributes if used': 'pass',
+        },
+        {},
+    ),
+    (
+        'aria_hidden_required_legend_marker',
+        '''<!doctype html>
+<html><body>
+  <form>
+    <fieldset>
+      <legend>Preferred Contact Method <span aria-hidden="true">*</span></legend>
+      <div class="form-field">
+        <input id="email" type="radio" name="contact-method" required checked>
+        <label for="email">Email</label>
+      </div>
+      <div class="form-field">
+        <input id="phone" type="radio" name="contact-method">
+        <label for="phone">Phone</label>
+      </div>
+    </fieldset>
+  </form>
+</body></html>''',
+        {
+            'Required fields are indicated visually': 'pass',
+            'Required fields are indicated programmatically': 'pass',
+            'ARIA attributes match native radio attributes if used': 'pass',
+        },
+        {},
+    ),
 ]
 
 

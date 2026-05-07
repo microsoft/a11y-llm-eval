@@ -707,6 +707,10 @@ const hasSharedRequiredContextIndicator = async (locator) => {
             return true;
         }
 
+        if (/\brequired\s+(questions?|fields?|options?|choices?)\b/.test(text)) {
+            return true;
+        }
+
         return false;
     });
 };
@@ -722,7 +726,10 @@ const collectRequiredIndicatorEntries = async (discovery) => {
         for (const group of discovery.groups) {
             const groupedItems = groupedControlType === 'radio' ? group.radios : group.checkboxes;
             const controlLabel = groupedControlType === 'radio' ? 'Radio group' : 'Checkbox group';
-            const groupLabelIndicatesRequired = hasAsteriskRequiredIndicator({ text: group.groupLabel }) || hasTextualRequiredIndicator(group.groupLabel);
+            const groupLabelIndicatesRequired = hasAsteriskRequiredIndicator({ text: group.groupLabel })
+                || hasTextualRequiredIndicator(group.groupLabel)
+                || hasAsteriskRequiredIndicator({ text: group.groupVisualLabel })
+                || hasTextualRequiredIndicator(group.groupVisualLabel);
             const hasMinimumChoiceHelper = groupedItems.some((item) => hasMinimumChoiceHelperIndicator(item.helperText, groupedControlType));
 
             let itemLevelVisualIndicator = false;
