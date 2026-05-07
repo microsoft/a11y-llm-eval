@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checkbox Group – Nested Inner Group Wrapper</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Each checkbox has a valid role": "pass",
+      "Each checkbox has an accessible name": "pass",
+      "Visible label is included in accessible name": "pass",
+      "Visual labels are defined and persistent": "pass",
+      "Helper text is programmatically associated": "na",
+      "Required fields are indicated visually": "na",
+      "Required fields are indicated programmatically": "na",
+      "Each checkbox group has an accessible label": "pass",
+      "Each checkbox group has a valid role": "pass",
+      "Each checkbox is in the tab order": "pass",
+      "Space toggles checkbox state of each checkbox": "pass",
+      "ARIA attributes match native checkbox attributes if used": "pass",
+      "Checked state is programmatically exposed": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <form>
+    <!--
+      Outer role="group" is properly labeled via aria-labelledby.
+      Inner role="group" on .options is a decorative wrapper with no name.
+      The test should resolve checkboxes to the labeled outer group.
+    -->
+    <div role="group" aria-labelledby="q1-label">
+      <p id="q1-label">Select your favourite fruits</p>
+      <div class="options" role="group">
+        <label><input type="checkbox" name="fruits" value="apple" /> Apple</label>
+        <label><input type="checkbox" name="fruits" value="banana" /> Banana</label>
+        <label><input type="checkbox" name="fruits" value="cherry" /> Cherry</label>
+      </div>
+    </div>
+  </form>
+</body>
+</html>

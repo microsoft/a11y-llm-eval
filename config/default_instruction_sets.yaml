@@ -6,18 +6,20 @@ instruction_sets:
   - id: accessible_minimal
     name: 0. Minimal
     description: Minimal reminder that all output must be accessible.
-    system_prompt_append_markdown: instructions/accessible-minimal.md
+    url: https://github.com/microsoft/a11y-llm-eval/blob/main/config/instructions/accessible-minimal.md
+    instructions_markdown: instructions/accessible-minimal.md
     # Optional override. If omitted, defaults to the same value as --samples.
-    # samples: 10
+    # samples: 5
   - id: accessible_basic
     name: 1. Basic
     description: Basic reminder that all output must be accessible (includes slightly more instructions than minimal).
-    system_prompt_append_markdown: instructions/accessible-basic.md
+    url: https://github.com/microsoft/a11y-llm-eval/blob/main/config/instructions/accessible-basic.md
+    instructions_markdown: instructions/accessible-basic.md
     # Optional override. If omitted, defaults to the same value as --samples.
-    # samples: 10
-  - id: detailed
-    name: 2. Detailed Instructions
-    description: Detailed instructions for accessibility.
-    system_prompt_append_markdown: instructions/detailed.md
+    # samples: 5
+  #- id: detailed
+  #  name: 2. Detailed Instructions
+  #  description: Detailed instructions for accessibility.
+  #  instructions_markdown: instructions/detailed.md
     # Optional override. If omitted, defaults to the same value as --samples.
     # samples: 10

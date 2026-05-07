@@ -6,7 +6,6 @@ def test_normalize_models_config_builds_lookup_maps():
         {
             "providers": {
                 "openai": {"batch": {"enabled": False}},
-                "azure": {"auth": {"mode": "default_azure_credential"}},
             },
             "models": [
                 {"name": "openai/gpt-4o", "display_name": "GPT-4o"},
@@ -19,10 +18,22 @@ def test_normalize_models_config_builds_lookup_maps():
     assert normalized["model_display_lookup"]["openai/gpt-4o"] == "GPT-4o"
     assert normalized["model_display_lookup"]["azure/my-deployment"] == "my-deployment"
     assert normalized["model_provider_lookup"]["openai/gpt-4o"] == {"batch": {"enabled": False}}
-    assert normalized["model_provider_lookup"]["azure/my-deployment"] == {
-        "auth": {"mode": "default_azure_credential"}
-    }
-    assert normalized["models"][0]["inspect_model"] == "openai/gpt-4o"
+    assert "inspect_model" not in normalized["models"][0]
+
+
+def test_normalize_models_config_rejects_default_azure_credential():
+    import pytest
+    with pytest.raises(ValueError, match="default_azure_credential"):
+        normalize_models_config(
+            {
+                "providers": {
+                    "azure": {"auth": {"mode": "default_azure_credential"}},
+                },
+                "models": [
+                    {"name": "azure/my-deployment"},
+                ],
+            }
+        )
 
 
 def test_get_model_provider_handles_provider_prefix():

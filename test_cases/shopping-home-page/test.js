@@ -3,7 +3,7 @@ module.exports.run = async ({ page, assert }) => {
   await assert("Has a skip navigation link", async () => {
     const main = page.getByRole('main');
     if ((await main.count()) !== 1) {
-      return false;
+      return { pass: false, message: 'Expected exactly one element with role="main".' };
     }
 
     const skipLink = page.getByRole('link', {
@@ -11,10 +11,10 @@ module.exports.run = async ({ page, assert }) => {
     });
     const count = await skipLink.count();
     if (count < 1) {
-      return false;
+      return { pass: false, message: 'No skip navigation link found (expected a link with accessible name like "Skip to main content").' };
     }
 
-    const isValidSkipTarget = await page.evaluate(() => {
+    const evalResult = await page.evaluate(() => {
       const skipNamePattern = /(?:skip|jump|go)(?:\s+(?:to\s+)?)?(?:main|main content|content|nav|navigation|header)\b/i;
 
       const normalizeText = (value) => (value || '').toString().replace(/\s+/g, ' ').trim();
@@ -22,26 +22,6 @@ module.exports.run = async ({ page, assert }) => {
         const ariaLabel = normalizeText(element.getAttribute && element.getAttribute('aria-label'));
         if (ariaLabel) return ariaLabel;
         return normalizeText(element.textContent || element.innerText || '');
-      };
-
-      const isFocusable = (element) => {
-        if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
-
-        const tabindexAttr = element.getAttribute('tabindex');
-        if (tabindexAttr !== null) {
-          const tabindex = Number.parseInt(tabindexAttr, 10);
-          return !Number.isNaN(tabindex) && tabindex >= -1;
-        }
-
-        if (element.matches('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, iframe, audio[controls], video[controls]')) {
-          return true;
-        }
-
-        if (element.hasAttribute('contenteditable') && element.getAttribute('contenteditable') !== 'false') {
-          return true;
-        }
-
-        return false;
       };
 
       const getFirstMeaningfulDescendant = (mainElement) => {
@@ -64,51 +44,76 @@ module.exports.run = async ({ page, assert }) => {
 
       const mainElement = document.querySelector('main, [role="main"]');
       if (!mainElement) {
-        return false;
+        return { pass: false, reason: 'no-main' };
       }
 
       const firstMeaningfulDescendant = getFirstMeaningfulDescendant(mainElement);
       const links = Array.from(document.querySelectorAll('a[href^="#"], [role="link"][href^="#"]'));
 
-      return links.some((link) => {
+      const reasons = [];
+      for (const link of links) {
         const name = getAccessibleName(link);
         if (!skipNamePattern.test(name)) {
-          return false;
+          continue;
         }
 
         const href = link.getAttribute('href') || '';
         if (!href.startsWith('#') || href.length <= 1) {
-          return false;
+          reasons.push({ href, reason: 'empty-href' });
+          continue;
         }
 
         const target = document.getElementById(href.slice(1));
         if (!target) {
-          return false;
+          reasons.push({ href, reason: 'target-missing' });
+          continue;
         }
 
         const targetInMain = target === mainElement || mainElement.contains(target);
         if (!targetInMain) {
-          return false;
-        }
-
-        if (!isFocusable(target)) {
-          return false;
+          reasons.push({ href, reason: 'target-not-in-main', targetTag: target.tagName.toLowerCase() });
+          continue;
         }
 
         if (target === mainElement) {
-          return true;
+          return { pass: true };
         }
 
         if (!firstMeaningfulDescendant) {
-          return true;
+          return { pass: true };
         }
 
         const relation = target.compareDocumentPosition(firstMeaningfulDescendant);
-        return target === firstMeaningfulDescendant || !!(relation & Node.DOCUMENT_POSITION_FOLLOWING);
-      });
+        if (target === firstMeaningfulDescendant || !!(relation & Node.DOCUMENT_POSITION_FOLLOWING)) {
+          return { pass: true };
+        }
+        reasons.push({ href, reason: 'target-after-first-content' });
+      }
+
+      return { pass: false, reasons };
     });
 
-    return isValidSkipTarget;
+    if (evalResult.pass) {
+      return true;
+    }
+
+    const reasons = evalResult.reasons || [];
+    if (evalResult.reason === 'no-main') {
+      return { pass: false, message: 'No <main> or [role="main"] element found.' };
+    }
+    if (reasons.some((r) => r.reason === 'target-missing')) {
+      return { pass: false, message: `Skip link href does not resolve to an element in the document (${reasons.map((r) => r.href).join(', ')}).` };
+    }
+    if (reasons.some((r) => r.reason === 'target-not-in-main')) {
+      return { pass: false, message: 'Skip link target is outside <main>.' };
+    }
+    if (reasons.some((r) => r.reason === 'target-after-first-content')) {
+      return { pass: false, message: 'Skip link target is positioned after the first meaningful content inside <main>.' };
+    }
+    if (reasons.some((r) => r.reason === 'empty-href')) {
+      return { pass: false, message: 'Skip link href is empty or invalid.' };
+    }
+    return { pass: false, message: 'Skip navigation link is not valid.' };
   });
 
   await assert("Has an h1", async () => {
@@ -145,8 +150,68 @@ module.exports.run = async ({ page, assert }) => {
   });
 
   await assert("Has a single footer", async () => {
-    let footer = await page.getByRole('contentinfo');
-    return (await footer.count()) === 1;
+    const footerCount = await page.getByRole('contentinfo').count();
+    if (footerCount === 1) return true;
+    if (footerCount > 1) {
+      return { pass: false, message: `Expected exactly one contentinfo landmark; found ${footerCount}.` };
+    }
+
+    // No <footer> / [role="contentinfo"]. Only require one if the page has content
+    // that functionally acts as a footer (copyright, legal, site-wide links, etc.).
+    const hasFooterLikeContent = await page.evaluate(() => {
+      const main = document.querySelector('main, [role="main"]');
+      const body = document.body;
+      if (!body) return false;
+
+      const isIgnorable = (el) => el && el.matches && el.matches('script, style, template, noscript, link, meta');
+      const visibleText = (el) => ((el && (el.textContent || el.innerText)) || '').replace(/\s+/g, ' ').trim();
+
+      // Any substantive content that comes after <main> (at any ancestor level) implies a footer region.
+      if (main) {
+        let cursor = main;
+        while (cursor && cursor !== body) {
+          let sib = cursor.nextElementSibling;
+          while (sib) {
+            if (!isIgnorable(sib) && visibleText(sib)) return true;
+            sib = sib.nextElementSibling;
+          }
+          cursor = cursor.parentElement;
+        }
+      }
+
+      // Elements whose class/id/name explicitly marks them as a footer region (outside <main>).
+      const footerIdent = /(?:^|[-_\s])footer(?:$|[-_\s])/i;
+      const candidates = body.querySelectorAll('[class], [id], [data-testid]');
+      for (const el of candidates) {
+        if (main && main.contains(el)) continue;
+        const idents = [el.getAttribute('class') || '', el.getAttribute('id') || '', el.getAttribute('data-testid') || ''];
+        if (idents.some((v) => footerIdent.test(v)) && visibleText(el)) return true;
+      }
+
+      // Copyright / legal / explicit "footer" text anywhere outside <main> also implies a footer region.
+      const pattern = /(?:\u00a9|\(c\)|copyright|all rights reserved|privacy policy|terms of service|terms and conditions|\bfooter\b)/i;
+      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          if (main && main.contains(node)) return NodeFilter.FILTER_REJECT;
+          const text = (node.nodeValue || '').trim();
+          if (!text) return NodeFilter.FILTER_SKIP;
+          return pattern.test(text) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+        },
+      });
+      return !!walker.nextNode();
+    });
+
+    if (!hasFooterLikeContent) {
+      return {
+        status: 'na',
+        message: 'Page has no footer-like content (no copyright, legal text, or site-wide content outside <main>); a contentinfo landmark is not required.',
+      };
+    }
+
+    return {
+      pass: false,
+      message: 'Page has footer-like content but no contentinfo landmark. Wrap the footer content in <footer> or add role="contentinfo".',
+    };
   });
 
   return {}; // assertions collected via injected assert

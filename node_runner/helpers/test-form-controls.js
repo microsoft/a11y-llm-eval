@@ -7,7 +7,7 @@ const {
     PRIMARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
     SECONDARY_SEMANTIC_FIELD_WRAPPER_SELECTOR,
 } = require('./get-form-field-wrapper');
-const { combineHelperTexts, getHelperText, SOURCE_ARIA_DESCRIBEDBY, SOURCE_ARIA_DESCRIPTION, SOURCE_TITLE, SOURCE_CSS_PLACEHOLDER } = require('./get-helper-text');
+const { combineHelperTexts, getHelperText, SOURCE_ARIA_DESCRIBEDBY, SOURCE_ARIA_DESCRIPTION, SOURCE_TITLE, SOURCE_CSS_PLACEHOLDER, SOURCE_PLACEHOLDER_ATTR } = require('./get-helper-text');
 const { discover } = require('./discovery');
 
 let testFn = {};
@@ -22,17 +22,17 @@ const getFormFields = async (scope) => {
     return await getAllFormFieldWrappers(scope);
 };
 
-const getGroupDescriptionLocator = (locator, groupKind) => {
+const getGroupDescriptionLocator = (locator, groupKind, ancestorDepth = 1) => {
     if (groupKind === 'fieldset') {
-        return locator.locator('xpath=ancestor::fieldset[1]').first();
+        return locator.locator(`xpath=ancestor::fieldset[${ancestorDepth}]`).first();
     }
 
     if (groupKind === 'aria') {
-        return locator.locator('xpath=ancestor::*[@role="radiogroup" or @role="group"][1]').first();
+        return locator.locator(`xpath=ancestor::*[@role="radiogroup" or @role="group"][${ancestorDepth}]`).first();
     }
 
     if (groupKind === 'group') {
-        return locator.locator('xpath=ancestor::*[@role="group"][1]').first();
+        return locator.locator(`xpath=ancestor::*[@role="group"][${ancestorDepth}]`).first();
     }
 
     if (groupKind === 'wrapper') {
@@ -366,6 +366,7 @@ testFn.testHelperTextAssociated = async (scope, discoveryCache) => {
             helper.source === SOURCE_ARIA_DESCRIBEDBY
             || helper.source === SOURCE_ARIA_DESCRIPTION
             || helper.source === SOURCE_TITLE
+            || helper.source === SOURCE_PLACEHOLDER_ATTR
         ));
     };
 
@@ -619,6 +620,8 @@ const hasTextualRequiredIndicator = (rawText) => {
     if (/\bis required\b/.test(t)) return true;
     if (/\brequired field\b/.test(t)) return true;
     if (/(^|\s)required[\s\.!?)]*$/.test(t)) return true;
+    if (/\brequired\s+to\s+(continue|proceed|submit|sign|create|complete|accept|register|finish)\b/.test(t)) return true;
+    if (/\bmust\s+(accept|agree|check|select|confirm|consent)\b/.test(t)) return true;
 
     if (/\brequired\s+(length|format|characters?|fields?|value|values|minimum|password|pattern|items?)\b/.test(t)) {
         return false;
@@ -704,6 +707,10 @@ const hasSharedRequiredContextIndicator = async (locator) => {
             return true;
         }
 
+        if (/\brequired\s+(questions?|fields?|options?|choices?)\b/.test(text)) {
+            return true;
+        }
+
         return false;
     });
 };
@@ -719,7 +726,10 @@ const collectRequiredIndicatorEntries = async (discovery) => {
         for (const group of discovery.groups) {
             const groupedItems = groupedControlType === 'radio' ? group.radios : group.checkboxes;
             const controlLabel = groupedControlType === 'radio' ? 'Radio group' : 'Checkbox group';
-            const groupLabelIndicatesRequired = hasAsteriskRequiredIndicator({ text: group.groupLabel }) || hasTextualRequiredIndicator(group.groupLabel);
+            const groupLabelIndicatesRequired = hasAsteriskRequiredIndicator({ text: group.groupLabel })
+                || hasTextualRequiredIndicator(group.groupLabel)
+                || hasAsteriskRequiredIndicator({ text: group.groupVisualLabel })
+                || hasTextualRequiredIndicator(group.groupVisualLabel);
             const hasMinimumChoiceHelper = groupedItems.some((item) => hasMinimumChoiceHelperIndicator(item.helperText, groupedControlType));
 
             let itemLevelVisualIndicator = false;
@@ -948,11 +958,13 @@ testFn.testLabelInName = async (scope, discoveryCache) => {
     }
 
     // Normalize for comparison:
+    // - strip emoji pictographics (non-speakable for voice input)
     // - replace all Unicode punctuation with spaces
     // - collapse whitespace (including NBSP)
     // - trim + lowercase
     const normalizeForCompare = (s) => (s || '')
         .toString()
+        .replace(/[\p{Extended_Pictographic}\uFE0F\u200D]/gu, ' ')
         .replace(/\p{P}+/gu, ' ')
         .replace(/[\s\u00A0]+/g, ' ')
         .trim()
@@ -1076,7 +1088,22 @@ testFn.discoverRadios = async (scope) => {
         const fieldsets = Array.from(document.querySelectorAll('fieldset'));
         const forms = Array.from(document.querySelectorAll('form'));
         const nativeFieldset = radio.closest('fieldset');
-        const ariaGroup = radio.closest('[role="radiogroup"], [role="group"]');
+
+        // Find the nearest ARIA group. If it has no accessible name, walk up
+        // to find a labeled ancestor group (same pattern as checkbox discovery).
+        let ariaGroup = radio.closest('[role="radiogroup"], [role="group"]');
+        if (ariaGroup && ariaGroup.getAttribute('role') !== 'radiogroup') {
+            const hasName = ariaGroup.hasAttribute('aria-label')
+                || ariaGroup.hasAttribute('aria-labelledby');
+            if (!hasName) {
+                const outer = ariaGroup.parentElement
+                    && ariaGroup.parentElement.closest('[role="radiogroup"], [role="group"], fieldset');
+                if (outer) {
+                    ariaGroup = outer.tagName === 'FIELDSET' ? null : outer;
+                }
+            }
+        }
+
         const isNativeRadio = radio.matches('input[type="radio"]');
         const ariaGroupRole = ariaGroup ? ariaGroup.getAttribute('role') : '';
         const requiredAttr = radio.getAttribute('required');
@@ -1118,11 +1145,24 @@ testFn.discoverRadios = async (scope) => {
         let groupKind;
         let groupLabel = '';
                 let groupHasProgrammaticDescription = false;
+        let groupId = null;
+        let groupAncestorDepth = 1;
 
         if (ariaGroup) {
             const groupIndex = ariaGroups.indexOf(ariaGroup);
             groupKey = `aria:${groupIndex}:${getNodePath(ariaGroup)}`;
             groupKind = 'aria';
+            groupId = ariaGroup.id || null;
+            // Compute ancestor depth for the resolved group
+            const selector = '[role="radiogroup"], [role="group"]';
+            let depth = 0;
+            let cur = radio.closest(selector);
+            while (cur) {
+                depth++;
+                if (cur === ariaGroup) break;
+                cur = cur.parentElement && cur.parentElement.closest(selector);
+            }
+            groupAncestorDepth = depth || 1;
         } else if (nativeFieldset) {
             const fieldsetIndex = fieldsets.indexOf(nativeFieldset);
             groupKey = `fieldset:${fieldsetIndex}:${getNodePath(nativeFieldset)}`;
@@ -1140,11 +1180,28 @@ testFn.discoverRadios = async (scope) => {
             groupKind = 'aria-fallback';
         }
 
+                // Detect if the radio has a visible associated label
+                let labelVisible = false;
+                if (isNativeRadio) {
+                    const rId = radio.id;
+                    const associatedLabel = rId ? document.querySelector(`label[for="${CSS.escape(rId)}"]`) : null;
+                    const parentLabel = radio.closest('label');
+                    const label = associatedLabel || parentLabel;
+                    if (label) {
+                        const rect = label.getBoundingClientRect();
+                        const style = window.getComputedStyle(label);
+                        labelVisible = rect.width > 0 && rect.height > 0
+                            && style.display !== 'none' && style.visibility !== 'hidden';
+                    }
+                }
+
         return {
             domIndex: idx,
             groupKey,
             groupKind,
             groupLabel,
+            groupId,
+            groupAncestorDepth,
             groupHasProgrammaticDescription,
             disabled,
             checked,
@@ -1159,6 +1216,7 @@ testFn.discoverRadios = async (scope) => {
             programmaticallyRequired,
             groupProgrammaticallyRequired,
             controlText,
+            labelVisible,
         };
             }, { idx: index }),
         ]);
@@ -1169,7 +1227,17 @@ testFn.discoverRadios = async (scope) => {
         let groupHasProgrammaticDescription = false;
         let groupLabel = meta.groupLabel;
         let groupVisualLabel = '';
-        const groupLocator = getGroupDescriptionLocator(locator, meta.groupKind);
+        // When the resolved group has an id, use it directly instead of
+        // relying on ancestor axis which may find a different (nested) group.
+        // Otherwise use ancestor depth to skip past intermediate wrappers.
+        let groupLocator;
+        if (meta.groupId) {
+            groupLocator = scope.locator(`[id="${meta.groupId.replace(/"/g, '\\"')}"]`);
+        } else if (meta.groupAncestorDepth && meta.groupAncestorDepth > 1) {
+            groupLocator = getGroupDescriptionLocator(locator, meta.groupKind, meta.groupAncestorDepth);
+        } else {
+            groupLocator = getGroupDescriptionLocator(locator, meta.groupKind);
+        }
         let visualLabel = rawVisualLabel;
 
         if (groupLocator && await groupLocator.count()) {
@@ -1190,6 +1258,7 @@ testFn.discoverRadios = async (scope) => {
             visualLabel,
             helperText,
             visible,
+            labelVisible: meta.labelVisible,
             disabled: meta.disabled,
             tabIndex: meta.tabIndex,
             checked: meta.checked,
@@ -1409,7 +1478,24 @@ testFn.discoverCheckboxes = async (scope) => {
                 const groupContainers = Array.from(document.querySelectorAll('fieldset, [role="group"]'));
                 const fieldsets = Array.from(document.querySelectorAll('fieldset'));
                 const isNativeCheckbox = checkbox.matches('input[type="checkbox"]');
-                const groupContainer = checkbox.closest('fieldset, [role="group"]');
+
+                // Find the nearest grouping ancestor. If it's a role="group"
+                // without an accessible name, walk up to see if a labeled
+                // ancestor group/fieldset exists (common pattern: decorative
+                // inner wrapper inside a properly labeled outer group).
+                let groupContainer = checkbox.closest('fieldset, [role="group"]');
+                if (groupContainer && groupContainer.tagName !== 'FIELDSET') {
+                    const hasName = groupContainer.hasAttribute('aria-label')
+                        || groupContainer.hasAttribute('aria-labelledby');
+                    if (!hasName) {
+                        const outer = groupContainer.parentElement
+                            && groupContainer.parentElement.closest('fieldset, [role="group"]');
+                        if (outer) {
+                            groupContainer = outer;
+                        }
+                    }
+                }
+
                 const wrapperContainers = Array.from(document.querySelectorAll(wrapperSelector));
                 const wrapperContainer = findWrapperContainer(checkbox, wrapperSelector);
                 const requiredAttr = checkbox.getAttribute('required');
@@ -1453,15 +1539,36 @@ testFn.discoverCheckboxes = async (scope) => {
                 let groupLabel = '';
                 let groupProgrammaticallyRequired = false;
                 let groupHasProgrammaticDescription = false;
+                let groupId = null;
+                let groupAncestorDepth = 1;
 
                 if (groupContainer) {
                     if (groupContainer.tagName === 'FIELDSET') {
                         groupKey = `fieldset:${fieldsets.indexOf(groupContainer)}:${getNodePath(groupContainer)}`;
                         groupKind = 'fieldset';
                         groupLabel = getLegendText(groupContainer);
+                        // Count how many fieldset ancestors are between the checkbox and this one
+                        let depth = 0;
+                        let cur = checkbox.closest('fieldset');
+                        while (cur) {
+                            depth++;
+                            if (cur === groupContainer) break;
+                            cur = cur.parentElement && cur.parentElement.closest('fieldset');
+                        }
+                        groupAncestorDepth = depth || 1;
                     } else {
                         groupKey = `group:${groupContainers.indexOf(groupContainer)}:${getNodePath(groupContainer)}`;
                         groupKind = 'group';
+                        groupId = groupContainer.id || null;
+                        // Count how many [role="group"] ancestors are between the checkbox and this one
+                        let depth = 0;
+                        let cur = checkbox.closest('[role="group"]');
+                        while (cur) {
+                            depth++;
+                            if (cur === groupContainer) break;
+                            cur = cur.parentElement && cur.parentElement.closest('[role="group"]');
+                        }
+                        groupAncestorDepth = depth || 1;
                         if (groupContainer.getAttribute('aria-required') === 'true') {
                             groupProgrammaticallyRequired = true;
                         }
@@ -1474,11 +1581,30 @@ testFn.discoverCheckboxes = async (scope) => {
                     }
                 }
 
+                // Detect if the checkbox has a visible associated label (common
+                // accessible pattern: native input visually hidden, label styled
+                // as the visual control).
+                let labelVisible = false;
+                if (isNativeCheckbox) {
+                    const cbId = checkbox.id;
+                    const associatedLabel = cbId ? document.querySelector(`label[for="${CSS.escape(cbId)}"]`) : null;
+                    const parentLabel = checkbox.closest('label');
+                    const label = associatedLabel || parentLabel;
+                    if (label) {
+                        const rect = label.getBoundingClientRect();
+                        const style = window.getComputedStyle(label);
+                        labelVisible = rect.width > 0 && rect.height > 0
+                            && style.display !== 'none' && style.visibility !== 'hidden';
+                    }
+                }
+
                 return {
                     domIndex: idx,
                     groupKey,
                     groupKind,
                     groupLabel,
+                    groupId,
+                    groupAncestorDepth,
                     groupProgrammaticallyRequired,
                     disabled,
                     checked,
@@ -1492,6 +1618,7 @@ testFn.discoverCheckboxes = async (scope) => {
                     tabIndex: checkbox.tabIndex,
                     programmaticallyRequired,
                     controlText,
+                    labelVisible,
                 };
             }, { idx: index, wrapperSelector }),
         ]);
@@ -1502,7 +1629,17 @@ testFn.discoverCheckboxes = async (scope) => {
         let groupHasProgrammaticDescription = false;
         let groupLabel = meta.groupLabel;
         let groupVisualLabel = '';
-        const groupLocator = getGroupDescriptionLocator(locator, meta.groupKind);
+        // When the resolved group has an id, use it directly instead of
+        // relying on ancestor axis which may find a different (nested) group.
+        // Otherwise use ancestor depth to skip past intermediate wrappers.
+        let groupLocator;
+        if (meta.groupId) {
+            groupLocator = scope.locator(`[id="${meta.groupId.replace(/"/g, '\\"')}"]`);
+        } else if (meta.groupAncestorDepth && meta.groupAncestorDepth > 1) {
+            groupLocator = getGroupDescriptionLocator(locator, meta.groupKind, meta.groupAncestorDepth);
+        } else {
+            groupLocator = getGroupDescriptionLocator(locator, meta.groupKind);
+        }
         let visualLabel = rawVisualLabel;
 
         if (groupLocator && await groupLocator.count()) {
@@ -1523,6 +1660,7 @@ testFn.discoverCheckboxes = async (scope) => {
             visualLabel,
             helperText,
             visible,
+            labelVisible: meta.labelVisible,
             disabled: meta.disabled,
             tabIndex: meta.tabIndex,
             checked: meta.checked,
@@ -1780,6 +1918,56 @@ testFn.testIdentifyInputPurposeAutocomplete = async (scope, discoveryCache) => {
     }
 
     return results;
+};
+
+/**
+ * Tabs through the page and returns a Set of domIndex values (relative to
+ * controlSelector) that actually received focus during the traversal.
+ * This tests real keyboard reachability rather than inferring it from
+ * properties like tabIndex or visibility.
+ */
+testFn.collectTabReachableIndexes = async (page, controlSelector, maxTabs = 300) => {
+    // Reset focus to the start of the document
+    await page.evaluate(() => {
+        if (document.activeElement && document.activeElement !== document.body) {
+            document.activeElement.blur();
+        }
+        window.__firstTabStop = null;
+    });
+
+    const reachedIndexes = new Set();
+
+    for (let i = 0; i < maxTabs; i++) {
+        await page.keyboard.press('Tab');
+
+        const result = await page.evaluate((selector) => {
+            const ae = document.activeElement;
+            if (!ae || ae === document.body || ae === document.documentElement) {
+                return { done: true, index: -1 };
+            }
+
+            // Cycle detection: if we return to the first tab stop, the full
+            // tab ring has been traversed.
+            if (!window.__firstTabStop) {
+                window.__firstTabStop = ae;
+            } else if (ae === window.__firstTabStop) {
+                return { done: true, index: -1 };
+            }
+
+            const controls = document.querySelectorAll(selector);
+            for (let j = 0; j < controls.length; j++) {
+                if (controls[j] === ae) return { done: false, index: j };
+            }
+            return { done: false, index: -1 };
+        }, controlSelector);
+
+        if (result.done) break;
+        if (result.index >= 0) {
+            reachedIndexes.add(result.index);
+        }
+    }
+
+    return reachedIndexes;
 };
 
 module.exports = testFn;

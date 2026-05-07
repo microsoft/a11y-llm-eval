@@ -91,15 +91,20 @@ module.exports.run = async ({ page, assert, utils }) => {
     });
 
     await assert("Each radio group is keyboard reachable", async () => {
-        const groups = await utils.testFormControls.discoverRadioGroups(page, discovery);
+        await utils.reload();
+        const groups = await utils.testFormControls.discoverRadioGroups(page);
 
         if (groups.length === 0) {
             return { pass: false, message: 'No radio groups found in scope' };
         }
 
+        const tabReachable = await utils.testFormControls.collectTabReachableIndexes(
+            page, 'input[type="radio"], [role="radio"]'
+        );
+
         const unreachableGroups = groups
             .map((group, index) => {
-                const reachable = group.radios.some((radio) => radio.visible && !radio.disabled && radio.tabIndex >= 0);
+                const reachable = group.radios.some((radio) => tabReachable.has(radio.domIndex));
                 return reachable ? null : describeGroup(group, index);
             })
             .filter(Boolean);
@@ -119,10 +124,15 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: false, message: 'No radio groups found in scope' };
         }
 
+        const tabReachable = await utils.testFormControls.collectTabReachableIndexes(
+            page, 'input[type="radio"], [role="radio"]'
+        );
+
         const nonInteractiveGroups = groups
             .map((group, index) => {
-                const interactiveRadios = group.radios.filter((radio) => radio.visible && !radio.disabled);
-                return interactiveRadios.length < 2 ? describeGroup(group, index) : null;
+                const groupReachable = group.radios.some((radio) => tabReachable.has(radio.domIndex));
+                const nonDisabledCount = group.radios.filter((radio) => !radio.disabled).length;
+                return (!groupReachable || nonDisabledCount < 2) ? describeGroup(group, index) : null;
             })
             .filter(Boolean);
 
@@ -138,14 +148,15 @@ module.exports.run = async ({ page, assert, utils }) => {
                 continue;
             }
 
-            const interactiveRadios = group.radios.filter((radio) => radio.visible && !radio.disabled);
-            if (interactiveRadios.length < 2) {
+            const groupReachable = group.radios.some((radio) => tabReachable.has(radio.domIndex));
+            const nonDisabledRadios = group.radios.filter((radio) => !radio.disabled);
+            if (!groupReachable || nonDisabledRadios.length < 2) {
                 continue;
             }
 
             applicableGroups += 1;
 
-            const target = interactiveRadios.find((radio) => radio.checked) || interactiveRadios[0];
+            const target = group.radios.find((radio) => tabReachable.has(radio.domIndex)) || nonDisabledRadios[0];
             const locator = page.locator('input[type="radio"], [role="radio"]').nth(target.domIndex);
             await locator.focus();
 

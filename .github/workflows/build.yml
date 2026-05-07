@@ -11,7 +11,11 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
     - uses: actions/checkout@v5
     - name: Set up Python 3.11
@@ -22,14 +26,15 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: "22.x"
-    - name: Disable AppArmor
+    - name: Disable AppArmor (Linux)
+      if: runner.os == 'Linux'
       run: echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install flake8 pytest
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-        bash scripts/install_node_deps.sh
+        pip install -r requirements.txt
+        python scripts/install_node_deps.py
     - name: Test with pytest
       run: |
         python -m pytest -s

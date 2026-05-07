@@ -1,0 +1,40 @@
+# Default skills for benchmarking against control.
+# Use with:
+#   python -m a11y_llm_tests.cli run --skills-file config/default_skills.yaml ...
+#
+# Each skill directory (containing SKILL.md and any support files) is part of the
+# repo workspace volume mounted at /workspace inside the container. The Copilot SDK's
+# skill_directories parameter is pointed at the parent of the skill directory so it
+# can discover SKILL.md. The agent runs an N-turn conversation; its submission at the
+# end of each turn is captured and evaluated as its own artifact so the report can
+# show control | turn 1 | turn 2 | ... deltas.
+#
+# Template tokens supported in turn prompts:
+#   {{test_case_prompt}}   - the user prompt composed from prompt.yaml (exactly one
+#                            turn must reference this, typically turn 0).
+#   {{skill_id}}           - the skill id.
+#   {{skill_path}}         - absolute container path to the skill directory
+#                            (e.g. /workspace/config/skills/building-accessible-ui).
+#   {{previous_submission}} - the HTML submitted on the previous turn (turns >= 1).
+
+skills:
+  - id: building-accessible-ui
+    name: Building Accessible UI
+    description: >-
+      A skill that implicitly steers generation toward accessible HTML and can be explicitly invoked to review and remediate previously produced HTML. This skill provides expert guidance on accessibility best practices, including semantic HTML, ARIA roles, and color contrast.
+    url: https://github.com/microsoft/a11y-llm-eval/tree/main/config/skills/building-accessible-ui
+    skill_dir: skills/building-accessible-ui
+    # Optional. Defaults to --samples.
+    # samples: 3
+    turns:
+      - id: generate
+        name: Generate
+        prompt: |
+          {{test_case_prompt}}
+      - id: review
+        name: Review
+        prompt: |
+          Add and run accessibility tests, review results, and remediate the HTML.
+          Fix any real accessibility issues you find. Leave correct markup
+          alone. Submit one corrected standalone HTML document as your final
+          answer. Do not wrap it in markdown fences or add commentary.

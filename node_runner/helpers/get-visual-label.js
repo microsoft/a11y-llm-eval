@@ -100,9 +100,34 @@ const getVisualLabel = async (el, opts = {}) => {
                     return (n.nodeValue || '');
                 }
 
+                const isBlockDisplay = (node) => {
+                    if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+                    if (!window.getComputedStyle) return false;
+                    const cs = window.getComputedStyle(node);
+                    if (!cs) return false;
+                    const display = cs.display || '';
+                    if (!display || display === 'inline' || display === 'contents' || display === 'none') return false;
+                    if (
+                        display === 'block' ||
+                        display === 'flex' ||
+                        display === 'grid' ||
+                        display === 'list-item' ||
+                        display === 'flow-root' ||
+                        display.startsWith('table')
+                    ) return true;
+                    // inline-block, inline-flex, etc. stay inline for text concatenation
+                    return false;
+                };
+
                 let buffer = '';
                 for (let child = n.firstChild; child; child = child.nextSibling) {
-                    buffer += collect(child);
+                    let childText = collect(child);
+                    if (childText && isBlockDisplay(child)) {
+                        // Block-displayed elements create a visual line break; insert whitespace
+                        // so adjacent text is not concatenated without separation.
+                        childText = ' ' + childText + ' ';
+                    }
+                    buffer += childText;
                 }
                 return buffer;
             };

@@ -94,8 +94,29 @@ module.exports.run = async ({ page, assert, utils }) => {
     });
 
     await assert("Each checkbox is keyboard reachable", async () => {
-        const results = await utils.testFormControls.testEachInputFocusable(page, discovery);
-        return { status: results.status(), message: results.getMessage() };
+        await utils.reload();
+        const currentDiscovery = await utils.testFormControls.discoverCheckboxes(page);
+
+        if (currentDiscovery.inputs.length === 0) {
+            return { pass: false, message: 'No checkboxes found in scope' };
+        }
+
+        const tabReachable = await utils.testFormControls.collectTabReachableIndexes(
+            page, 'input[type="checkbox"], [role="checkbox"]'
+        );
+
+        const unreachable = currentDiscovery.inputs
+            .map((checkbox, index) => {
+                if (checkbox.disabled) return null;
+                return tabReachable.has(checkbox.domIndex) ? null : describeCheckbox(checkbox, index);
+            })
+            .filter(Boolean);
+
+        if (unreachable.length === 0) {
+            return { pass: true, message: 'Each interactive checkbox is keyboard reachable' };
+        }
+
+        return { pass: false, message: `Not keyboard reachable: ${summarizeList(unreachable)}` };
     });
 
     await assert("Space toggles checkbox state", async () => {
@@ -106,8 +127,12 @@ module.exports.run = async ({ page, assert, utils }) => {
             return { pass: false, message: 'No checkboxes found in scope' };
         }
 
+        const tabReachable = await utils.testFormControls.collectTabReachableIndexes(
+            page, 'input[type="checkbox"], [role="checkbox"]'
+        );
+
         const nonInteractiveCheckboxes = currentDiscovery.inputs
-            .map((checkbox, index) => ((!checkbox.visible || checkbox.disabled) ? describeCheckbox(checkbox, index) : null))
+            .map((checkbox, index) => (!tabReachable.has(checkbox.domIndex) || checkbox.disabled) ? describeCheckbox(checkbox, index) : null)
             .filter(Boolean);
 
         let applicableCheckboxes = 0;
@@ -118,7 +143,7 @@ module.exports.run = async ({ page, assert, utils }) => {
             await utils.reload();
             currentDiscovery = await utils.testFormControls.discoverCheckboxes(page);
             const checkbox = currentDiscovery.inputs[checkboxIndex];
-            if (!checkbox || !checkbox.visible || checkbox.disabled) {
+            if (!checkbox || !tabReachable.has(checkbox.domIndex) || checkbox.disabled) {
                 continue;
             }
 

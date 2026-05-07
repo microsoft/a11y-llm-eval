@@ -8,21 +8,48 @@ LLMs currently generate code with accessibility bugs, resulting in blockers for 
 ## Goal
 Create a public test suite which can be used to benchmark how well various LLMs generates accessible HTML code. Eventually, it could also be used to help train models to generate more accessible code by default.
 
-## Methdology
+## Methodology
 - Each test case contains a prompt to generate an HTML page to demonstrate a specific pattern or component.
-- This page is rendered in a real browser using Playwright (Chromium). Tests are executed against this rendered page.
+- All generations (control, instruction-set variants, and skills) are agentic sessions powered by the [GitHub Copilot SDK](https://pypi.org/project/github-copilot-sdk/) running inside a Docker sandbox. The agent can call built-in tools (e.g. file writes, shell commands) and iteratively refine its output.
+- **Control** uses the test prompt with no custom accessibility instructions, measuring baseline behavior. **Instruction-set variants** add custom instructions (delivered via `.github/copilot-instructions.md`). **Skills** use multi-turn conversations with explicit turn prompts and a mounted skill directory.
+- The resulting artifact directory is served over localhost HTTP and rendered in a real browser using Playwright (Chromium). Tests are executed against this rendered page.
 - The HTML is evaluated against axe-core, one of the most popular automated accessibility testing engines.
 - The HTML is also evaluated against a manually defined set of assertions, customized for the specific test case. This allows for more robust testing than just using axe-core.
-- Tests only pass if zero axe-core failures are found AND all *requirement* assertions pass. Best Practice (BP) assertion failures do not fail the test but are tracked separately.
+- Tests only pass if zero axe-core WCAG failures are found AND all *requirement* assertions pass. Best Practice (BP) assertion failures do not fail the test but are tracked separately.
 
 ## Features
-- Python orchestrator with Inspect AI-backed generation
+- Python orchestrator built on the [GitHub Copilot SDK](https://pypi.org/project/github-copilot-sdk/)
+- Every generation is an agentic Copilot session running inside a Docker sandbox we own (`config/copilot_sandbox/`)
 - Node.js Playwright + axe-core evaluation
 - Per-test prompts & injected JS assertions
 - HTML report summarizing performance
 - Token + cost tracking (tokens in/out/total, per-generation cost, aggregated per model)
 - Multi-sample generation with pass@k metrics (probability at least one passing generation in k draws)
-- Additive Inspect runtime JSONL logs under each run directory
+- Per-run Copilot session JSONL logs under `<run_dir>/copilot_logs/`
+
+## Sandbox & authentication
+
+The harness drives the official `@github/copilot` CLI inside a long-lived
+Docker container (built from `config/copilot_sandbox/Dockerfile`). The
+first `run` builds the image and brings the container up; subsequent runs
+reuse it.
+
+- **Docker is a hard dependency.** Install Docker Desktop (or Docker
+  Engine + Compose v2) before running.
+- **Authentication uses your existing dev login.** The harness
+  uses a named Docker volume (`copilot-auth`) so credentials stay inside
+  the container and are not exposed to the host. On first run the harness
+  verifies CLI connectivity and — if needed — runs `copilot login`
+  interactively in your terminal; the resulting token persists across
+  container rebuilds. `GH_TOKEN` / `GITHUB_TOKEN` environment variables
+  are forwarded per-`docker exec` as a CI/headless fallback.
+- **BYOK keys** flow through environment variables (`ANTHROPIC_API_KEY`,
+  `OPENAI_API_KEY`, `AZURE_API_KEY`, `AZURE_API_BASE`,
+  `AZURE_API_VERSION`) and are forwarded into the container per session.
+- Override the workspace mount with `COPILOT_WORKSPACE` (host path mounted
+  as `/workspace`, which must contain any skill directories you reference).
+- Stop the container with
+  `docker compose -f config/copilot_sandbox/compose.yaml down`.
 
 ## Sampling & pass@k Metrics
 You can request multiple independent generations ("samples") per (test, model). This enables computation of pass@k metrics similar to code evaluation benchmarks.
@@ -40,12 +67,12 @@ python -m a11y_llm_tests.cli run \
 Step 2: Run the eval and generate the report
 ```bash
 python -m a11y_llm_tests.cli evaluate \
-  <path to run directory>
+  <path to run directory> \
   --k 1,5,10
 ```
 
 Artifacts:
-- Each sample's HTML: `runs/<ts>/raw/<test>/<model>__s<idx>.html` (single-sample keeps legacy `<model>.html`)
+- Each sample's artifact directory: `runs/<ts>/raw/<test>/<model>__s<idx>/` containing `index.html` plus any sibling CSS/JS files the agent wrote
 - Screenshots with analogous naming
 - `results.json` now includes per-sample records + an `aggregates` array with pass@k stats.
 - Report includes an aggregate pass@k table and grouped per-sample cards.
@@ -65,7 +92,7 @@ You can optionally benchmark multiple **custom instruction sets** against the **
 Step 0: Start from the default instruction sets file
 
 - Use `config/default_instruction_sets.yaml` as a starting point.
-- The default set references `config/instructions/accessible-minimal.md` (a minimal hint that all output must be accessible).
+- The default set references `instructions/accessible-minimal.md` (a minimal hint that all output must be accessible), resolved relative to the YAML file's directory.
 
 You can also create your own instruction sets YAML file.
 
@@ -74,32 +101,31 @@ instruction_sets:
   - id: accessible_minimal
     name: Accessible Minimal
     description: Minimal reminder that all output must be accessible.
-    system_prompt_append_markdown: config/instructions/accessible-minimal.md
+    instructions_markdown: instructions/accessible-minimal.md
     # samples: 10
 
   - id: aria_guardrails
     name: ARIA Guardrails
     description: Strong ARIA guidance; avoid invalid ARIA.
-    system_prompt_append_markdown: config/instructions/aria_guardrails.md
+    instructions_markdown: instructions/aria_guardrails.md
     samples: 20
 
   - id: agentic_accessibility
     name: Agentic Accessibility
-    description: Use a sandboxed Inspect ReAct agent to iteratively refine the page.
-    system_prompt_append_markdown: config/instructions/accessible-minimal.md
+    description: Extra guidance for the Copilot agent.
+    instructions_markdown: instructions/accessible-minimal.md
     samples: 5
     agent:
-      sandbox:
-        - docker
-        - config/inspect_agent_sandbox/compose.yaml
       limits:
-        message_limit: 50
-        token_limit: 120000
-        time_limit: 600
-        working_limit: 420
+        timeout_s: 600
 ```
 
-Instruction sets always use Inspect AI's sandboxed ReAct agent path instead of the direct completion path. The instruction-set YAML format does not support `generation_mode`. If you specify `agent.sandbox`, use the Inspect two-item form `[docker, <compose file>]`. If `agent.sandbox` is omitted, the harness defaults to `config/inspect_agent_sandbox/compose.yaml`. `agent.limits.cost_limit` is optional and should only be set when model pricing is configured for every model in the run.
+All generations now use the Copilot SDK's agent path inside the Docker
+sandbox; the instruction-set YAML format does not support
+`generation_mode`, and `agent.sandbox` is ignored (the sandbox is fixed
+to `config/copilot_sandbox/compose.yaml`). Only `agent.limits.timeout_s`
+(default 600) and `agent.limits.excluded_tools` are actively consumed;
+other limit keys are stored as metadata in `results.json`.
 
 Step 1: Generate control + instruction set variants
 
@@ -119,7 +145,7 @@ python -m a11y_llm_tests.cli evaluate \
 
 Variant artifacts:
 
-- Variant HTML: `runs/<ts>/raw_variants/<variant_id>/<test>/<model>__s<idx>.html`
+- Variant artifact directory: `runs/<ts>/raw_variants/<variant_id>/<test>/<model>__s<idx>/` containing `index.html` plus any sibling CSS/JS files the agent wrote
 - Agent conversation sidecar for instruction-set variants: `runs/<ts>/raw_variants/<variant_id>/<test>/<model>__s<idx>.agent.json`
 - Variant screenshots: `runs/<ts>/screenshots_variants/<variant_id>/<test>__<model>__s<idx>.png`
 
@@ -130,29 +156,153 @@ Report:
 - If variants are present, the report includes an **“Instruction Benchmarks (vs Control)”** section with side-by-side metrics and deltas.
 
 
-## Quick Start
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
+### Skills benchmarking
 
-# Node deps
-bash scripts/install_node_deps.sh
+A **skill** is a self-contained package (a directory containing at minimum a `SKILL.md` plus any support files) exposed to the Copilot agent via the SDK's `skill_directories` parameter. Unlike instruction sets, a skill declares a sequence of user **turns**, and the agent's submission at the end of each turn is evaluated **independently** so the report can compare `control | turn 1 | turn 2 | …` per (test, model).
 
-# Copy env and set keys
-cp .env.example .env
-export OPENAI_API_KEY=... # etc. or put in .env and use dotenv
+- Skills always use the Copilot agent path. `generation_mode` is not supported.
+- The skill directory must live inside your workspace; the harness translates the host path to the container's `/workspace/<rel>` automatically.
+- Exactly one turn prompt must contain `{{test_case_prompt}}` (typically turn 1). Other supported tokens: `{{skill_id}}`, `{{skill_path}}`, `{{previous_submission}}`.
+- Skills and instruction sets share an id namespace and can be enabled together in the same run.
+- Per-turn caching: changing turn 2's prompt invalidates turn 2's cache but not turn 1's.
 
-# Copy model config and set API keys
-cp config/models.yaml.example config/models.yaml
+Step 0: Start from the default skills file
 
-# Optional: for Azure provider auth via DefaultAzureCredential
-# pip install azure-identity
+- Use `config/default_skills.yaml` as a starting point. It defines a single `building-accessible-ui` skill that first generates a page (turn 1) and then asks the agent to run accessibility tests, review the results, and remediate its own HTML (turn 2).
 
-# Run all tests against configured models
-python -m a11y_llm_tests.cli run --models-file config/models.yaml --out runs
+Example `skills.yaml`:
+
+```yaml
+skills:
+  - id: building-accessible-ui
+    name: Building Accessible UI
+    description: Generate, then self-review using SKILL.md guidance.
+    skill_dir: skills/building-accessible-ui
+    # samples: 10                     # optional; defaults to --samples
+    agent:                            # optional limits passed to the Copilot session
+      limits:
+        timeout_s: 600
+    turns:
+      - id: generate
+        name: Generate
+        prompt: |
+          {{test_case_prompt}}
+      - id: review
+        name: Review
+        prompt: |
+          Add and run accessibility tests, review results, and remediate the HTML.
+          Fix any real accessibility issues you find. Leave correct markup
+          alone. Submit one corrected standalone HTML document as your final
+          answer. Do not wrap it in markdown fences or add commentary.
 ```
+
+Step 1: Generate control + skill turns
+
+```bash
+python -m a11y_llm_tests.cli run \
+  --samples 5 \
+  --skills-file config/default_skills.yaml
+```
+
+Step 2: Evaluate and generate the report
+
+```bash
+python -m a11y_llm_tests.cli evaluate \
+  <path to run directory> \
+  --k 1,5,10
+```
+
+Skill artifacts:
+
+- Per-turn artifact directory: `runs/<ts>/raw_skills/<skill_id>/<test>/<model>__s<idx>__t<turn_index>/` containing `index.html` plus any sibling CSS/JS files the agent wrote for that turn
+- One stitched conversation sidecar per sample: `runs/<ts>/raw_skills/<skill_id>/<test>/<model>__s<idx>.agent.json`
+- Per-turn screenshots: `runs/<ts>/screenshots_skills/<skill_id>/<test>__<model>__s<idx>__t<turn_index>.png`
+- `results.json` emits one record per (test, model, sample, turn) with `prompt_variant_kind = "skill"`, `turn_id`, `turn_index`, and `turn_count_total`, plus one aggregate per (test, model, skill, turn).
+
+Report:
+
+- A new **Skills** section renders one table per configured skill with dynamic columns: `Control | turn 1 | … | turn N | Δ last vs control | Δ last vs turn 1`.
+- The skill details panel previews each turn's prompt template and the mounted `SKILL.md`.
+
+### Combined run (instruction sets + skills)
+
+Both flags can be supplied at once; each variant is benchmarked separately against the same control, and each renders its own section in the report.
+
+```bash
+python -m a11y_llm_tests.cli run \
+  --samples 5 \
+  --instruction-sets-file config/default_instruction_sets.yaml \
+  --skills-file config/default_skills.yaml
+
+python -m a11y_llm_tests.cli evaluate \
+  <path to run directory> \
+  --k 1,5
+```
+
+This produces, in a single run directory:
+
+- `raw/…` — control sample directories, each containing `index.html` plus any sibling assets
+- `raw_variants/<instruction_set_id>/…` — instruction-set sample directories plus one `.agent.json` per sample
+- `raw_skills/<skill_id>/…` — skill turn directories plus one stitched `.agent.json` per sample
+- A report with three comparison sections: Control summary, **Instruction Benchmarks (vs Control)**, and **Skills (vs Control)**.
+
+
+## Quick Start
+
+### Prerequisites
+
+- **Python 3.11+** and **Node.js 18+**
+- **Docker** — the generation step runs a Copilot sandbox container.
+  Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) (macOS/Windows) or Docker Engine (Linux) and make sure `docker` is on your PATH.
+- **GitHub CLI** — used to authenticate the Copilot sandbox.
+  Install with `brew install gh` (macOS), `winget install GitHub.cli` (Windows), or see [cli.github.com](https://cli.github.com). Then run:
+  ```
+  gh auth login
+  ```
+  Alternatively, set a `GITHUB_TOKEN` (or `GH_TOKEN`) environment variable with a token that has Copilot access.
+
+### macOS / Linux
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python scripts/install_node_deps.py
+
+cp config/models.yaml.example config/models.yaml   # then add your API keys
+
+# Generate HTML samples (writes to runs/<timestamp>/)
+python -m a11y_llm_tests.cli run --samples 1
+
+# Evaluate the generated samples and build the HTML report
+python -m a11y_llm_tests.cli evaluate runs/latest
+```
+
+### Windows (PowerShell)
+
+```powershell
+python -m venv .venv; .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python scripts\install_node_deps.py
+
+copy config\models.yaml.example config\models.yaml   # then add your API keys
+
+# Generate HTML samples (writes to runs\<timestamp>\)
+python -m a11y_llm_tests.cli run --samples 1
+
+# Evaluate the generated samples and build the HTML report
+python -m a11y_llm_tests.cli evaluate runs\latest
+```
+
+After evaluation, open `runs/latest/index.html` in a browser for the full report.
+Detailed per-sample results are saved to `runs/latest/results.json`.
+
+You can also serve an existing run directory over localhost HTTP:
+
+```bash
+python -m a11y_llm_tests.cli serve runs/latest --open
+```
+
+This serves the full run directory, including `index.html`, `results.json`, screenshots, raw artifacts, and conversation sidecars.
 
 ## Adding a Test Case
 Create a new folder under `test_cases/`:
@@ -161,8 +311,7 @@ test_cases/
   form-labels/
     prompt.yaml
     test.js
-    example-fail/
-    example-pass/
+    examples/
 ```
 
 `prompt.yaml` defines the base prompt plus any prompt dimensions for the test case. A minimal example is:
@@ -189,7 +338,7 @@ Global prompt dimensions such as framework and style live in `config/prompt_dime
 `test.js` must export:
 
 ```js
-module.exports.run = async ({ page, assert }) => {
+module.exports.run = async ({ page, assert, utils }) => {
   await assert("Has an h1", async () => {
     const count = await page.$$eval('h1', els => els.length);
     return count >= 1; // truthy => pass, falsy => fail
@@ -224,19 +373,10 @@ Each assertion may now include a `type` field:
 
 If `type` is omitted it defaults to `R` for backward compatibility. The HTML report shows both Requirement Pass Rate (percentage of tests whose requirement assertions passed) and Best Practice Pass Rate (percentage of tests containing BP assertions where all BP assertions passed).
 
-Example assertion objects returned from `run`:
-
-```js
-return {
-  assertions: [
-    { name: 'has main landmark', status: 'pass', type: 'R' },
-    { name: 'images have alt text', status: 'fail', type: 'BP', message: '1 of 5 images missing alt' }
-  ]
-};
-```
+The `fn` callback can also return `{ status: "pass" | "fail" | "na", message?: string }` for assertions that may not be applicable to a given page.
 
 ## Report
-Generated at `runs/<timestamp>/report.html` with:
+Generated at `runs/<timestamp>/index.html` with:
 - Summary stats per model
 - Detailed per model/test breakdown
 - Axe violations
