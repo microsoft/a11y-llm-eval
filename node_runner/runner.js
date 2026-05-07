@@ -64,6 +64,14 @@ async function main() {
     });
   }
 
+  async function ensureAxeOnPage(page) {
+    const hasAxe = await page.evaluate(() => Boolean(window.axe && typeof window.axe.run === 'function'));
+    if (!hasAxe) {
+      await page.addScriptTag({ content: axeSource });
+      await page.evaluate(() => { window.axe.setup(); });
+    }
+  }
+
   async function evaluateRenderState(page) {
     return await page.evaluate(() => {
       const body = document.body;
@@ -89,6 +97,7 @@ async function main() {
   const utils = {
     reload: loadHTML,
     runAxeOnPage,
+    ensureAxeOnPage,
     merge,
     testFormControls,
     testTextInputs: testFormControls,

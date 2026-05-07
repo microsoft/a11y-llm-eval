@@ -1,5 +1,3 @@
-const axeSource = require('axe-core').source;
-
 async function clickNav(page, key) {
   const link = page.locator(`[data-report-nav="${key}"]`);
   if (await link.count()) {
@@ -28,11 +26,6 @@ async function openFirstDetailCard(page) {
   }
   await card.locator('[data-detail-browser]').waitFor({ state: 'visible', timeout: 10000 });
   return card;
-}
-
-async function ensureAxeOnPage(page) {
-  await page.addScriptTag({ content: axeSource });
-  await page.evaluate(() => { window.axe.setup(); });
 }
 
 module.exports.run = async ({ page, assert }) => {
@@ -140,7 +133,7 @@ module.exports.runAxe = async ({ page, utils }) => {
   await collect('about', async () => clickNav(page, 'about'));
   await collect('standalone-detail', async () => {
     await page.goto(new URL('report_pages/details/sample-case.html', page.url()).toString(), { waitUntil: 'load' });
-    await ensureAxeOnPage(page);
+    await utils.ensureAxeOnPage(page);
     const modelGroup = page.locator('[data-model-group="provider/model-a"]').first();
     if (!(await modelGroup.evaluate((el) => el.open))) {
       await modelGroup.click();
