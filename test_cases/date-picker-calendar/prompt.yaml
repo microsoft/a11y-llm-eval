@@ -1,0 +1,9 @@
+name: Date Picker Calendar
+base_prompt: |
+  Build a page with a date picker. It has a text input labeled "Appointment date" and a button that opens a calendar showing the days of the current month in a grid. The user can pick a single day by clicking it or by moving with the arrow keys and pressing Enter. The chosen day is visibly highlighted and its date is filled into the input.
+common_requirements:
+  - Wrap the date picker in a div with class "date-picker".
+  - Show the current month and year as a heading above the day grid.
+  - Render the days of the month as a grid the user can move through with the keyboard.
+  - Include a submit button.
+dimensions:

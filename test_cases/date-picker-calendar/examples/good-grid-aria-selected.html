@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Date picker — conformant grid with aria-selected</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Calendar day grid is present and openable": "pass",
+      "Each calendar day has an accessible name": "pass",
+      "Day cells expose grid or listbox selection semantics": "pass",
+      "Selection uses aria-selected, not aria-pressed": "pass",
+      "Exactly one day is marked selected after a day is chosen": "pass",
+      "Arrow keys move focus within the day grid": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <div class="date-picker">
+    <label for="appt">Appointment date</label>
+    <input id="appt" type="text" readonly aria-label="Appointment date">
+    <button type="button" id="open" aria-haspopup="grid" aria-expanded="true">Choose date</button>
+
+    <h2 id="cal-heading">June 2026</h2>
+    <div role="grid" aria-labelledby="cal-heading" id="grid"></div>
+  </div>
+
+  <button type="submit">Submit</button>
+
+  <script>
+    const grid = document.getElementById('grid');
+    const days = 28, perRow = 7;
+    let selected = 5;
+    for (let r = 0; r < days / perRow; r++) {
+      const row = document.createElement('div');
+      row.setAttribute('role', 'row');
+      for (let c = 0; c < perRow; c++) {
+        const day = r * perRow + c + 1;
+        const cell = document.createElement('div');
+        cell.setAttribute('role', 'gridcell');
+        cell.setAttribute('tabindex', day === selected ? '0' : '-1');
+        cell.setAttribute('aria-label', 'June ' + day + ', 2026');
+        cell.setAttribute('aria-selected', day === selected ? 'true' : 'false');
+        cell.textContent = String(day);
+        cell.style.display = 'inline-block';
+        cell.style.width = '2em';
+        row.appendChild(cell);
+      }
+      grid.appendChild(row);
+    }
+
+    const cells = () => Array.from(grid.querySelectorAll('[role="gridcell"]'));
+
+    function select(cell) {
+      cells().forEach((c) => {
+        c.setAttribute('aria-selected', 'false');
+        c.setAttribute('tabindex', '-1');
+      });
+      cell.setAttribute('aria-selected', 'true');
+      cell.setAttribute('tabindex', '0');
+      document.getElementById('appt').value = cell.getAttribute('aria-label');
+      cell.focus();
+    }
+
+    grid.addEventListener('click', (e) => {
+      const cell = e.target.closest('[role="gridcell"]');
+      if (cell) select(cell);
+    });
+
+    grid.addEventListener('keydown', (e) => {
+      const all = cells();
+      const i = all.indexOf(document.activeElement);
+      if (i < 0) return;
+      let next = i;
+      if (e.key === 'ArrowRight') next = i + 1;
+      else if (e.key === 'ArrowLeft') next = i - 1;
+      else if (e.key === 'ArrowDown') next = i + perRow;
+      else if (e.key === 'ArrowUp') next = i - perRow;
+      else return;
+      e.preventDefault();
+      if (next >= 0 && next < all.length) {
+        all[i].setAttribute('tabindex', '-1');
+        all[next].setAttribute('tabindex', '0');
+        all[next].focus();
+      }
+    });
+  </script>
+</body>
+</html>

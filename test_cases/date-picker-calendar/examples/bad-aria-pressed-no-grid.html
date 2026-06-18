@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Date picker — anti-pattern: aria-pressed toggle buttons, no grid</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Calendar day grid is present and openable": "pass",
+      "Each calendar day has an accessible name": "pass",
+      "Day cells expose grid or listbox selection semantics": "fail",
+      "Selection uses aria-selected, not aria-pressed": "fail",
+      "Exactly one day is marked selected after a day is chosen": "fail",
+      "Arrow keys move focus within the day grid": "fail"
+    }
+  }</script>
+</head>
+<body>
+  <div class="date-picker">
+    <label for="appt2">Appointment date</label>
+    <input id="appt2" type="text" readonly aria-label="Appointment date">
+    <button type="button" id="open2">Choose date</button>
+
+    <h2>June 2026</h2>
+    <!-- ANTI-PATTERN: day cells are toggle buttons using aria-pressed, no grid
+         semantics, and no arrow-key navigation (Tab only). -->
+    <div id="grid2"></div>
+  </div>
+
+  <button type="submit">Submit</button>
+
+  <script>
+    const grid = document.getElementById('grid2');
+    for (let day = 1; day <= 28; day++) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.setAttribute('aria-pressed', day === 5 ? 'true' : 'false');
+      btn.textContent = String(day);
+      btn.style.width = '2em';
+      btn.addEventListener('click', () => {
+        grid.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+        btn.setAttribute('aria-pressed', 'true');
+        document.getElementById('appt2').value = 'June ' + day + ', 2026';
+      });
+      grid.appendChild(btn);
+    }
+  </script>
+</body>
+</html>
