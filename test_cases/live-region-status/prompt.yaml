@@ -1,0 +1,8 @@
+name: Status Live Region
+base_prompt: |
+  Build a page with a document editor area and a "Save" button. When the user clicks Save, a small status message appears (for example "Saving…" then "Saved · just now") that a screen reader should announce without interrupting whatever the user is currently doing. These status updates are routine and non-urgent.
+common_requirements:
+  - Put the status message in an element with class "save-status".
+  - The status message must be announced by assistive technology when it changes.
+  - Include the Save button described above.
+dimensions:
