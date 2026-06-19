@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Save status — conformant polite live region</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "A status live region is present on load": "pass",
+      "Routine status updates use a polite live region, not assertive": "pass",
+      "The status live region is exposed to assistive technology": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <main>
+    <h1>Notes</h1>
+    <label for="doc">Document</label>
+    <textarea id="doc" rows="4">Draft text…</textarea>
+
+    <button type="button" id="save">Save</button>
+
+    <!-- Polite live region present at load; its text is updated in place. -->
+    <div class="save-status" role="status" aria-live="polite"></div>
+  </main>
+
+  <script>
+    const status = document.querySelector('.save-status');
+    document.getElementById('save').addEventListener('click', () => {
+      status.textContent = 'Saving…';
+      setTimeout(() => { status.textContent = 'Saved · just now'; }, 150);
+    });
+  </script>
+</body>
+</html>

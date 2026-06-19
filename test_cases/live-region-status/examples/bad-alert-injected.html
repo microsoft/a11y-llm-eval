@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Save status — anti-pattern: assertive alert injected on update</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "A status live region is present on load": "fail",
+      "Routine status updates use a polite live region, not assertive": "fail",
+      "The status live region is exposed to assistive technology": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <main>
+    <h1>Notes</h1>
+    <label for="doc">Document</label>
+    <textarea id="doc" rows="4">Draft text…</textarea>
+
+    <button type="button" id="save">Save</button>
+
+    <!-- ANTI-PATTERN: no live region on load. On save, an assertive role="alert"
+         is injected for a routine, non-urgent status update, interrupting the
+         screen reader. -->
+    <div id="status-host"></div>
+  </main>
+
+  <script>
+    document.getElementById('save').addEventListener('click', () => {
+      const host = document.getElementById('status-host');
+      host.innerHTML = '';
+      const alert = document.createElement('div');
+      alert.className = 'save-status';
+      alert.setAttribute('role', 'alert');
+      alert.textContent = 'Saved · just now';
+      host.appendChild(alert);
+    });
+  </script>
+</body>
+</html>
