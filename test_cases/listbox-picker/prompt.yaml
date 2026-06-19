@@ -1,0 +1,8 @@
+name: Listbox Picker
+base_prompt: |
+  Build a page with a custom dropdown (do not use a native <select> element) for choosing a text style. A button shows the current choice and opens a menu listing four options: "Normal", "Heading 1", "Heading 2", and "Quote". The user can open the menu and pick one option with the mouse or the keyboard, and the chosen style is shown on the button.
+common_requirements:
+  - Wrap the control in a div with class "style-picker".
+  - Do not use a native <select> element.
+  - Include a submit button.
+dimensions:
