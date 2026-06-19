@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Style picker — conformant ARIA listbox</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Picker trigger exposes popup state (aria-haspopup and aria-expanded)": "pass",
+      "Open menu uses role=listbox with role=option children": "pass",
+      "Each option has an accessible name": "pass",
+      "Options expose selection state with aria-selected": "pass",
+      "Arrow keys move the active option": "pass",
+      "Escape closes the listbox": "pass"
+    }
+  }</script>
+</head>
+<body>
+  <div class="style-picker">
+    <span id="picker-label">Text style</span>
+    <button type="button" id="trigger" aria-haspopup="listbox" aria-expanded="false"
+            aria-labelledby="picker-label trigger">Normal</button>
+    <div role="listbox" id="lb" tabindex="-1" aria-labelledby="picker-label" hidden></div>
+  </div>
+
+  <button type="submit">Submit</button>
+
+  <script>
+    const OPTIONS = ['Normal', 'Heading 1', 'Heading 2', 'Quote'];
+    const trigger = document.getElementById('trigger');
+    const lb = document.getElementById('lb');
+    let selected = 0;
+
+    OPTIONS.forEach((label, i) => {
+      const opt = document.createElement('div');
+      opt.setAttribute('role', 'option');
+      opt.setAttribute('tabindex', '-1');
+      opt.setAttribute('aria-selected', i === selected ? 'true' : 'false');
+      opt.id = 'opt-' + i;
+      opt.textContent = label;
+      lb.appendChild(opt);
+    });
+
+    const options = () => Array.from(lb.querySelectorAll('[role="option"]'));
+
+    function open() {
+      lb.hidden = false;
+      trigger.setAttribute('aria-expanded', 'true');
+      const sel = options()[selected] || options()[0];
+      sel.setAttribute('tabindex', '0');
+      sel.focus();
+    }
+    function close() {
+      lb.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+      trigger.focus();
+    }
+    function choose(i) {
+      options().forEach((o, j) => o.setAttribute('aria-selected', j === i ? 'true' : 'false'));
+      selected = i;
+      trigger.textContent = OPTIONS[i];
+    }
+
+    trigger.addEventListener('click', () => {
+      if (trigger.getAttribute('aria-expanded') === 'true') close();
+      else open();
+    });
+
+    lb.addEventListener('click', (e) => {
+      const opt = e.target.closest('[role="option"]');
+      if (!opt) return;
+      choose(options().indexOf(opt));
+      close();
+    });
+
+    lb.addEventListener('keydown', (e) => {
+      const all = options();
+      let i = all.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown') { e.preventDefault(); i = i < 0 ? 0 : Math.min(i + 1, all.length - 1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); i = i <= 0 ? 0 : i - 1; }
+      else if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (i >= 0) { choose(i); close(); } return; }
+      else return;
+      all.forEach((o) => o.setAttribute('tabindex', '-1'));
+      all[i].setAttribute('tabindex', '0');
+      all[i].focus();
+    });
+  </script>
+</body>
+</html>

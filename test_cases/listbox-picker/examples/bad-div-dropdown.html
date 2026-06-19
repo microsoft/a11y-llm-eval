@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Style picker — anti-pattern: div dropdown, no ARIA semantics</title>
+  <script id="a11y-assertions" type="application/json">{
+    "assertions": {
+      "Picker trigger exposes popup state (aria-haspopup and aria-expanded)": "fail",
+      "Open menu uses role=listbox with role=option children": "fail",
+      "Each option has an accessible name": "pass",
+      "Options expose selection state with aria-selected": "fail",
+      "Arrow keys move the active option": "fail",
+      "Escape closes the listbox": "fail"
+    }
+  }</script>
+</head>
+<body>
+  <div class="style-picker">
+    <span>Text style</span>
+    <!-- ANTI-PATTERN: trigger has no aria-haspopup/aria-expanded; the menu is a
+         set of plain divs with no listbox/option roles, no aria-selected, and
+         mouse-only interaction (no arrow keys, no Escape). -->
+    <button type="button" id="trigger2">Normal</button>
+    <div id="menu2" style="display:none"></div>
+  </div>
+
+  <button type="submit">Submit</button>
+
+  <script>
+    const OPTIONS = ['Normal', 'Heading 1', 'Heading 2', 'Quote'];
+    const trigger = document.getElementById('trigger2');
+    const menu = document.getElementById('menu2');
+
+    OPTIONS.forEach((label) => {
+      const item = document.createElement('div');
+      item.className = 'menu-item';
+      item.textContent = label;
+      item.addEventListener('click', () => {
+        trigger.textContent = label;
+        menu.style.display = 'none';
+      });
+      menu.appendChild(item);
+    });
+
+    trigger.addEventListener('click', () => {
+      menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    });
+  </script>
+</body>
+</html>
